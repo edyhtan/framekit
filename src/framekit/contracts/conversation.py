@@ -23,6 +23,9 @@ class TextGenerateRequest:
     max_tokens: int
     model_id: str | None = None  # None: the adapter's configured default
     history: tuple[ChatMessage, ...] = ()  # earlier turns, oldest first
+    # Reasoning is billed as output tokens: off unless asked for. Models that can't
+    # switch it off reason anyway; the result says whether it was on.
+    reasoning: bool = False
 
 
 @dataclass(frozen=True)
@@ -44,6 +47,7 @@ class TextGenerateResult:
     provider_stop_reason: str | None = None
     # Streaming only: time from sending the request to the first piece of output.
     first_token_ms: int | None = None
+    reasoning_on: bool = False
 
 
 @dataclass(frozen=True)

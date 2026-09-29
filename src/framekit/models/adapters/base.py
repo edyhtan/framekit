@@ -52,10 +52,41 @@ def conversation(request: TextGenerateRequest) -> list[dict[str, str]]:
     ]
 
 
-def output_budget(spec: ModelSpec, requested: int, profile_cap: int) -> int:
-    """Tokens to request: the answer budget plus the model's reasoning allowance, capped."""
-    cap = spec.max_tokens_cap or profile_cap
-    return min(requested + spec.reasoning_allowance, cap)
+def reasoning_active(spec: ModelSpec, request: TextGenerateRequest) -> bool:
+    """Whether this call will reason: asked for, or the model can't switch it off."""
+    control = spec.reasoning
+    if control is None:
+        return False
+    return request.reasoning or control.off is None
+
+
+def reasoning_fields(spec: ModelSpec, reasoning: bool) -> dict[str, Any]:
+    """The request fields that switch this model's reasoning on or off."""
+    control = spec.reasoning
+    if control is None:
+        return {}
+    return control.on if reasoning or control.off is None else control.off
+
+
+def merge_fields(*parts: dict[str, Any]) -> dict[str, Any]:
+    """Merge request-field dicts; nested dicts (e.g. `extra_body`) are merged, not replaced."""
+    merged: dict[str, Any] = {}
+    for part in parts:
+        for key, value in part.items():
+            if isinstance(value, dict) and isinstance(merged.get(key), dict):
+                merged[key] = merge_fields(merged[key], value)
+            else:
+                merged[key] = value
+    return merged
+
+
+def output_budget(spec: ModelSpec, requested: int, profile_cap: int, *, reasoning: bool) -> int:
+    """Tokens to request: the answer budget, plus the reasoning allowance when reasoning is
+    on, capped."""
+    control = spec.reasoning
+    if not (reasoning and control):
+        return min(requested, profile_cap)
+    return min(requested + control.allowance, control.max_tokens_cap or profile_cap)
 
 
 _STOP_REASON_MAP = {
@@ -156,20 +187,28 @@ class ExternalAIAdapterBase(ABC):
         yield reply
 
     async def generate(self, spec: ModelSpec, request: TextGenerateRequest) -> TextGenerateResult:
-        max_tokens = output_budget(spec, request.max_tokens, self._settings.max_tokens_cap)
+        reasoning = reasoning_active(spec, request)
+        max_tokens = output_budget(
+            spec, request.max_tokens, self._settings.max_tokens_cap, reasoning=reasoning
+        )
         params = self.build_params(spec, request, max_tokens)
         started = time.perf_counter()
         try:
             reply = await self.call(spec, params)
         except self.sdk.APIError as exc:
             raise map_sdk_error(exc, self.sdk, self.config) from exc
-        return self._result(spec, reply, max_tokens, started, first_token_at=None)
+        return self._result(
+            spec, reply, max_tokens, started, first_token_at=None, reasoning=reasoning
+        )
 
     async def stream(
         self, spec: ModelSpec, request: TextGenerateRequest
     ) -> AsyncIterator[TextDelta | TextGenerateResult]:
         """Same lifecycle as `generate`, yielding pieces as they arrive, then the result."""
-        max_tokens = output_budget(spec, request.max_tokens, self._settings.max_tokens_cap)
+        reasoning = reasoning_active(spec, request)
+        max_tokens = output_budget(
+            spec, request.max_tokens, self._settings.max_tokens_cap, reasoning=reasoning
+        )
         params = self.build_params(spec, request, max_tokens)
         started = time.perf_counter()
         first_token_at: float | None = None
@@ -185,7 +224,9 @@ class ExternalAIAdapterBase(ABC):
             raise map_sdk_error(exc, self.sdk, self.config) from exc
         if reply is None:  # a protocol bug, not a provider error
             raise ModelCallError("the adapter produced no final reply", retryable=False)
-        yield self._result(spec, reply, max_tokens, started, first_token_at=first_token_at)
+        yield self._result(
+            spec, reply, max_tokens, started, first_token_at=first_token_at, reasoning=reasoning
+        )
 
     def _result(
         self,
@@ -195,6 +236,7 @@ class ExternalAIAdapterBase(ABC):
         started: float,
         *,
         first_token_at: float | None,
+        reasoning: bool,
     ) -> TextGenerateResult:
         latency_ms = round((time.perf_counter() - started) * 1000)
         first_token_ms = round((first_token_at - started) * 1000) if first_token_at else None
@@ -215,4 +257,5 @@ class ExternalAIAdapterBase(ABC):
             reasoning_text=reply.reasoning[:REASONING_TEXT_LIMIT] or None,
             reasoning_tokens=reply.reasoning_tokens,
             first_token_ms=first_token_ms,
+            reasoning_on=reasoning,
         )

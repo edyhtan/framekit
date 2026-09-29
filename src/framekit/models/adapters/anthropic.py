@@ -12,6 +12,9 @@ from clipsearch_adapters.external_connections.adapters.external_ai_adapter_base 
     ExternalAIAdapterBase,
     Reply,
     conversation,
+    merge_fields,
+    reasoning_active,
+    reasoning_fields,
 )
 from clipsearch_adapters.external_connections.catalog import ModelSpec
 from clipsearch_domain.common.ports import TextGenerateRequest
@@ -31,12 +34,11 @@ class AnthropicAdapter(ExternalAIAdapterBase):
     def build_params(
         self, spec: ModelSpec, request: TextGenerateRequest, max_tokens: int
     ) -> dict[str, Any]:
-        return {
-            "model": spec.model_id,
-            "max_tokens": max_tokens,
-            "messages": conversation(request),
-            **spec.request_extras,
-        }
+        return merge_fields(
+            {"model": spec.model_id, "max_tokens": max_tokens, "messages": conversation(request)},
+            spec.request_extras,
+            reasoning_fields(spec, reasoning_active(spec, request)),
+        )
 
     async def call(self, spec: ModelSpec, params: dict[str, Any]) -> Reply:
         if spec.betas:

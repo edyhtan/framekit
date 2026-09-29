@@ -144,8 +144,10 @@ def api_error(sdk, name, status):
     return getattr(sdk, name)("boom", response=httpx2.Response(status, request=request), body=None)
 
 
-def req(model_id=None, max_tokens=200, prompt="hi"):
-    return TextGenerateRequest(prompt=prompt, max_tokens=max_tokens, model_id=model_id)
+def req(model_id=None, max_tokens=200, prompt="hi", reasoning=False):
+    return TextGenerateRequest(
+        prompt=prompt, max_tokens=max_tokens, model_id=model_id, reasoning=reasoning
+    )
 
 
 # --- one interface -----------------------------------------------------------------------
@@ -184,11 +186,13 @@ def test_stop_reasons_are_normalized(raw, hit_limit, expected):
     assert expected in STOP_REASONS
 
 
-def test_output_budget_adds_reasoning_allowance_and_caps():
-    assert output_budget(CATALOG[HIVE_MODEL], 128, 256) == 896  # 128 + 768
-    assert output_budget(CATALOG[HIVE_MODEL], 256, 256) == 1024  # model cap
-    assert output_budget(CATALOG["deepseek-flash"], 300, 256) == 256  # profile cap
-    assert output_budget(CATALOG["claude-haiku-4-5"], 100, 256) == 100
+def test_output_budget_adds_reasoning_allowance_only_while_reasoning():
+    hive = CATALOG[HIVE_MODEL]
+    assert output_budget(hive, 128, 256, reasoning=True) == 896  # 128 + 768
+    assert output_budget(hive, 256, 256, reasoning=True) == 1024  # model's reasoning cap
+    assert output_budget(hive, 128, 256, reasoning=False) == 128  # no allowance when off
+    assert output_budget(hive, 300, 256, reasoning=False) == 256  # profile cap when off
+    assert output_budget(CATALOG["claude-haiku-4-5"], 100, 256, reasoning=True) == 1124
 
 
 ERROR_CASES = [
@@ -250,7 +254,7 @@ def test_hive_base_url_default_and_override(monkeypatch):
 async def test_hive_streams_and_assembles_reply_reasoning_and_usage():
     client = openai_client(hive_stream())
     adapter = OpenAICompatibleAdapter(HIVE, client, TextModelSettings())
-    result = await adapter.generate(CATALOG[HIVE_MODEL], req(max_tokens=100))
+    result = await adapter.generate(CATALOG[HIVE_MODEL], req(max_tokens=100, reasoning=True))
 
     [params] = client.chat.completions.calls
     assert params["model"] == HIVE_MODEL

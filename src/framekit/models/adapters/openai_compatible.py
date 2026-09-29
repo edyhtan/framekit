@@ -14,6 +14,9 @@ from clipsearch_adapters.external_connections.adapters.external_ai_adapter_base 
     ExternalAIAdapterBase,
     Reply,
     conversation,
+    merge_fields,
+    reasoning_active,
+    reasoning_fields,
 )
 from clipsearch_adapters.external_connections.catalog import ModelSpec
 from clipsearch_domain.common.ports import TextDelta, TextGenerateRequest
@@ -40,13 +43,16 @@ class OpenAICompatibleAdapter(ExternalAIAdapterBase):
     def build_params(
         self, spec: ModelSpec, request: TextGenerateRequest, max_tokens: int
     ) -> dict[str, Any]:
-        params: dict[str, Any] = {
-            "model": spec.model_id,
-            "max_tokens": max_tokens,
-            "messages": conversation(request),
-            "stream": self.config.stream,
-            **spec.request_extras,
-        }
+        params = merge_fields(
+            {
+                "model": spec.model_id,
+                "max_tokens": max_tokens,
+                "messages": conversation(request),
+                "stream": self.config.stream,
+            },
+            spec.request_extras,
+            reasoning_fields(spec, reasoning_active(spec, request)),
+        )
         if self.config.extra_headers:
             params["extra_headers"] = dict(self.config.extra_headers)
         return params

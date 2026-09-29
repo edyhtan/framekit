@@ -69,6 +69,22 @@ HIVE, DEEPSEEK, ANTHROPIC = PROVIDERS["hive"], PROVIDERS["deepseek"], PROVIDERS[
 
 
 @dataclass(frozen=True)
+class ReasoningControl:
+    """How a model's reasoning is switched on and off, as extra request fields.
+
+    Reasoning is billed as output tokens, so it's off unless the request asks for it.
+    The switch differs per model, even on one provider, so it's data, not code.
+    """
+
+    on: dict[str, Any] = field(default_factory=dict)
+    off: dict[str, Any] | None = None  # None: this model can't switch reasoning off
+    # While reasoning is on: output room added on top of the answer budget, and the cap
+    # that replaces the profile-wide one.
+    allowance: int = 0
+    max_tokens_cap: int | None = None
+
+
+@dataclass(frozen=True)
 class ModelSpec:
     provider: str
     model_id: str
@@ -78,10 +94,14 @@ class ModelSpec:
     # Extra request fields this model needs for a short, cheap probe.
     request_extras: dict[str, Any] = field(default_factory=dict)
     betas: tuple[str, ...] = ()
-    # Models that always reason before answering get extra output room for it: the job's
-    # max_tokens is the answer budget, and this allowance is added on top.
-    reasoning_allowance: int = 0
-    max_tokens_cap: int | None = None  # overrides the profile-wide cap
+    reasoning: ReasoningControl | None = None  # None: the model doesn't reason
+
+    @property
+    def reasoning_mode(self) -> str:
+        """`optional`, `always` or `none`, for clients choosing the option."""
+        if self.reasoning is None:
+            return "none"
+        return "always" if self.reasoning.off is None else "optional"
 
 
 _SPECS = (
@@ -92,9 +112,11 @@ _SPECS = (
         "DeepSeek V4.1 Flash (Hive)",
         Decimal("0.30"),
         Decimal("1.20"),
-        # Reasons on every request on Hive (thinking can't be disabled; checked 2026-09-29).
-        reasoning_allowance=768,
-        max_tokens_cap=1024,
+        # Reasons by default on Hive. Measured 2026-09-29: `reasoning_effort: "none"` turns
+        # it off (2 output tokens instead of 27); DeepSeek's `thinking: disabled` is ignored.
+        reasoning=ReasoningControl(
+            off={"extra_body": {"reasoning_effort": "none"}}, allowance=768, max_tokens_cap=1024
+        ),
     ),
     ModelSpec(
         "hive",
@@ -102,19 +124,45 @@ _SPECS = (
         "GLM-5.3 Flash (Hive)",
         Decimal("0.15"),
         Decimal("0.50"),
-        reasoning_allowance=768,
-        max_tokens_cap=1024,
+        # Measured 2026-09-29 (3 runs each): `"low"` gives 0-1 reasoning characters, while
+        # `"none"` backfires and reasons until the limit. Hive doesn't report its
+        # reasoning tokens for this model.
+        reasoning=ReasoningControl(
+            off={"extra_body": {"reasoning_effort": "low"}}, allowance=768, max_tokens_cap=1024
+        ),
     ),
     # DeepSeek's own API: peak-hour cache-miss rates (api-docs.deepseek.com, 2026-09-29).
+    # Thinking is on by default at effort "high" (api-docs.deepseek.com/guides/thinking_mode);
+    # not verified live (no key yet).
     ModelSpec(
         "deepseek",
         "deepseek-flash",
         "DeepSeek V4.1 Flash (DeepSeek API)",
         Decimal("0.3"),
         Decimal("1.2"),
+        reasoning=ReasoningControl(
+            on={"extra_body": {"thinking": {"type": "enabled"}}, "reasoning_effort": "low"},
+            off={"extra_body": {"thinking": {"type": "disabled"}}},
+            allowance=768,
+            max_tokens_cap=1024,
+        ),
     ),
     # Anthropic first-party rates (claude-api skill cache, 2026-06-24).
-    ModelSpec("anthropic", "claude-haiku-4-5", "Claude Haiku 4.5", Decimal("1"), Decimal("5")),
+    ModelSpec(
+        "anthropic",
+        "claude-haiku-4-5",
+        "Claude Haiku 4.5",
+        Decimal("1"),
+        Decimal("5"),
+        # Off by default; when on, the thinking budget must be at least 1024 and below
+        # max_tokens, so the allowance is 1024 on top of the answer.
+        reasoning=ReasoningControl(
+            on={"thinking": {"type": "enabled", "budget_tokens": 1024}},
+            off={},
+            allowance=1024,
+            max_tokens_cap=1280,
+        ),
+    ),
     ModelSpec(
         "anthropic",
         "claude-sonnet-5",
@@ -122,6 +170,15 @@ _SPECS = (
         Decimal("2"),
         Decimal("10"),
         request_extras={"output_config": {"effort": "low"}},
+        # Adaptive thinking is on by default on Sonnet 5 and Opus 5, with its text hidden
+        # unless `display: summarized` is asked for. Off needs an explicit `disabled`,
+        # which Opus 5 accepts at effort `high` or lower (we use `low`).
+        reasoning=ReasoningControl(
+            on={"thinking": {"type": "adaptive", "display": "summarized"}},
+            off={"thinking": {"type": "disabled"}},
+            allowance=768,
+            max_tokens_cap=1024,
+        ),
     ),
     ModelSpec(
         "anthropic",
@@ -129,10 +186,16 @@ _SPECS = (
         "Claude Opus 5",
         Decimal("5"),
         Decimal("25"),
-        # Thinking is on by default on Opus 5; low effort keeps a probe cheap.
-        # Server-side refusal fallback, as recommended for Opus 5 code.
+        # Low effort keeps a probe cheap. Server-side refusal fallback, as recommended for
+        # Opus 5 code.
         request_extras={"output_config": {"effort": "low"}, "fallbacks": "default"},
         betas=("server-side-fallback-2026-07-01",),
+        reasoning=ReasoningControl(
+            on={"thinking": {"type": "adaptive", "display": "summarized"}},
+            off={"thinking": {"type": "disabled"}},
+            allowance=768,
+            max_tokens_cap=1024,
+        ),
     ),
 )
 CATALOG: dict[str, ModelSpec] = {spec.model_id: spec for spec in _SPECS}
@@ -171,6 +234,7 @@ def catalog_listing() -> list[dict[str, Any]]:
             "model_id": spec.model_id,
             "label": spec.label,
             "default": spec.model_id == default,
+            "reasoning": spec.reasoning_mode,
         }
         for spec in CATALOG.values()
     ]
