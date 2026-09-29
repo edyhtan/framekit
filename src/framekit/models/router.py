@@ -1,24 +1,19 @@
-"""`text_generate` port implementation that routes each request to its provider's adapter.
+"""`text_generate` port implementation: catalog → provider config → protocol adapter.
 
-Provider adapters are created lazily, so a missing key for one provider only fails the
-requests that need that provider.
+Adapters are created lazily, so a missing key for one provider only fails the requests
+that need that provider.
 """
 
 from collections.abc import Callable
 from typing import Protocol
 
-from clipsearch_adapters.models.anthropic_text import AnthropicTextGenerator
 from clipsearch_adapters.models.catalog import (
     CATALOG,
     ModelSpec,
     TextModelSettings,
     get_text_model_settings,
 )
-from clipsearch_adapters.models.openai_compatible import (
-    DEEPSEEK,
-    HIVE,
-    OpenAICompatibleGenerator,
-)
+from clipsearch_adapters.models.providers import create_adapter
 from clipsearch_domain.common.ports import ModelCallError, TextGenerateRequest, TextGenerateResult
 
 
@@ -28,23 +23,15 @@ class ProviderAdapter(Protocol):
     ) -> TextGenerateResult: ...
 
 
-ProviderFactory = Callable[[TextModelSettings], ProviderAdapter]
-
-PROVIDERS: dict[str, ProviderFactory] = {
-    "hive": lambda settings: OpenAICompatibleGenerator.from_environment(HIVE, settings),
-    "deepseek": lambda settings: OpenAICompatibleGenerator.from_environment(DEEPSEEK, settings),
-    "anthropic": AnthropicTextGenerator.from_environment,
-}
+AdapterFactory = Callable[[str, TextModelSettings], ProviderAdapter]
 
 
 class TextGenerateRouter:
     def __init__(
-        self,
-        settings: TextModelSettings,
-        providers: dict[str, ProviderFactory] | None = None,
+        self, settings: TextModelSettings, adapter_factory: AdapterFactory = create_adapter
     ) -> None:
         self._settings = settings
-        self._factories = providers or PROVIDERS
+        self._factory = adapter_factory
         self._adapters: dict[str, ProviderAdapter] = {}
 
     @classmethod
@@ -59,10 +46,7 @@ class TextGenerateRouter:
 
     def _adapter(self, provider: str) -> ProviderAdapter:
         if provider not in self._adapters:
-            factory = self._factories.get(provider)
-            if factory is None:
-                raise ModelCallError(f"no adapter for provider {provider!r}", retryable=False)
-            self._adapters[provider] = factory(self._settings)
+            self._adapters[provider] = self._factory(provider, self._settings)
         return self._adapters[provider]
 
     async def generate(self, request: TextGenerateRequest) -> TextGenerateResult:

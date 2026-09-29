@@ -31,6 +31,12 @@ class TextGenerateResult:
     # Reasoning models: the model's reasoning, kept apart from the answer.
     reasoning_text: str | None = None
     reasoning_tokens: int | None = None
+    # `stop_reason` is normalized (see STOP_REASONS); this is the provider's own value.
+    provider_stop_reason: str | None = None
+
+
+# Provider-neutral stop reasons used in TextGenerateResult.stop_reason.
+STOP_REASONS = ("end", "length", "refusal", "tool_use", "content_filter", "other")
 
 
 class ModelCallError(Exception):
