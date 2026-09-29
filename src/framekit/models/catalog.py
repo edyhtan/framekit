@@ -24,12 +24,41 @@ class ModelSpec:
     # Extra request fields this model needs for a short, cheap probe.
     request_extras: dict[str, Any] = field(default_factory=dict)
     betas: tuple[str, ...] = ()
+    # Models that always reason before answering get extra output room for it: the job's
+    # max_tokens is the answer budget, and this allowance is added on top.
+    reasoning_allowance: int = 0
+    max_tokens_cap: int | None = None  # overrides the profile-wide cap
 
 
 _SPECS = (
-    # DeepSeek: peak-hour cache-miss rates (off-peak is half). Source: api-docs.deepseek.com,
-    # checked 2026-09-29. `deepseek-flash` is DeepSeek-V4.1-Flash; thinking is off by default.
-    ModelSpec("deepseek", "deepseek-flash", "DeepSeek V4.1 Flash", Decimal("0.3"), Decimal("1.2")),
+    # Hive-hosted models: standard (non-discounted) rates from thehive.ai/pricing, 2026-09-29.
+    ModelSpec(
+        "hive",
+        "deepseek-ai/deepseek-v4.1-flash",
+        "DeepSeek V4.1 Flash (Hive)",
+        Decimal("0.30"),
+        Decimal("1.20"),
+        # Reasons on every request on Hive (thinking can't be disabled; checked 2026-09-29).
+        reasoning_allowance=768,
+        max_tokens_cap=1024,
+    ),
+    ModelSpec(
+        "hive",
+        "zai-org/glm-5.3-flash",
+        "GLM-5.3 Flash (Hive)",
+        Decimal("0.15"),
+        Decimal("0.50"),
+        reasoning_allowance=768,
+        max_tokens_cap=1024,
+    ),
+    # DeepSeek's own API: peak-hour cache-miss rates (api-docs.deepseek.com, 2026-09-29).
+    ModelSpec(
+        "deepseek",
+        "deepseek-flash",
+        "DeepSeek V4.1 Flash (DeepSeek API)",
+        Decimal("0.3"),
+        Decimal("1.2"),
+    ),
     # Anthropic first-party rates (claude-api skill cache, 2026-06-24).
     ModelSpec("anthropic", "claude-haiku-4-5", "Claude Haiku 4.5", Decimal("1"), Decimal("5")),
     ModelSpec(
@@ -62,7 +91,7 @@ class TextModelSettings(BaseSettings):
         env_prefix="CLIPSEARCH_AI_TEST_", env_file=".env", extra="ignore"
     )
 
-    default_model: str = "deepseek-flash"
+    default_model: str = "deepseek-ai/deepseek-v4.1-flash"
     max_tokens_cap: int = 256
     timeout_s: float = 30.0
 

@@ -14,7 +14,11 @@ from clipsearch_adapters.models.catalog import (
     TextModelSettings,
     get_text_model_settings,
 )
-from clipsearch_adapters.models.deepseek_text import DeepSeekTextGenerator
+from clipsearch_adapters.models.openai_compatible import (
+    DEEPSEEK,
+    HIVE,
+    OpenAICompatibleGenerator,
+)
 from clipsearch_domain.common.ports import ModelCallError, TextGenerateRequest, TextGenerateResult
 
 
@@ -27,8 +31,9 @@ class ProviderAdapter(Protocol):
 ProviderFactory = Callable[[TextModelSettings], ProviderAdapter]
 
 PROVIDERS: dict[str, ProviderFactory] = {
+    "hive": lambda settings: OpenAICompatibleGenerator.from_environment(HIVE, settings),
+    "deepseek": lambda settings: OpenAICompatibleGenerator.from_environment(DEEPSEEK, settings),
     "anthropic": AnthropicTextGenerator.from_environment,
-    "deepseek": DeepSeekTextGenerator.from_environment,
 }
 
 

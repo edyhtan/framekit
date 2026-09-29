@@ -28,6 +28,9 @@ class TextGenerateResult:
     cost_usd: Decimal  # estimate from the adapter's price table
     request_id: str | None
     adapter_version: str
+    # Reasoning models: the model's reasoning, kept apart from the answer.
+    reasoning_text: str | None = None
+    reasoning_tokens: int | None = None
 
 
 class ModelCallError(Exception):
