@@ -7,13 +7,13 @@ that need that provider.
 from collections.abc import Callable
 from typing import Protocol
 
-from clipsearch_adapters.models.catalog import (
+from clipsearch_adapters.external_adapter.catalog import (
     CATALOG,
     ModelSpec,
     TextModelSettings,
     get_text_model_settings,
 )
-from clipsearch_adapters.models.providers import create_adapter
+from clipsearch_adapters.external_adapter.providers import create_adapter
 from clipsearch_domain.common.ports import ModelCallError, TextGenerateRequest, TextGenerateResult
 
 

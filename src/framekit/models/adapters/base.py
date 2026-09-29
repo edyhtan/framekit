@@ -1,7 +1,7 @@
 """One interface for every model provider behind the `text_generate` port.
 
 A provider is described by a `ProviderConfig` (which wire protocol it speaks, its key,
-URL and quirks). Each wire protocol has one `ProtocolAdapter` subclass that only builds
+URL and quirks). Each wire protocol has one `ExternalAIAdapterBase` subclass that only builds
 the request, makes the call and parses the reply. Everything else (key check, output
 budget, timing, error mapping, stop-reason normalization, the result) is shared here.
 """
@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from types import ModuleType
 from typing import Any, ClassVar
 
-from clipsearch_adapters.models.catalog import ModelSpec, TextModelSettings, estimate_cost
+from clipsearch_adapters.external_adapter.catalog import ModelSpec, TextModelSettings, estimate_cost
 from clipsearch_domain.common.ports import ModelCallError, TextGenerateRequest, TextGenerateResult
 
 REASONING_TEXT_LIMIT = 4000  # characters kept for display
@@ -98,7 +98,7 @@ def map_sdk_error(exc: Exception, sdk: ModuleType, config: ProviderConfig) -> Mo
     raise exc  # not an SDK error: a bug, let it surface
 
 
-class ProtocolAdapter(ABC):
+class ExternalAIAdapterBase(ABC):
     """Shared request lifecycle; subclasses implement one wire protocol."""
 
     sdk: ClassVar[ModuleType]
@@ -112,7 +112,7 @@ class ProtocolAdapter(ABC):
     @classmethod
     def from_environment(
         cls, config: ProviderConfig, settings: TextModelSettings
-    ) -> "ProtocolAdapter":
+    ) -> "ExternalAIAdapterBase":
         api_key = os.environ.get(config.key_env)
         if not api_key:
             raise ModelCallError(

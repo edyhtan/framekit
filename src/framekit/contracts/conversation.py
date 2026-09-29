@@ -1,7 +1,7 @@
 """Model capability ports (DESIGN.md §0, model-agnostic rule).
 
-The domain calls capabilities, never providers. Adapters in `clipsearch_adapters.models`
-implement these; which model serves a role is configuration.
+The domain calls capabilities, never providers. Adapters in
+`clipsearch_adapters.external_adapter` implement these; which model serves a role is configuration.
 """
 
 from dataclasses import dataclass

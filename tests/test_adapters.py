@@ -11,17 +11,17 @@ import httpx2
 import openai
 import pytest
 
-from clipsearch_adapters.models.anthropic_text import AnthropicAdapter
-from clipsearch_adapters.models.base import (
-    ProtocolAdapter,
+from clipsearch_adapters.external_adapter.anthropic_text import AnthropicAdapter
+from clipsearch_adapters.external_adapter.catalog import CATALOG, TextModelSettings
+from clipsearch_adapters.external_adapter.external_ai_adapter_base import (
+    ExternalAIAdapterBase,
     ProviderConfig,
     map_sdk_error,
     normalize_stop_reason,
     output_budget,
 )
-from clipsearch_adapters.models.catalog import CATALOG, TextModelSettings
-from clipsearch_adapters.models.openai_compatible import OpenAICompatibleAdapter
-from clipsearch_adapters.models.providers import (
+from clipsearch_adapters.external_adapter.openai_compatible import OpenAICompatibleAdapter
+from clipsearch_adapters.external_adapter.providers import (
     ANTHROPIC,
     DEEPSEEK,
     HIVE,
@@ -29,7 +29,7 @@ from clipsearch_adapters.models.providers import (
     PROVIDERS,
     create_adapter,
 )
-from clipsearch_adapters.models.router import TextGenerateRouter
+from clipsearch_adapters.external_adapter.router import TextGenerateRouter
 from clipsearch_domain.common.ports import STOP_REASONS, ModelCallError, TextGenerateRequest
 
 HIVE_MODEL = "deepseek-ai/deepseek-v4.1-flash"
@@ -149,7 +149,7 @@ def req(model_id=None, max_tokens=200, prompt="hi"):
 def test_every_provider_maps_to_a_protocol_adapter():
     assert set(PROVIDERS) == {spec.provider for spec in CATALOG.values()}
     for config in PROVIDERS.values():
-        assert issubclass(PROTOCOLS[config.protocol], ProtocolAdapter)
+        assert issubclass(PROTOCOLS[config.protocol], ExternalAIAdapterBase)
     assert (HIVE.protocol, DEEPSEEK.protocol, ANTHROPIC.protocol) == (
         "openai",
         "openai",

@@ -8,12 +8,15 @@ from typing import Any, ClassVar
 
 import anthropic
 
-from clipsearch_adapters.models.base import ProtocolAdapter, Reply
-from clipsearch_adapters.models.catalog import ModelSpec
+from clipsearch_adapters.external_adapter.catalog import ModelSpec
+from clipsearch_adapters.external_adapter.external_ai_adapter_base import (
+    ExternalAIAdapterBase,
+    Reply,
+)
 from clipsearch_domain.common.ports import TextGenerateRequest
 
 
-class AnthropicAdapter(ProtocolAdapter):
+class AnthropicAdapter(ExternalAIAdapterBase):
     sdk: ClassVar = anthropic
     adapter_version: ClassVar[str] = "0.4.0"
 

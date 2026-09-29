@@ -9,8 +9,11 @@ from typing import Any, ClassVar
 
 import openai
 
-from clipsearch_adapters.models.base import ProtocolAdapter, Reply
-from clipsearch_adapters.models.catalog import ModelSpec
+from clipsearch_adapters.external_adapter.catalog import ModelSpec
+from clipsearch_adapters.external_adapter.external_ai_adapter_base import (
+    ExternalAIAdapterBase,
+    Reply,
+)
 from clipsearch_domain.common.ports import TextGenerateRequest
 
 
@@ -24,7 +27,7 @@ def _reasoning_tokens(usage: Any) -> int | None:
     return getattr(details, "reasoning_tokens", None) if details else None
 
 
-class OpenAICompatibleAdapter(ProtocolAdapter):
+class OpenAICompatibleAdapter(ExternalAIAdapterBase):
     sdk: ClassVar = openai
     adapter_version: ClassVar[str] = "0.4.0"
 
