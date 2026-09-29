@@ -10,6 +10,7 @@ result) is shared here.
 import os
 import time
 from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from types import ModuleType
 from typing import Any, ClassVar
@@ -20,7 +21,12 @@ from clipsearch_adapters.external_connections.catalog import (
     TextModelSettings,
     estimate_cost,
 )
-from clipsearch_domain.common.ports import ModelCallError, TextGenerateRequest, TextGenerateResult
+from clipsearch_domain.common.ports import (
+    ModelCallError,
+    TextDelta,
+    TextGenerateRequest,
+    TextGenerateResult,
+)
 
 REASONING_TEXT_LIMIT = 4000  # characters kept for display
 
@@ -37,6 +43,13 @@ class Reply:
     output_tokens: int = 0
     reasoning_tokens: int | None = None
     request_id: str | None = None
+
+
+def conversation(request: TextGenerateRequest) -> list[dict[str, str]]:
+    """Earlier turns (oldest first) followed by the new user message."""
+    return [{"role": m.role, "content": m.content} for m in request.history] + [
+        {"role": "user", "content": request.prompt}
+    ]
 
 
 def output_budget(spec: ModelSpec, requested: int, profile_cap: int) -> int:
@@ -104,7 +117,7 @@ class ExternalAIAdapterBase(ABC):
         api_key = os.environ.get(config.key_env)
         if not api_key:
             raise ModelCallError(
-                f"{config.key_env} is not set in the worker's environment", retryable=False
+                f"{config.key_env} is not set in this service's environment", retryable=False
             )
         client = cls.make_client(api_key, config.resolved_base_url(), settings.timeout_s)
         return cls(config, client, settings)
@@ -128,6 +141,20 @@ class ExternalAIAdapterBase(ABC):
     async def call(self, spec: ModelSpec, params: dict[str, Any]) -> Reply:
         """Send the request and parse the response (streamed or not) into a Reply."""
 
+    async def iterate(
+        self, spec: ModelSpec, params: dict[str, Any]
+    ) -> AsyncIterator[TextDelta | Reply]:
+        """Yield output pieces as they arrive, then the final Reply.
+
+        Default for protocols that don't stream: one call, then its reasoning and text as
+        single pieces. Streaming protocols override this."""
+        reply = await self.call(spec, params)
+        if reply.reasoning:
+            yield TextDelta("reasoning", reply.reasoning)
+        if reply.text:
+            yield TextDelta("text", reply.text)
+        yield reply
+
     async def generate(self, spec: ModelSpec, request: TextGenerateRequest) -> TextGenerateResult:
         max_tokens = output_budget(spec, request.max_tokens, self._settings.max_tokens_cap)
         params = self.build_params(spec, request, max_tokens)
@@ -136,8 +163,41 @@ class ExternalAIAdapterBase(ABC):
             reply = await self.call(spec, params)
         except self.sdk.APIError as exc:
             raise map_sdk_error(exc, self.sdk, self.config) from exc
-        latency_ms = round((time.perf_counter() - started) * 1000)
+        return self._result(spec, reply, max_tokens, started, first_token_at=None)
 
+    async def stream(
+        self, spec: ModelSpec, request: TextGenerateRequest
+    ) -> AsyncIterator[TextDelta | TextGenerateResult]:
+        """Same lifecycle as `generate`, yielding pieces as they arrive, then the result."""
+        max_tokens = output_budget(spec, request.max_tokens, self._settings.max_tokens_cap)
+        params = self.build_params(spec, request, max_tokens)
+        started = time.perf_counter()
+        first_token_at: float | None = None
+        reply: Reply | None = None
+        try:
+            async for piece in self.iterate(spec, params):
+                if isinstance(piece, TextDelta):
+                    first_token_at = first_token_at or time.perf_counter()
+                    yield piece
+                else:
+                    reply = piece
+        except self.sdk.APIError as exc:
+            raise map_sdk_error(exc, self.sdk, self.config) from exc
+        if reply is None:  # a protocol bug, not a provider error
+            raise ModelCallError("the adapter produced no final reply", retryable=False)
+        yield self._result(spec, reply, max_tokens, started, first_token_at=first_token_at)
+
+    def _result(
+        self,
+        spec: ModelSpec,
+        reply: Reply,
+        max_tokens: int,
+        started: float,
+        *,
+        first_token_at: float | None,
+    ) -> TextGenerateResult:
+        latency_ms = round((time.perf_counter() - started) * 1000)
+        first_token_ms = round((first_token_at - started) * 1000) if first_token_at else None
         return TextGenerateResult(
             provider=self.config.name,
             model_id=reply.model_id or spec.model_id,
@@ -154,4 +214,5 @@ class ExternalAIAdapterBase(ABC):
             adapter_version=self.adapter_version,
             reasoning_text=reply.reasoning[:REASONING_TEXT_LIMIT] or None,
             reasoning_tokens=reply.reasoning_tokens,
+            first_token_ms=first_token_ms,
         )

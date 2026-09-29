@@ -5,6 +5,7 @@ only in their `ProviderConfig`. Streaming is used where the provider documents i
 (Hive: server-sent events, usage always in the final chunk).
 """
 
+from collections.abc import AsyncIterator
 from typing import Any, ClassVar
 
 import openai
@@ -12,9 +13,10 @@ import openai
 from clipsearch_adapters.external_connections.adapters.external_ai_adapter_base import (
     ExternalAIAdapterBase,
     Reply,
+    conversation,
 )
 from clipsearch_adapters.external_connections.catalog import ModelSpec
-from clipsearch_domain.common.ports import TextGenerateRequest
+from clipsearch_domain.common.ports import TextDelta, TextGenerateRequest
 
 
 def _reasoning_delta(delta: Any) -> str | None:
@@ -41,7 +43,7 @@ class OpenAICompatibleAdapter(ExternalAIAdapterBase):
         params: dict[str, Any] = {
             "model": spec.model_id,
             "max_tokens": max_tokens,
-            "messages": [{"role": "user", "content": request.prompt}],
+            "messages": conversation(request),
             "stream": self.config.stream,
             **spec.request_extras,
         }
@@ -50,42 +52,58 @@ class OpenAICompatibleAdapter(ExternalAIAdapterBase):
         return params
 
     async def call(self, spec: ModelSpec, params: dict[str, Any]) -> Reply:
-        response = await self._client.chat.completions.create(**params)
-        return await self._read_stream(response) if self.config.stream else _read(response)
+        if not self.config.stream:
+            return _read(await self._client.chat.completions.create(**params))
+        reply: Reply | None = None
+        async for piece in self.iterate(spec, params):
+            if isinstance(piece, Reply):
+                reply = piece
+        assert reply is not None
+        return reply
 
-    @staticmethod
-    async def _read_stream(stream: Any) -> Reply:
+    async def iterate(
+        self, spec: ModelSpec, params: dict[str, Any]
+    ) -> AsyncIterator[TextDelta | Reply]:
+        if not self.config.stream:
+            async for piece in super().iterate(spec, params):
+                yield piece
+            return
+        stream = await self._client.chat.completions.create(**params)
         reply, parts, thoughts = Reply(), [], []
         http_response = getattr(stream, "response", None)
         if http_response is not None:
             reply.request_id = http_response.headers.get("x-request-id")
         try:
             async for chunk in stream:
-                OpenAICompatibleAdapter._read_chunk(reply, chunk, parts, thoughts)
+                for delta in self._read_chunk(reply, chunk):
+                    (thoughts if delta.kind == "reasoning" else parts).append(delta.text)
+                    yield delta
         finally:
-            # Return the connection even if the stream fails mid-way.
+            # Return the connection even if the stream fails or the caller stops reading.
             close = getattr(stream, "close", None)
             if close is not None:
                 await close()
         reply.text = "".join(parts)
         reply.reasoning = "".join(thoughts)
-        return reply
+        yield reply
 
     @staticmethod
-    def _read_chunk(reply: Reply, chunk: Any, parts: list[str], thoughts: list[str]) -> None:
+    def _read_chunk(reply: Reply, chunk: Any) -> list[TextDelta]:
+        deltas: list[TextDelta] = []
         reply.model_id = reply.model_id or getattr(chunk, "model", None)
         reply.request_id = reply.request_id or getattr(chunk, "id", None)
         for choice in chunk.choices or []:
-            if choice.delta and choice.delta.content:
-                parts.append(choice.delta.content)
             if choice.delta and (thought := _reasoning_delta(choice.delta)):
-                thoughts.append(thought)
+                deltas.append(TextDelta("reasoning", thought))
+            if choice.delta and choice.delta.content:
+                deltas.append(TextDelta("text", choice.delta.content))
             if choice.finish_reason:
                 reply.stop_reason = choice.finish_reason
         if chunk.usage:  # Hive always sends usage in the final chunk
             reply.input_tokens = chunk.usage.prompt_tokens or 0
             reply.output_tokens = chunk.usage.completion_tokens or 0
             reply.reasoning_tokens = _reasoning_tokens(chunk.usage)
+        return deltas
 
 
 def _read(completion: Any) -> Reply:

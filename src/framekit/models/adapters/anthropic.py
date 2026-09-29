@@ -11,6 +11,7 @@ import anthropic
 from clipsearch_adapters.external_connections.adapters.external_ai_adapter_base import (
     ExternalAIAdapterBase,
     Reply,
+    conversation,
 )
 from clipsearch_adapters.external_connections.catalog import ModelSpec
 from clipsearch_domain.common.ports import TextGenerateRequest
@@ -33,7 +34,7 @@ class AnthropicAdapter(ExternalAIAdapterBase):
         return {
             "model": spec.model_id,
             "max_tokens": max_tokens,
-            "messages": [{"role": "user", "content": request.prompt}],
+            "messages": conversation(request),
             **spec.request_extras,
         }
 

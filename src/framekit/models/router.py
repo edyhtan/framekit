@@ -1,12 +1,13 @@
 """`text_generate` port implementation: catalog → provider config → protocol adapter.
 
-Lifetime: **one router per job attempt**. It creates provider adapters (and their SDK
-clients and connections) lazily, and `aclose` closes them all when the attempt ends.
+Lifetime: **one router per job attempt or chat turn**. It creates provider adapters (and
+their SDK clients and connections) lazily, and `aclose` closes them all when the attempt
+or turn ends.
 A missing key for one provider only fails the requests that need that provider.
 """
 
 import logging
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from typing import Protocol
 
 from clipsearch_adapters.external_connections.adapters.anthropic_text import AnthropicAdapter
@@ -23,13 +24,22 @@ from clipsearch_adapters.external_connections.catalog import (
     TextModelSettings,
     get_text_model_settings,
 )
-from clipsearch_domain.common.ports import ModelCallError, TextGenerateRequest, TextGenerateResult
+from clipsearch_domain.common.ports import (
+    ModelCallError,
+    TextDelta,
+    TextGenerateRequest,
+    TextGenerateResult,
+)
 
 
 class ProviderAdapter(Protocol):
     async def generate(
         self, spec: ModelSpec, request: TextGenerateRequest
     ) -> TextGenerateResult: ...
+
+    def stream(
+        self, spec: ModelSpec, request: TextGenerateRequest
+    ) -> AsyncIterator[TextDelta | TextGenerateResult]: ...
 
     async def aclose(self) -> None: ...
 
@@ -78,6 +88,13 @@ class TextGenerateRouter:
     async def generate(self, request: TextGenerateRequest) -> TextGenerateResult:
         spec = self.resolve(request.model_id)
         return await self._adapter(spec.provider).generate(spec, request)
+
+    async def stream(
+        self, request: TextGenerateRequest
+    ) -> AsyncIterator[TextDelta | TextGenerateResult]:
+        spec = self.resolve(request.model_id)
+        async for piece in self._adapter(spec.provider).stream(spec, request):
+            yield piece
 
     async def aclose(self) -> None:
         """Close every adapter this router opened. Safe to call more than once."""
