@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from types import ModuleType
 from typing import Any, ClassVar
 
-from clipsearch_adapters.external_adapter.catalog import (
+from clipsearch_adapters.external_connections.catalog import (
     ModelSpec,
     ProviderConfig,
     TextModelSettings,

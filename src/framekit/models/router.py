@@ -9,16 +9,20 @@ import logging
 from collections.abc import Callable
 from typing import Protocol
 
-from clipsearch_adapters.external_adapter.anthropic_text import AnthropicAdapter
-from clipsearch_adapters.external_adapter.catalog import (
+from clipsearch_adapters.external_connections.adapters.anthropic_text import AnthropicAdapter
+from clipsearch_adapters.external_connections.adapters.external_ai_adapter_base import (
+    ExternalAIAdapterBase,
+)
+from clipsearch_adapters.external_connections.adapters.openai_compatible import (
+    OpenAICompatibleAdapter,
+)
+from clipsearch_adapters.external_connections.catalog import (
     CATALOG,
     PROVIDERS,
     ModelSpec,
     TextModelSettings,
     get_text_model_settings,
 )
-from clipsearch_adapters.external_adapter.external_ai_adapter_base import ExternalAIAdapterBase
-from clipsearch_adapters.external_adapter.openai_compatible import OpenAICompatibleAdapter
 from clipsearch_domain.common.ports import ModelCallError, TextGenerateRequest, TextGenerateResult
 
 

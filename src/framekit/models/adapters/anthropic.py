@@ -8,11 +8,11 @@ from typing import Any, ClassVar
 
 import anthropic
 
-from clipsearch_adapters.external_adapter.catalog import ModelSpec
-from clipsearch_adapters.external_adapter.external_ai_adapter_base import (
+from clipsearch_adapters.external_connections.adapters.external_ai_adapter_base import (
     ExternalAIAdapterBase,
     Reply,
 )
+from clipsearch_adapters.external_connections.catalog import ModelSpec
 from clipsearch_domain.common.ports import TextGenerateRequest
 
 
