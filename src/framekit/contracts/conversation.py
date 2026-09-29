@@ -1,7 +1,8 @@
 """Model capability ports (DESIGN.md §0, model-agnostic rule).
 
-The domain calls capabilities, never providers. Adapters in `clipsearch_adapters.models`
-implement these; which model serves a role is configuration.
+The domain calls capabilities, never providers. Adapters in
+`clipsearch_adapters.external_connections` implement these; which model serves a role
+is configuration.
 """
 
 from dataclasses import dataclass
@@ -31,6 +32,12 @@ class TextGenerateResult:
     # Reasoning models: the model's reasoning, kept apart from the answer.
     reasoning_text: str | None = None
     reasoning_tokens: int | None = None
+    # `stop_reason` is normalized (see STOP_REASONS); this is the provider's own value.
+    provider_stop_reason: str | None = None
+
+
+# Provider-neutral stop reasons used in TextGenerateResult.stop_reason.
+STOP_REASONS = ("end", "length", "refusal", "tool_use", "content_filter", "other")
 
 
 class ModelCallError(Exception):
@@ -42,4 +49,8 @@ class ModelCallError(Exception):
 
 
 class TextGeneratePort(Protocol):
+    """One generator per job attempt: it may open connections, and `aclose` releases them."""
+
     async def generate(self, request: TextGenerateRequest) -> TextGenerateResult: ...
+
+    async def aclose(self) -> None: ...
