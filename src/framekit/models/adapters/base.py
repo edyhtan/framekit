@@ -1,40 +1,28 @@
-"""One interface for every model provider behind the `text_generate` port.
+"""One interface for every external AI provider behind the `text_generate` port.
 
-A provider is described by a `ProviderConfig` (which wire protocol it speaks, its key,
-URL and quirks). Each wire protocol has one `ExternalAIAdapterBase` subclass that only builds
-the request, makes the call and parses the reply. Everything else (key check, output
-budget, timing, error mapping, stop-reason normalization, the result) is shared here.
+A provider is described by a `ProviderConfig` in the catalog (which wire protocol it
+speaks, its key, URL and quirks). Each wire protocol has one `ExternalAIAdapterBase`
+subclass that only builds the request, makes the call and parses the reply. Everything
+else (key check, output budget, timing, error mapping, stop-reason normalization, the
+result) is shared here.
 """
 
 import os
 import time
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from types import ModuleType
 from typing import Any, ClassVar
 
-from clipsearch_adapters.external_adapter.catalog import ModelSpec, TextModelSettings, estimate_cost
+from clipsearch_adapters.external_adapter.catalog import (
+    ModelSpec,
+    ProviderConfig,
+    TextModelSettings,
+    estimate_cost,
+)
 from clipsearch_domain.common.ports import ModelCallError, TextGenerateRequest, TextGenerateResult
 
 REASONING_TEXT_LIMIT = 4000  # characters kept for display
-
-
-@dataclass(frozen=True)
-class ProviderConfig:
-    name: str
-    protocol: str  # "openai" (Chat Completions) or "anthropic" (Messages)
-    key_env: str
-    base_url: str | None = None  # None: the SDK's default endpoint
-    base_url_env: str | None = None  # optional override, e.g. a regional endpoint
-    stream: bool = False
-    extra_headers: dict[str, str] = field(default_factory=dict)
-    # Provider-specific statuses that mean "don't retry" beyond the usual 4xx.
-    permanent_statuses: frozenset[int] = frozenset()
-
-    def resolved_base_url(self) -> str | None:
-        if self.base_url_env and os.environ.get(self.base_url_env):
-            return os.environ[self.base_url_env]
-        return self.base_url
 
 
 @dataclass

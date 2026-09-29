@@ -9,13 +9,16 @@ import logging
 from collections.abc import Callable
 from typing import Protocol
 
+from clipsearch_adapters.external_adapter.anthropic_text import AnthropicAdapter
 from clipsearch_adapters.external_adapter.catalog import (
     CATALOG,
+    PROVIDERS,
     ModelSpec,
     TextModelSettings,
     get_text_model_settings,
 )
-from clipsearch_adapters.external_adapter.providers import create_adapter
+from clipsearch_adapters.external_adapter.external_ai_adapter_base import ExternalAIAdapterBase
+from clipsearch_adapters.external_adapter.openai_compatible import OpenAICompatibleAdapter
 from clipsearch_domain.common.ports import ModelCallError, TextGenerateRequest, TextGenerateResult
 
 
@@ -30,6 +33,19 @@ class ProviderAdapter(Protocol):
 AdapterFactory = Callable[[str, TextModelSettings], ProviderAdapter]
 
 log = logging.getLogger(__name__)
+
+# Which template (protocol adapter) serves each wire protocol named in a ProviderConfig.
+PROTOCOLS: dict[str, type[ExternalAIAdapterBase]] = {
+    "openai": OpenAICompatibleAdapter,
+    "anthropic": AnthropicAdapter,
+}
+
+
+def create_adapter(provider: str, settings: TextModelSettings) -> ExternalAIAdapterBase:
+    config = PROVIDERS.get(provider)
+    if config is None:
+        raise ModelCallError(f"no provider configured as {provider!r}", retryable=False)
+    return PROTOCOLS[config.protocol].from_environment(config, settings)
 
 
 class TextGenerateRouter:

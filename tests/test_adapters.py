@@ -12,24 +12,27 @@ import openai
 import pytest
 
 from clipsearch_adapters.external_adapter.anthropic_text import AnthropicAdapter
-from clipsearch_adapters.external_adapter.catalog import CATALOG, TextModelSettings
+from clipsearch_adapters.external_adapter.catalog import (
+    ANTHROPIC,
+    CATALOG,
+    DEEPSEEK,
+    HIVE,
+    PROVIDERS,
+    ProviderConfig,
+    TextModelSettings,
+)
 from clipsearch_adapters.external_adapter.external_ai_adapter_base import (
     ExternalAIAdapterBase,
-    ProviderConfig,
     map_sdk_error,
     normalize_stop_reason,
     output_budget,
 )
 from clipsearch_adapters.external_adapter.openai_compatible import OpenAICompatibleAdapter
-from clipsearch_adapters.external_adapter.providers import (
-    ANTHROPIC,
-    DEEPSEEK,
-    HIVE,
+from clipsearch_adapters.external_adapter.router import (
     PROTOCOLS,
-    PROVIDERS,
+    TextGenerateRouter,
     create_adapter,
 )
-from clipsearch_adapters.external_adapter.router import TextGenerateRouter
 from clipsearch_domain.common.ports import STOP_REASONS, ModelCallError, TextGenerateRequest
 
 HIVE_MODEL = "deepseek-ai/deepseek-v4.1-flash"

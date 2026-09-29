@@ -1,9 +1,14 @@
-"""Model catalog and prototype model profile for the `text_generate` port.
+"""Everything the model layer needs to know, as data: providers, models and the profile.
 
-Each entry names its provider; the router sends requests to that provider's adapter.
+- `PROVIDERS`: how to reach each provider (protocol, URL, key variable, streaming, …)
+- `CATALOG`: the selectable models, each naming its provider
+- `TextModelSettings`: the prototype model profile (default model, caps, timeout)
+
+Adding an OpenAI-compatible provider is one `ProviderConfig` plus its models, here.
 Prices are per 1M tokens, used only to record an estimated cost (never displayed).
 """
 
+import os
 from dataclasses import dataclass, field
 from decimal import Decimal
 from functools import lru_cache
@@ -12,6 +17,55 @@ from typing import Any
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 MILLION = Decimal(1_000_000)
+
+
+@dataclass(frozen=True)
+class ProviderConfig:
+    name: str
+    protocol: str  # "openai" (Chat Completions) or "anthropic" (Messages)
+    key_env: str
+    base_url: str | None = None  # None: the SDK's default endpoint
+    base_url_env: str | None = None  # optional override, e.g. a regional endpoint
+    stream: bool = False
+    extra_headers: dict[str, str] = field(default_factory=dict)
+    # Provider-specific statuses that mean "don't retry" beyond the usual 4xx.
+    permanent_statuses: frozenset[int] = frozenset()
+
+    def resolved_base_url(self) -> str | None:
+        if self.base_url_env and os.environ.get(self.base_url_env):
+            return os.environ[self.base_url_env]
+        return self.base_url
+
+
+PROVIDERS: dict[str, ProviderConfig] = {
+    config.name: config
+    for config in (
+        ProviderConfig(
+            name="hive",
+            protocol="openai",
+            key_env="HIVE_API_KEY",
+            base_url="https://api-cdn.thehive.ai/api/v3/",
+            base_url_env="HIVE_BASE_URL",  # Virginia customers: https://api-va1.thehive.ai/api/v3/
+            stream=True,  # the only path Hive documents
+            extra_headers={"Accept": "text/event-stream"},
+            permanent_statuses=frozenset({405}),  # organization paused / out of balance
+        ),
+        ProviderConfig(
+            name="deepseek",
+            protocol="openai",
+            key_env="DEEPSEEK_API_KEY",
+            base_url="https://api.deepseek.com",
+            permanent_statuses=frozenset({402}),  # out of balance
+        ),
+        ProviderConfig(
+            name="anthropic",
+            protocol="anthropic",
+            key_env="ANTHROPIC_API_KEY",
+        ),
+    )
+}
+
+HIVE, DEEPSEEK, ANTHROPIC = PROVIDERS["hive"], PROVIDERS["deepseek"], PROVIDERS["anthropic"]
 
 
 @dataclass(frozen=True)
