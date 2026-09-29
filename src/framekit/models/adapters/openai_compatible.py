@@ -59,23 +59,33 @@ class OpenAICompatibleAdapter(ExternalAIAdapterBase):
         http_response = getattr(stream, "response", None)
         if http_response is not None:
             reply.request_id = http_response.headers.get("x-request-id")
-        async for chunk in stream:
-            reply.model_id = reply.model_id or getattr(chunk, "model", None)
-            reply.request_id = reply.request_id or getattr(chunk, "id", None)
-            for choice in chunk.choices or []:
-                if choice.delta and choice.delta.content:
-                    parts.append(choice.delta.content)
-                if choice.delta and (thought := _reasoning_delta(choice.delta)):
-                    thoughts.append(thought)
-                if choice.finish_reason:
-                    reply.stop_reason = choice.finish_reason
-            if chunk.usage:  # Hive always sends usage in the final chunk
-                reply.input_tokens = chunk.usage.prompt_tokens or 0
-                reply.output_tokens = chunk.usage.completion_tokens or 0
-                reply.reasoning_tokens = _reasoning_tokens(chunk.usage)
+        try:
+            async for chunk in stream:
+                OpenAICompatibleAdapter._read_chunk(reply, chunk, parts, thoughts)
+        finally:
+            # Return the connection even if the stream fails mid-way.
+            close = getattr(stream, "close", None)
+            if close is not None:
+                await close()
         reply.text = "".join(parts)
         reply.reasoning = "".join(thoughts)
         return reply
+
+    @staticmethod
+    def _read_chunk(reply: Reply, chunk: Any, parts: list[str], thoughts: list[str]) -> None:
+        reply.model_id = reply.model_id or getattr(chunk, "model", None)
+        reply.request_id = reply.request_id or getattr(chunk, "id", None)
+        for choice in chunk.choices or []:
+            if choice.delta and choice.delta.content:
+                parts.append(choice.delta.content)
+            if choice.delta and (thought := _reasoning_delta(choice.delta)):
+                thoughts.append(thought)
+            if choice.finish_reason:
+                reply.stop_reason = choice.finish_reason
+        if chunk.usage:  # Hive always sends usage in the final chunk
+            reply.input_tokens = chunk.usage.prompt_tokens or 0
+            reply.output_tokens = chunk.usage.completion_tokens or 0
+            reply.reasoning_tokens = _reasoning_tokens(chunk.usage)
 
 
 def _read(completion: Any) -> Reply:

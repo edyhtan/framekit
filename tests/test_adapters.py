@@ -341,8 +341,13 @@ async def test_anthropic_errors_go_through_the_shared_mapper():
 
 
 class RecordingAdapter:
-    def __init__(self, provider):
-        self.provider, self.specs = provider, []
+    def __init__(self, provider, fail_close=False):
+        self.provider, self.specs, self.closed, self.fail_close = provider, [], 0, fail_close
+
+    async def aclose(self):
+        self.closed += 1
+        if self.fail_close:
+            raise RuntimeError("close failed")
 
     async def generate(self, spec, request):
         self.specs.append(spec.model_id)
@@ -377,3 +382,76 @@ async def test_router_rejects_unknown_model():
     with pytest.raises(ModelCallError) as info:
         await router.generate(req(model_id="nope"))
     assert info.value.retryable is False
+
+
+# --- per-job connections -----------------------------------------------------------------
+
+
+async def test_router_closes_every_adapter_it_opened_and_is_idempotent():
+    adapters = {"hive": RecordingAdapter("hive"), "anthropic": RecordingAdapter("anthropic")}
+    async with TextGenerateRouter(TextModelSettings(), lambda n, _s: adapters[n]) as router:
+        await router.generate(req())
+        await router.generate(req(model_id="claude-haiku-4-5"))
+    assert adapters["hive"].closed == 1 and adapters["anthropic"].closed == 1
+    await router.aclose()  # second close is a no-op
+    assert adapters["hive"].closed == 1
+
+
+async def test_router_close_failure_does_not_stop_other_closes():
+    bad, good = RecordingAdapter("hive", fail_close=True), RecordingAdapter("anthropic")
+    router = TextGenerateRouter(
+        TextModelSettings(), lambda n, _s: {"hive": bad, "anthropic": good}[n]
+    )
+    await router.generate(req())
+    await router.generate(req(model_id="claude-haiku-4-5"))
+    await router.aclose()  # logs the failure, does not raise
+    assert bad.closed == 1 and good.closed == 1
+
+
+async def test_adapter_close_closes_the_sdk_client():
+    closed = []
+
+    async def close():
+        closed.append(True)
+
+    client = openai_client(completion())
+    client.close = close
+    adapter = OpenAICompatibleAdapter(DEEPSEEK, client, TextModelSettings())
+    await adapter.aclose()
+    assert closed == [True]
+
+
+class BrokenStream(FakeStream):
+    """Yields one chunk, then fails, like a connection dropping mid-reply."""
+
+    def __init__(self):
+        super().__init__([chunk("partial")])
+        self.closed = False
+
+    async def _gen(self):
+        yield self._chunks[0]
+        raise openai.APIConnectionError(request=httpx2.Request("POST", "https://x"))
+
+    async def close(self):
+        self.closed = True
+
+
+async def test_stream_failing_mid_way_is_closed_and_reported_retryable():
+    stream = BrokenStream()
+    adapter = OpenAICompatibleAdapter(HIVE, openai_client(stream), TextModelSettings())
+    with pytest.raises(ModelCallError) as info:
+        await adapter.generate(CATALOG[HIVE_MODEL], req())
+    assert stream.closed is True and info.value.retryable is True
+
+
+async def test_completed_stream_is_closed_too():
+    stream = hive_stream()
+    closed = []
+
+    async def close():
+        closed.append(True)
+
+    stream.close = close
+    adapter = OpenAICompatibleAdapter(HIVE, openai_client(stream), TextModelSettings())
+    await adapter.generate(CATALOG[HIVE_MODEL], req())
+    assert closed == [True]

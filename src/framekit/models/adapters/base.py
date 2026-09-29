@@ -125,6 +125,12 @@ class ExternalAIAdapterBase(ABC):
     @abstractmethod
     def make_client(cls, api_key: str, base_url: str | None, timeout_s: float) -> Any: ...
 
+    async def aclose(self) -> None:
+        """Close the SDK client and its connection pool."""
+        close = getattr(self._client, "close", None)
+        if close is not None:
+            await close()
+
     @abstractmethod
     def build_params(
         self, spec: ModelSpec, request: TextGenerateRequest, max_tokens: int

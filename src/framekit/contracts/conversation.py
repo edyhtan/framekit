@@ -48,4 +48,8 @@ class ModelCallError(Exception):
 
 
 class TextGeneratePort(Protocol):
+    """One generator per job attempt: it may open connections, and `aclose` releases them."""
+
     async def generate(self, request: TextGenerateRequest) -> TextGenerateResult: ...
+
+    async def aclose(self) -> None: ...
