@@ -15,6 +15,8 @@ from clipsearch_adapters.external_connections.adapters.external_ai_adapter_base 
     merge_fields,
     reasoning_active,
     reasoning_fields,
+    structured_mode,
+    system_text,
 )
 from clipsearch_adapters.external_connections.catalog import ModelSpec
 from clipsearch_domain.common.ports import TextGenerateRequest
@@ -22,7 +24,7 @@ from clipsearch_domain.common.ports import TextGenerateRequest
 
 class AnthropicAdapter(ExternalAIAdapterBase):
     sdk: ClassVar = anthropic
-    adapter_version: ClassVar[str] = "0.4.0"
+    adapter_version: ClassVar[str] = "0.5.0"
 
     @classmethod
     def make_client(cls, api_key: str, base_url: str | None, timeout_s: float) -> Any:
@@ -34,8 +36,11 @@ class AnthropicAdapter(ExternalAIAdapterBase):
     def build_params(
         self, spec: ModelSpec, request: TextGenerateRequest, max_tokens: int
     ) -> dict[str, Any]:
+        # Structured output is "prompted" here: the schema goes into the system prompt.
+        system = system_text(request, structured_mode(spec, request, self.structured_modes))
         return merge_fields(
             {"model": spec.model_id, "max_tokens": max_tokens, "messages": conversation(request)},
+            {"system": system} if system else {},
             spec.request_extras,
             reasoning_fields(spec, reasoning_active(spec, request)),
         )

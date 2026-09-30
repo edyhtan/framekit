@@ -95,6 +95,14 @@ class ModelSpec:
     request_extras: dict[str, Any] = field(default_factory=dict)
     betas: tuple[str, ...] = ()
     reasoning: ReasoningControl | None = None  # None: the model doesn't reason
+    # How to apply a response schema: "json_schema" (provider enforces the schema),
+    # "json_mode" (valid JSON only), "function_calling", or "prompted" (instructions only).
+    # Adapters fall back to "prompted" for methods they can't apply. Set from probes.
+    structured_method: str = "prompted"
+    # Context window in tokens, from the provider's documentation; None until recorded.
+    context_window: int | None = None
+    # Which LangChain chat-model wrapper serves this model in the LangChain family.
+    langchain_class: str | None = None
 
     @property
     def reasoning_mode(self) -> str:
@@ -117,6 +125,13 @@ _SPECS = (
         reasoning=ReasoningControl(
             off={"extra_body": {"reasoning_effort": "none"}}, allowance=768, max_tokens_cap=1024
         ),
+        # Probes 2026-09-30. LangChain family (ChatDeepSeek wrapper): reasoning switches,
+        # streamed reasoning, system prompt, truncation and 401 mapping verified; schema via
+        # tool calling returned valid JSON. Hive rejects a native json_schema
+        # response_format (400), so the method is function_calling: the LangChain family
+        # uses a tool call, and the SDK family (no tool path) falls back to "prompted",
+        # which also returned valid JSON. json_mode works in both.
+        structured_method="function_calling",
     ),
     ModelSpec(
         "hive",
@@ -130,6 +145,9 @@ _SPECS = (
         reasoning=ReasoningControl(
             off={"extra_body": {"reasoning_effort": "low"}}, allowance=768, max_tokens_cap=1024
         ),
+        # Probes 2026-09-30: same results as above (tool calling valid in 17 output tokens;
+        # native json_schema response_format rejected with 400).
+        structured_method="function_calling",
     ),
     # DeepSeek's own API: peak-hour cache-miss rates (api-docs.deepseek.com, 2026-09-29).
     # Thinking is on by default at effort "high" (api-docs.deepseek.com/guides/thinking_mode);
@@ -162,6 +180,9 @@ _SPECS = (
             allowance=1024,
             max_tokens_cap=1280,
         ),
+        # Context windows for Claude: claude-api skill model table (2026). Structured output
+        # stays "prompted" until probed with a key.
+        context_window=200_000,
     ),
     ModelSpec(
         "anthropic",
@@ -179,6 +200,7 @@ _SPECS = (
             allowance=768,
             max_tokens_cap=1024,
         ),
+        context_window=1_000_000,
     ),
     ModelSpec(
         "anthropic",
@@ -196,6 +218,7 @@ _SPECS = (
             allowance=768,
             max_tokens_cap=1024,
         ),
+        context_window=1_000_000,
     ),
 )
 CATALOG: dict[str, ModelSpec] = {spec.model_id: spec for spec in _SPECS}

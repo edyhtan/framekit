@@ -1,8 +1,12 @@
-"""`text_generate` port implementation: catalog → provider config → protocol adapter.
+"""`text_generate` port implementation: catalog → provider config → adapter family.
 
-Lifetime: **one router per job attempt or chat turn**. It creates provider adapters (and
-their SDK clients and connections) lazily, and `aclose` closes them all when the attempt
-or turn ends.
+Two adapter families serve the same port: the SDK family (official `openai` /
+`anthropic` SDKs; corpus work, the ai_test job, /prototype/chat) and the LangChain family
+(conversational search roles). A request picks one with `TextGenerateRequest.family`.
+
+Lifetime: **one router per job attempt or chat turn**. It creates adapters (and their
+clients and connections) lazily per (provider, family), and `aclose` closes them all when
+the attempt or turn ends.
 A missing key for one provider only fails the requests that need that provider.
 """
 
@@ -44,22 +48,39 @@ class ProviderAdapter(Protocol):
     async def aclose(self) -> None: ...
 
 
-AdapterFactory = Callable[[str, TextModelSettings], ProviderAdapter]
+# (provider name, settings, adapter family) -> adapter
+AdapterFactory = Callable[[str, TextModelSettings, str | None], ProviderAdapter]
 
 log = logging.getLogger(__name__)
 
-# Which template (protocol adapter) serves each wire protocol named in a ProviderConfig.
+# Default ("SDK") family: which template (protocol adapter) serves each wire protocol
+# named in a ProviderConfig. Used for corpus work, the ai_test job and /prototype/chat.
 PROTOCOLS: dict[str, type[ExternalAIAdapterBase]] = {
     "openai": OpenAICompatibleAdapter,
     "anthropic": AnthropicAdapter,
 }
 
+# Adapter families a request can ask for (`TextGenerateRequest.family`); None is the SDK
+# family above. "langchain" serves the conversational search roles.
+FAMILIES = (None, "langchain")
 
-def create_adapter(provider: str, settings: TextModelSettings) -> ExternalAIAdapterBase:
+
+def create_adapter(
+    provider: str, settings: TextModelSettings, family: str | None = None
+) -> ExternalAIAdapterBase:
     config = PROVIDERS.get(provider)
     if config is None:
         raise ModelCallError(f"no provider configured as {provider!r}", retryable=False)
-    return PROTOCOLS[config.protocol].from_environment(config, settings)
+    if family is None:
+        return PROTOCOLS[config.protocol].from_environment(config, settings)
+    if family == "langchain":
+        # Imported here so processes that only use the SDK family never load LangChain.
+        from clipsearch_adapters.external_connections.langchain.chat_adapter import (
+            LangChainChatAdapter,
+        )
+
+        return LangChainChatAdapter.from_environment(config, settings)
+    raise ModelCallError(f"unknown adapter family {family!r}", retryable=False)
 
 
 class TextGenerateRouter:
@@ -68,7 +89,7 @@ class TextGenerateRouter:
     ) -> None:
         self._settings = settings
         self._factory = adapter_factory
-        self._adapters: dict[str, ProviderAdapter] = {}
+        self._adapters: dict[tuple[str, str | None], ProviderAdapter] = {}
 
     @classmethod
     def from_environment(cls) -> "TextGenerateRouter":
@@ -80,20 +101,21 @@ class TextGenerateRouter:
             raise ModelCallError(f"model {chosen!r} is not in the catalog", retryable=False)
         return CATALOG[chosen]
 
-    def _adapter(self, provider: str) -> ProviderAdapter:
-        if provider not in self._adapters:
-            self._adapters[provider] = self._factory(provider, self._settings)
-        return self._adapters[provider]
+    def _adapter(self, provider: str, family: str | None) -> ProviderAdapter:
+        key = (provider, family)
+        if key not in self._adapters:
+            self._adapters[key] = self._factory(provider, self._settings, family)
+        return self._adapters[key]
 
     async def generate(self, request: TextGenerateRequest) -> TextGenerateResult:
         spec = self.resolve(request.model_id)
-        return await self._adapter(spec.provider).generate(spec, request)
+        return await self._adapter(spec.provider, request.family).generate(spec, request)
 
     async def stream(
         self, request: TextGenerateRequest
     ) -> AsyncIterator[TextDelta | TextGenerateResult]:
         spec = self.resolve(request.model_id)
-        async for piece in self._adapter(spec.provider).stream(spec, request):
+        async for piece in self._adapter(spec.provider, request.family).stream(spec, request):
             yield piece
 
     async def aclose(self) -> None:

@@ -17,6 +17,8 @@ from clipsearch_adapters.external_connections.adapters.external_ai_adapter_base 
     merge_fields,
     reasoning_active,
     reasoning_fields,
+    structured_mode,
+    system_text,
 )
 from clipsearch_adapters.external_connections.catalog import ModelSpec
 from clipsearch_domain.common.ports import TextDelta, TextGenerateRequest
@@ -32,9 +34,24 @@ def _reasoning_tokens(usage: Any) -> int | None:
     return getattr(details, "reasoning_tokens", None) if details else None
 
 
+def _response_format(request: TextGenerateRequest, mode: str | None) -> dict[str, Any]:
+    if mode == "json_schema":
+        schema = dict(request.response_schema or {})
+        return {
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {"name": "response", "schema": schema},
+            }
+        }
+    if mode == "json_mode":
+        return {"response_format": {"type": "json_object"}}
+    return {}
+
+
 class OpenAICompatibleAdapter(ExternalAIAdapterBase):
     sdk: ClassVar = openai
-    adapter_version: ClassVar[str] = "0.4.0"
+    adapter_version: ClassVar[str] = "0.5.0"
+    structured_modes: ClassVar[frozenset[str]] = frozenset({"json_schema", "json_mode", "prompted"})
 
     @classmethod
     def make_client(cls, api_key: str, base_url: str | None, timeout_s: float) -> Any:
@@ -43,15 +60,21 @@ class OpenAICompatibleAdapter(ExternalAIAdapterBase):
     def build_params(
         self, spec: ModelSpec, request: TextGenerateRequest, max_tokens: int
     ) -> dict[str, Any]:
+        mode = structured_mode(spec, request, self.structured_modes)
+        system = system_text(request, mode)
+        messages = conversation(request)
+        if system:
+            messages = [{"role": "system", "content": system}, *messages]
         params = merge_fields(
             {
                 "model": spec.model_id,
                 "max_tokens": max_tokens,
-                "messages": conversation(request),
+                "messages": messages,
                 "stream": self.config.stream,
             },
             spec.request_extras,
             reasoning_fields(spec, reasoning_active(spec, request)),
+            _response_format(request, mode),
         )
         if self.config.extra_headers:
             params["extra_headers"] = dict(self.config.extra_headers)

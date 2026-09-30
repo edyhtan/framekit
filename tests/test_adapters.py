@@ -3,6 +3,7 @@
 No real API calls: SDK clients are replaced by fakes with the same shape.
 """
 
+from dataclasses import replace
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -277,6 +278,53 @@ async def test_hive_output_hitting_the_limit_is_length():
     assert result.provider_stop_reason == "stop"
 
 
+SCHEMA = {"type": "object", "properties": {"answer": {"type": "integer"}}}
+
+
+async def test_sdk_family_sends_system_first_and_falls_back_to_prompted_schema():
+    client = openai_client(completion())
+    adapter = OpenAICompatibleAdapter(DEEPSEEK, client, TextModelSettings())
+    # Hive's models use function_calling, which the SDK family has no path for: prompted.
+    spec = replace(CATALOG["deepseek-flash"], structured_method="function_calling")
+    request = TextGenerateRequest("hi", 32, system="Be brief.", response_schema=SCHEMA)
+    result = await adapter.generate(spec, request)
+
+    [params] = client.chat.completions.calls
+    system = params["messages"][0]
+    assert system["role"] == "system" and system["content"].startswith("Be brief.")
+    assert '"answer"' in system["content"] and "response_format" not in params
+    assert result.structured_mode == "prompted"
+
+
+async def test_sdk_family_json_mode_sets_response_format_and_keeps_schema_in_prompt():
+    client = openai_client(completion())
+    adapter = OpenAICompatibleAdapter(DEEPSEEK, client, TextModelSettings())
+    spec = replace(CATALOG["deepseek-flash"], structured_method="json_mode")
+    result = await adapter.generate(spec, TextGenerateRequest("hi", 32, response_schema=SCHEMA))
+    [params] = client.chat.completions.calls
+    assert params["response_format"] == {"type": "json_object"}
+    assert '"answer"' in params["messages"][0]["content"]  # shape still in the instructions
+    assert result.structured_mode == "json_mode"
+
+
+async def test_sdk_family_anthropic_system_prompt_and_prompted_schema():
+    client = anthropic_client(claude_message())
+    adapter = AnthropicAdapter(ANTHROPIC, client, TextModelSettings())
+    request = TextGenerateRequest("hi", 32, system="Be brief.", response_schema=SCHEMA)
+    result = await adapter.generate(CATALOG["claude-haiku-4-5"], request)
+    [params] = client.messages.calls
+    assert params["system"].startswith("Be brief.") and '"answer"' in params["system"]
+    assert result.structured_mode == "prompted"
+
+
+async def test_no_schema_means_no_structured_mode_and_no_system():
+    client = openai_client(completion())
+    adapter = OpenAICompatibleAdapter(DEEPSEEK, client, TextModelSettings())
+    result = await adapter.generate(CATALOG["deepseek-flash"], req())
+    [params] = client.chat.completions.calls
+    assert params["messages"][0]["role"] == "user" and result.structured_mode is None
+
+
 async def test_deepseek_non_streaming_completion():
     client = openai_client(completion())
     adapter = OpenAICompatibleAdapter(DEEPSEEK, client, TextModelSettings(max_tokens_cap=64))
@@ -365,7 +413,7 @@ class RecordingAdapter:
 
 async def test_router_sends_each_model_to_its_provider():
     adapters = {name: RecordingAdapter(name) for name in PROVIDERS}
-    router = TextGenerateRouter(TextModelSettings(), lambda name, _s: adapters[name])
+    router = TextGenerateRouter(TextModelSettings(), lambda name, _s, _f: adapters[name])
     assert (await router.generate(req())).provider == "hive"  # default model
     assert (await router.generate(req(model_id="deepseek-flash"))).provider == "deepseek"
     assert (await router.generate(req(model_id="claude-sonnet-5"))).provider == "anthropic"
@@ -375,7 +423,7 @@ async def test_router_sends_each_model_to_its_provider():
 async def test_router_missing_key_only_affects_that_provider():
     claude = RecordingAdapter("anthropic")
 
-    def factory(name, _settings):
+    def factory(name, _settings, _family):
         if name == "hive":
             raise ModelCallError("HIVE_API_KEY is not set", retryable=False)
         return claude
@@ -387,7 +435,7 @@ async def test_router_missing_key_only_affects_that_provider():
 
 
 async def test_router_rejects_unknown_model():
-    router = TextGenerateRouter(TextModelSettings(), lambda name, _s: RecordingAdapter(name))
+    router = TextGenerateRouter(TextModelSettings(), lambda name, _s, _f: RecordingAdapter(name))
     with pytest.raises(ModelCallError) as info:
         await router.generate(req(model_id="nope"))
     assert info.value.retryable is False
@@ -398,7 +446,7 @@ async def test_router_rejects_unknown_model():
 
 async def test_router_closes_every_adapter_it_opened_and_is_idempotent():
     adapters = {"hive": RecordingAdapter("hive"), "anthropic": RecordingAdapter("anthropic")}
-    async with TextGenerateRouter(TextModelSettings(), lambda n, _s: adapters[n]) as router:
+    async with TextGenerateRouter(TextModelSettings(), lambda n, _s, _f: adapters[n]) as router:
         await router.generate(req())
         await router.generate(req(model_id="claude-haiku-4-5"))
     assert adapters["hive"].closed == 1 and adapters["anthropic"].closed == 1
@@ -409,7 +457,7 @@ async def test_router_closes_every_adapter_it_opened_and_is_idempotent():
 async def test_router_close_failure_does_not_stop_other_closes():
     bad, good = RecordingAdapter("hive", fail_close=True), RecordingAdapter("anthropic")
     router = TextGenerateRouter(
-        TextModelSettings(), lambda n, _s: {"hive": bad, "anthropic": good}[n]
+        TextModelSettings(), lambda n, _s, _f: {"hive": bad, "anthropic": good}[n]
     )
     await router.generate(req())
     await router.generate(req(model_id="claude-haiku-4-5"))

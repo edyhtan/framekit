@@ -7,6 +7,7 @@ else (key check, output budget, timing, error mapping, stop-reason normalization
 result) is shared here.
 """
 
+import json
 import os
 import time
 from abc import ABC, abstractmethod
@@ -50,6 +51,32 @@ def conversation(request: TextGenerateRequest) -> list[dict[str, str]]:
     return [{"role": m.role, "content": m.content} for m in request.history] + [
         {"role": "user", "content": request.prompt}
     ]
+
+
+def structured_mode(
+    spec: ModelSpec, request: TextGenerateRequest, supported: frozenset[str]
+) -> str | None:
+    """How this call applies `response_schema`: the model's method from the catalog if this
+    adapter supports it, else "prompted" (schema in the instructions only)."""
+    if request.response_schema is None:
+        return None
+    return spec.structured_method if spec.structured_method in supported else "prompted"
+
+
+def system_text(request: TextGenerateRequest, mode: str | None) -> str | None:
+    """The system instructions, plus the schema when the provider doesn't enforce it.
+
+    JSON mode enforces valid JSON but not the shape, and "prompted" enforces nothing, so
+    both carry the schema in the instructions. (DeepSeek's JSON mode also requires the
+    word "json" in the prompt.)"""
+    parts = [request.system] if request.system else []
+    if mode in ("prompted", "json_mode"):
+        schema = json.dumps(request.response_schema, separators=(",", ":"))
+        parts.append(
+            "Reply with a single JSON object that matches this JSON Schema, "
+            f"and nothing else (no prose, no code fences):\n{schema}"
+        )
+    return "\n\n".join(parts) or None
 
 
 def reasoning_active(spec: ModelSpec, request: TextGenerateRequest) -> bool:
@@ -130,11 +157,24 @@ def map_sdk_error(exc: Exception, sdk: ModuleType, config: ProviderConfig) -> Mo
     raise exc  # not an SDK error: a bug, let it surface
 
 
+def require_api_key(config: ProviderConfig) -> str:
+    """The provider's key from the environment; a missing key fails only this provider."""
+    api_key = os.environ.get(config.key_env)
+    if not api_key:
+        raise ModelCallError(
+            f"{config.key_env} is not set in this service's environment", retryable=False
+        )
+    return api_key
+
+
 class ExternalAIAdapterBase(ABC):
     """Shared request lifecycle; subclasses implement one wire protocol."""
 
     sdk: ClassVar[ModuleType]
     adapter_version: ClassVar[str]
+    # Structured-output methods this adapter can apply; anything else falls back to
+    # "prompted".
+    structured_modes: ClassVar[frozenset[str]] = frozenset({"prompted"})
 
     def __init__(self, config: ProviderConfig, client: Any, settings: TextModelSettings) -> None:
         self.config = config
@@ -145,11 +185,7 @@ class ExternalAIAdapterBase(ABC):
     def from_environment(
         cls, config: ProviderConfig, settings: TextModelSettings
     ) -> "ExternalAIAdapterBase":
-        api_key = os.environ.get(config.key_env)
-        if not api_key:
-            raise ModelCallError(
-                f"{config.key_env} is not set in this service's environment", retryable=False
-            )
+        api_key = require_api_key(config)
         client = cls.make_client(api_key, config.resolved_base_url(), settings.timeout_s)
         return cls(config, client, settings)
 
@@ -198,7 +234,13 @@ class ExternalAIAdapterBase(ABC):
         except self.sdk.APIError as exc:
             raise map_sdk_error(exc, self.sdk, self.config) from exc
         return self._result(
-            spec, reply, max_tokens, started, first_token_at=None, reasoning=reasoning
+            spec,
+            reply,
+            max_tokens,
+            started,
+            first_token_at=None,
+            reasoning=reasoning,
+            mode=structured_mode(spec, request, self.structured_modes),
         )
 
     async def stream(
@@ -225,7 +267,13 @@ class ExternalAIAdapterBase(ABC):
         if reply is None:  # a protocol bug, not a provider error
             raise ModelCallError("the adapter produced no final reply", retryable=False)
         yield self._result(
-            spec, reply, max_tokens, started, first_token_at=first_token_at, reasoning=reasoning
+            spec,
+            reply,
+            max_tokens,
+            started,
+            first_token_at=first_token_at,
+            reasoning=reasoning,
+            mode=structured_mode(spec, request, self.structured_modes),
         )
 
     def _result(
@@ -237,6 +285,7 @@ class ExternalAIAdapterBase(ABC):
         *,
         first_token_at: float | None,
         reasoning: bool,
+        mode: str | None = None,
     ) -> TextGenerateResult:
         latency_ms = round((time.perf_counter() - started) * 1000)
         first_token_ms = round((first_token_at - started) * 1000) if first_token_at else None
@@ -258,4 +307,5 @@ class ExternalAIAdapterBase(ABC):
             reasoning_tokens=reply.reasoning_tokens,
             first_token_ms=first_token_ms,
             reasoning_on=reasoning,
+            structured_mode=mode,
         )

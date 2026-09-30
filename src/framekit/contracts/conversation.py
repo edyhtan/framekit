@@ -5,10 +5,10 @@ The domain calls capabilities, never providers. Adapters in
 is configuration.
 """
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol
 
 
 @dataclass(frozen=True)
@@ -26,6 +26,13 @@ class TextGenerateRequest:
     # Reasoning is billed as output tokens: off unless asked for. Models that can't
     # switch it off reason anyway; the result says whether it was on.
     reasoning: bool = False
+    system: str | None = None  # instructions sent ahead of the conversation
+    # Structured output: a JSON Schema (plain data). The reply text is then JSON meant to
+    # match it; callers always validate it themselves, whatever the adapter enforced.
+    response_schema: Mapping[str, Any] | None = None
+    # Which adapter family serves the call (e.g. "langchain"); None: the default family.
+    # A plain string, so no library type crosses the port.
+    family: str | None = None
 
 
 @dataclass(frozen=True)
@@ -48,6 +55,9 @@ class TextGenerateResult:
     # Streaming only: time from sending the request to the first piece of output.
     first_token_ms: int | None = None
     reasoning_on: bool = False
+    # How a response_schema was applied: "json_schema", "json_mode", "function_calling"
+    # or "prompted" (schema in the instructions only). None: no schema was asked for.
+    structured_mode: str | None = None
 
 
 @dataclass(frozen=True)
