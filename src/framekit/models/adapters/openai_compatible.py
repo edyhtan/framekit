@@ -21,7 +21,7 @@ from clipsearch_adapters.external_connections.adapters.external_ai_adapter_base 
     system_text,
 )
 from clipsearch_adapters.external_connections.catalog import ModelSpec
-from clipsearch_domain.common.ports import TextDelta, TextGenerateRequest
+from clipsearch_domain.common.ports import ConversationRequest, TextDelta
 
 
 def _reasoning_delta(delta: Any) -> str | None:
@@ -34,7 +34,7 @@ def _reasoning_tokens(usage: Any) -> int | None:
     return getattr(details, "reasoning_tokens", None) if details else None
 
 
-def _response_format(request: TextGenerateRequest, mode: str | None) -> dict[str, Any]:
+def _response_format(request: ConversationRequest, mode: str | None) -> dict[str, Any]:
     if mode == "json_schema":
         schema = dict(request.response_schema or {})
         return {
@@ -58,7 +58,7 @@ class OpenAICompatibleAdapter(ExternalAIAdapterBase):
         return openai.AsyncOpenAI(api_key=api_key, base_url=base_url, timeout=timeout_s)
 
     def build_params(
-        self, spec: ModelSpec, request: TextGenerateRequest, max_tokens: int
+        self, spec: ModelSpec, request: ConversationRequest, max_tokens: int
     ) -> dict[str, Any]:
         mode = structured_mode(spec, request, self.structured_modes)
         system = system_text(request, mode)

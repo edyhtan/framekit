@@ -18,7 +18,7 @@ class ChatMessage:
 
 
 @dataclass(frozen=True)
-class TextGenerateRequest:
+class ConversationRequest:
     prompt: str  # the new user message
     max_tokens: int
     model_id: str | None = None  # None: the adapter's configured default
@@ -36,7 +36,7 @@ class TextGenerateRequest:
 
 
 @dataclass(frozen=True)
-class TextGenerateResult:
+class ConversationResult:
     provider: str
     model_id: str
     text: str
@@ -68,7 +68,7 @@ class TextDelta:
     text: str
 
 
-# Provider-neutral stop reasons used in TextGenerateResult.stop_reason.
+# Provider-neutral stop reasons used in ConversationResult.stop_reason.
 STOP_REASONS = ("end", "length", "refusal", "tool_use", "content_filter", "other")
 
 
@@ -80,14 +80,14 @@ class ModelCallError(Exception):
         self.retryable = retryable
 
 
-class TextGeneratePort(Protocol):
+class ConversationPort(Protocol):
     """One generator per job attempt or chat turn: it may open connections, and `aclose`
     releases them."""
 
-    async def generate(self, request: TextGenerateRequest) -> TextGenerateResult: ...
+    async def generate(self, request: ConversationRequest) -> ConversationResult: ...
 
-    def stream(self, request: TextGenerateRequest) -> AsyncIterator[TextDelta | TextGenerateResult]:
-        """Yield `TextDelta`s as output arrives, then exactly one final `TextGenerateResult`."""
+    def stream(self, request: ConversationRequest) -> AsyncIterator[TextDelta | ConversationResult]:
+        """Yield `TextDelta`s as output arrives, then exactly one final `ConversationResult`."""
         ...
 
     async def aclose(self) -> None: ...

@@ -1,4 +1,4 @@
-"""One interface for every external AI provider behind the `text_generate` port.
+"""One interface for every external AI provider behind the `conversation` port.
 
 A provider is described by a `ProviderConfig` in the catalog (which wire protocol it
 speaks, its key, URL and quirks). Each wire protocol has one `ExternalAIAdapterBase`
@@ -23,10 +23,10 @@ from clipsearch_adapters.external_connections.catalog import (
     estimate_cost,
 )
 from clipsearch_domain.common.ports import (
+    ConversationRequest,
+    ConversationResult,
     ModelCallError,
     TextDelta,
-    TextGenerateRequest,
-    TextGenerateResult,
 )
 
 REASONING_TEXT_LIMIT = 4000  # characters kept for display
@@ -46,7 +46,7 @@ class Reply:
     request_id: str | None = None
 
 
-def conversation(request: TextGenerateRequest) -> list[dict[str, str]]:
+def conversation(request: ConversationRequest) -> list[dict[str, str]]:
     """Earlier turns (oldest first) followed by the new user message."""
     return [{"role": m.role, "content": m.content} for m in request.history] + [
         {"role": "user", "content": request.prompt}
@@ -54,7 +54,7 @@ def conversation(request: TextGenerateRequest) -> list[dict[str, str]]:
 
 
 def structured_mode(
-    spec: ModelSpec, request: TextGenerateRequest, supported: frozenset[str]
+    spec: ModelSpec, request: ConversationRequest, supported: frozenset[str]
 ) -> str | None:
     """How this call applies `response_schema`: the model's method from the catalog if this
     adapter supports it, else "prompted" (schema in the instructions only)."""
@@ -63,7 +63,7 @@ def structured_mode(
     return spec.structured_method if spec.structured_method in supported else "prompted"
 
 
-def system_text(request: TextGenerateRequest, mode: str | None) -> str | None:
+def system_text(request: ConversationRequest, mode: str | None) -> str | None:
     """The system instructions, plus the schema when the provider doesn't enforce it.
 
     JSON mode enforces valid JSON but not the shape, and "prompted" enforces nothing, so
@@ -79,7 +79,7 @@ def system_text(request: TextGenerateRequest, mode: str | None) -> str | None:
     return "\n\n".join(parts) or None
 
 
-def reasoning_active(spec: ModelSpec, request: TextGenerateRequest) -> bool:
+def reasoning_active(spec: ModelSpec, request: ConversationRequest) -> bool:
     """Whether this call will reason: asked for, or the model can't switch it off."""
     control = spec.reasoning
     if control is None:
@@ -201,7 +201,7 @@ class ExternalAIAdapterBase(ABC):
 
     @abstractmethod
     def build_params(
-        self, spec: ModelSpec, request: TextGenerateRequest, max_tokens: int
+        self, spec: ModelSpec, request: ConversationRequest, max_tokens: int
     ) -> dict[str, Any]: ...
 
     @abstractmethod
@@ -222,7 +222,7 @@ class ExternalAIAdapterBase(ABC):
             yield TextDelta("text", reply.text)
         yield reply
 
-    async def generate(self, spec: ModelSpec, request: TextGenerateRequest) -> TextGenerateResult:
+    async def generate(self, spec: ModelSpec, request: ConversationRequest) -> ConversationResult:
         reasoning = reasoning_active(spec, request)
         max_tokens = output_budget(
             spec, request.max_tokens, self._settings.max_tokens_cap, reasoning=reasoning
@@ -244,8 +244,8 @@ class ExternalAIAdapterBase(ABC):
         )
 
     async def stream(
-        self, spec: ModelSpec, request: TextGenerateRequest
-    ) -> AsyncIterator[TextDelta | TextGenerateResult]:
+        self, spec: ModelSpec, request: ConversationRequest
+    ) -> AsyncIterator[TextDelta | ConversationResult]:
         """Same lifecycle as `generate`, yielding pieces as they arrive, then the result."""
         reasoning = reasoning_active(spec, request)
         max_tokens = output_budget(
@@ -286,10 +286,10 @@ class ExternalAIAdapterBase(ABC):
         first_token_at: float | None,
         reasoning: bool,
         mode: str | None = None,
-    ) -> TextGenerateResult:
+    ) -> ConversationResult:
         latency_ms = round((time.perf_counter() - started) * 1000)
         first_token_ms = round((first_token_at - started) * 1000) if first_token_at else None
-        return TextGenerateResult(
+        return ConversationResult(
             provider=self.config.name,
             model_id=reply.model_id or spec.model_id,
             text=reply.text,

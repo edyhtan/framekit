@@ -19,7 +19,7 @@ from clipsearch_adapters.external_connections.adapters.external_ai_adapter_base 
     system_text,
 )
 from clipsearch_adapters.external_connections.catalog import ModelSpec
-from clipsearch_domain.common.ports import TextGenerateRequest
+from clipsearch_domain.common.ports import ConversationRequest
 
 
 class AnthropicAdapter(ExternalAIAdapterBase):
@@ -34,7 +34,7 @@ class AnthropicAdapter(ExternalAIAdapterBase):
         return anthropic.AsyncAnthropic(**kwargs)
 
     def build_params(
-        self, spec: ModelSpec, request: TextGenerateRequest, max_tokens: int
+        self, spec: ModelSpec, request: ConversationRequest, max_tokens: int
     ) -> dict[str, Any]:
         # Structured output is "prompted" here: the schema goes into the system prompt.
         system = system_text(request, structured_mode(spec, request, self.structured_modes))

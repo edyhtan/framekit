@@ -1,8 +1,8 @@
-"""`text_generate` port implementation: catalog → provider config → adapter family.
+"""`conversation` port implementation: catalog → provider config → adapter family.
 
 Two adapter families serve the same port: the SDK family (official `openai` /
 `anthropic` SDKs; corpus work, the ai_test job, /prototype/chat) and the LangChain family
-(conversational search roles). A request picks one with `TextGenerateRequest.family`.
+(conversational search roles). A request picks one with `ConversationRequest.family`.
 
 Lifetime: **one router per job attempt or chat turn**. It creates adapters (and their
 clients and connections) lazily per (provider, family), and `aclose` closes them all when
@@ -29,21 +29,21 @@ from clipsearch_adapters.external_connections.catalog import (
     get_text_model_settings,
 )
 from clipsearch_domain.common.ports import (
+    ConversationRequest,
+    ConversationResult,
     ModelCallError,
     TextDelta,
-    TextGenerateRequest,
-    TextGenerateResult,
 )
 
 
 class ProviderAdapter(Protocol):
     async def generate(
-        self, spec: ModelSpec, request: TextGenerateRequest
-    ) -> TextGenerateResult: ...
+        self, spec: ModelSpec, request: ConversationRequest
+    ) -> ConversationResult: ...
 
     def stream(
-        self, spec: ModelSpec, request: TextGenerateRequest
-    ) -> AsyncIterator[TextDelta | TextGenerateResult]: ...
+        self, spec: ModelSpec, request: ConversationRequest
+    ) -> AsyncIterator[TextDelta | ConversationResult]: ...
 
     async def aclose(self) -> None: ...
 
@@ -60,7 +60,7 @@ PROTOCOLS: dict[str, type[ExternalAIAdapterBase]] = {
     "anthropic": AnthropicAdapter,
 }
 
-# Adapter families a request can ask for (`TextGenerateRequest.family`); None is the SDK
+# Adapter families a request can ask for (`ConversationRequest.family`); None is the SDK
 # family above. "langchain" serves the conversational search roles.
 FAMILIES = (None, "langchain")
 
@@ -83,7 +83,7 @@ def create_adapter(
     raise ModelCallError(f"unknown adapter family {family!r}", retryable=False)
 
 
-class TextGenerateRouter:
+class ConversationRouter:
     def __init__(
         self, settings: TextModelSettings, adapter_factory: AdapterFactory = create_adapter
     ) -> None:
@@ -92,7 +92,7 @@ class TextGenerateRouter:
         self._adapters: dict[tuple[str, str | None], ProviderAdapter] = {}
 
     @classmethod
-    def from_environment(cls) -> "TextGenerateRouter":
+    def from_environment(cls) -> "ConversationRouter":
         return cls(get_text_model_settings())
 
     def resolve(self, model_id: str | None) -> ModelSpec:
@@ -107,13 +107,13 @@ class TextGenerateRouter:
             self._adapters[key] = self._factory(provider, self._settings, family)
         return self._adapters[key]
 
-    async def generate(self, request: TextGenerateRequest) -> TextGenerateResult:
+    async def generate(self, request: ConversationRequest) -> ConversationResult:
         spec = self.resolve(request.model_id)
         return await self._adapter(spec.provider, request.family).generate(spec, request)
 
     async def stream(
-        self, request: TextGenerateRequest
-    ) -> AsyncIterator[TextDelta | TextGenerateResult]:
+        self, request: ConversationRequest
+    ) -> AsyncIterator[TextDelta | ConversationResult]:
         spec = self.resolve(request.model_id)
         async for piece in self._adapter(spec.provider, request.family).stream(spec, request):
             yield piece
@@ -127,7 +127,7 @@ class TextGenerateRouter:
             except Exception:  # closing must never mask the job's own outcome
                 log.warning("closing a model adapter failed", exc_info=True)
 
-    async def __aenter__(self) -> "TextGenerateRouter":
+    async def __aenter__(self) -> "ConversationRouter":
         return self
 
     async def __aexit__(self, *exc_info: object) -> None:
