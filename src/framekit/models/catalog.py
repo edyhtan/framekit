@@ -233,6 +233,9 @@ class TextModelSettings(BaseSettings):
 
     default_model: str = "deepseek-ai/deepseek-v4.1-flash"
     max_tokens_cap: int = 256
+    # Search turns (Interpreter, Responder, digest) set their own per-role budgets; this
+    # caps them all. The 256 above is the ai_test job's probe cap.
+    search_max_tokens_cap: int = 2048
     timeout_s: float = 30.0
 
 

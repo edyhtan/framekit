@@ -95,6 +95,14 @@ class ConversationRouter:
     def from_environment(cls) -> "ConversationRouter":
         return cls(get_text_model_settings())
 
+    @classmethod
+    def for_search(cls) -> "ConversationRouter":
+        """A router for search turns: their roles set per-role token budgets (spec §8.4),
+        capped by `search_max_tokens_cap` instead of the ai_test probe cap."""
+        settings = get_text_model_settings()
+        cap = settings.search_max_tokens_cap
+        return cls(settings.model_copy(update={"max_tokens_cap": cap}))
+
     def resolve(self, model_id: str | None) -> ModelSpec:
         chosen = model_id or self._settings.default_model
         if chosen not in CATALOG:

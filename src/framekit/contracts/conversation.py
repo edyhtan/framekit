@@ -33,6 +33,9 @@ class ConversationRequest:
     # Which adapter family serves the call (e.g. "langchain"); None: the default family.
     # A plain string, so no library type crosses the port.
     family: str | None = None
+    # What kind of request this is (e.g. "search.interpret", "ai_test"), for the model
+    # response cache's per-class policy. None: the "default" class.
+    cache_class: str | None = None
 
 
 @dataclass(frozen=True)
@@ -58,6 +61,9 @@ class ConversationResult:
     # How a response_schema was applied: "json_schema", "json_mode", "function_calling"
     # or "prompted" (schema in the instructions only). None: no schema was asked for.
     structured_mode: str | None = None
+    # True when the reply was replayed from the model response cache, not a provider call
+    # (then cost is 0 and timings are the replay's own).
+    cached: bool = False
 
 
 @dataclass(frozen=True)
