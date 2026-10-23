@@ -8,12 +8,12 @@ Times are local (UTC−4). Decisions made before this repository existed are in 
 
 ## 2026-10-23
 
-### 18:40 — Repository created: video_extraction_engine
+### 18:30 — Repository created: video_extraction_engine
 - **Decision** (owner): corpus extraction lives in its own repository, named **`video_extraction_engine`**, as a general-purpose library and CLI: `extract(A, V) → dataset`. Its design and architecture documents start from the extraction parts of short_extract's DESIGN.md and ARCHITECTURE.md, which now point here instead of describing extraction themselves.
 - **Why:** the owner wants the extraction layer reusable beyond the search app, for benchmarking and experimental model training. A general library must not depend on an app's persistence or services.
 - **Recorded in:** README.md; CLAUDE.md; DESIGN.md; ARCHITECTURE.md (all new).
 
-### 18:41 — Decisions carried over from short_extract
+### 18:31 — Decisions carried over from short_extract
 These were decided in short_extract (dates are from its journal) and bind this engine from day one:
 - **Function and output** (2026-10-23): `extract(A, V) → dataset`. A is the extraction context, V the corpus (profile + unit references, never copies). The output is a **full dataset** (segments, text, vectors, provenance) as Parquet / Arrow plus a manifest, not vectors alone. → DESIGN.md §2.
 - **The library owns the engine** (2026-10-23): contracts (ports, A / V / dataset schemas, lens spec format) and model access (catalog, router, adapter families, response cache). Consumers depend on it at a release tag. → ARCHITECTURE.md §1, §6.
@@ -27,7 +27,7 @@ These were decided in short_extract (dates are from its journal) and bind this e
 - **Seeding:** the library starts from short_extract's contracts and model access via `git subtree split`, keeping history, tagged `v0.1.0` (2026-10-23). → ARCHITECTURE.md §7.
 - **PRs are squash-merged; never stack PRs** (owner's workflow rule). → CLAUDE.md "Workflow".
 
-### 18:42 — Package layout proposed (not decided)
+### 18:32 — Package layout proposed (not decided)
 - **Proposal:** one distribution, `video-extraction-engine`, import package `video_extraction_engine` with `contracts`, `models` and `extraction` subpackages, and a `vxe` CLI; heavy media and speech dependencies as optional extras. Import contracts enforce `cli → extraction → models → contracts`.
 - **Status:** open until seeding (E0); names are proposals.
 - **Recorded in:** ARCHITECTURE.md §2, §8.
