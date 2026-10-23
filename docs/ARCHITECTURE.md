@@ -1,16 +1,18 @@
 # Architecture: Layers, Packages and Consumers
 
-How the engine's code is organized and how other projects connect to it. Written for collaborators who need the map before writing code. The functional design (what `extract(A, V)` does, stage by stage) is in [DESIGN.md](DESIGN.md); decisions are dated in [DECISIONS.md](DECISIONS.md).
+How framekit's code is organized and how other projects connect to it. Written for collaborators who need the map before writing code. The functional design (what `extract(A, V)` does, stage by stage) is in [DESIGN.md](DESIGN.md); decisions are dated in [DECISIONS.md](DECISIONS.md).
 
 > **Status:** target architecture, approved by the owner on 2026-10-23. No code yet: the first code arrives by seeding from short_extract (§7).
 
 ---
 
-## 1. Position: one library, several consumers
+## 1. Position: one general library, several consumers
+
+framekit is a **general library**, not a single-purpose engine: its modules are useful on their own (a project may use only `framekit.models` for LLM access, or only the dataset reader). Extraction is the first large module; others are added beside it.
 
 ```mermaid
 flowchart TB
-    subgraph LIB["video_extraction_engine (this repository)"]
+    subgraph LIB["framekit (this repository)"]
         CT["contracts<br/>ports, A / V / dataset schemas,<br/>lens spec format, ids, run records"]
         MA["model access<br/>catalog, router, adapters,<br/>response cache"]
         EX["extraction<br/>stages L0–L4, runner,<br/>dataset writer and reader,<br/>benchmark harness, CLI"]
@@ -43,17 +45,17 @@ flowchart TB
 
 ## 2. Packaging and packages
 
-The engine follows the **Python library convention** (decided 2026-10-23): it's installed by other projects (the search app, training experiments, benchmarks), so it's packaged like any library they'd install, not like a deployed app.
+framekit follows the **Python library convention** (decided 2026-10-23): it's installed by other projects (the search app, training experiments, benchmarks), so it's packaged like any library they'd install, not like a deployed app.
 
 | Aspect | Convention |
 |---|---|
-| Metadata | one `pyproject.toml` (PEP 621): name, version, dependencies, extras, the `vxe` script entry point |
+| Metadata | one `pyproject.toml` (PEP 621): name, version, dependencies, extras, the `framekit` script entry point |
 | Build backend | `hatchling` (uv's default); builds a **wheel** and an **sdist** |
-| Layout | **src layout**: the code lives in `src/video_extraction_engine/`, so tests run against the installed package, never against stray files at the repo root |
-| Dependencies | **loose ranges** (e.g. `pydantic>=2.6,<3`), so the engine fits into consumers' environments (a training project brings its own PyTorch, NumPy, …) |
+| Layout | **src layout**: the code lives in `src/framekit/`, so tests run against the installed package, never against stray files at the repo root |
+| Dependencies | **loose ranges** (e.g. `pydantic>=2.6,<3`), so framekit fits into consumers' environments (a training project brings its own PyTorch, NumPy, …) |
 | Heavy dependencies | **optional extras**, so consumers install only what they use |
-| Lockfile | `uv.lock` is committed for the engine's own development and CI; consumers never use it, they resolve their own |
-| Typing | ships `py.typed`, so consumers' type checkers see the engine's types |
+| Lockfile | `uv.lock` is committed for framekit's own development and CI; consumers never use it, they resolve their own |
+| Typing | ships `py.typed`, so consumers' type checkers see framekit's types |
 | Versions | semantic versioning, git tags `vX.Y.Z`; the dataset schema version is separate and recorded in each manifest (§3) |
 | Distribution | installed from the git repository at a tag (private repo); publishing wheels to a package index is a later option |
 
@@ -61,26 +63,28 @@ The engine follows the **Python library convention** (decided 2026-10-23): it's 
 pyproject.toml
 uv.lock
 src/
-  video_extraction_engine/
+  framekit/
     __init__.py    public API: extract, Dataset, schemas
     py.typed
     contracts/     ports, schemas (A, V, dataset, lens spec), ids, clock, run records, ResponseStore
     models/        catalog, router, adapters (sdk/, langchain/), cache/ (wrapper + file store)
     extraction/    stages/ (normalize, signals, segment, perceive, lens_pass, embed, qc),
                    runner/, dataset/ (writer, reader, manifest), bench/, alignment/
-    cli.py         `vxe extract …`, `vxe bench …`, `vxe cache stats|wipe`
+    cli.py         `framekit extract …`, `framekit bench …`, `framekit cache stats|wipe`
 tests/
 docs/
 ```
 
 | Install | Adds | Typical consumer |
 |---|---|---|
-| `video-extraction-engine` | contracts, model access (official SDKs), the dataset reader | anything reading datasets: training experiments, the search app's loader |
+| `framekit` | contracts, model access (official SDKs), the dataset reader | anything reading datasets: training experiments, the search app's loader |
 | `[media]` | ffmpeg bindings, scene detection, audio | running extraction |
 | `[speech]` | Whisper + VAD | the `speech` perception module |
 | `[langchain]` | the LangChain adapter family | the search app's conversational roles |
 
-**Training experiments** read datasets as plain Parquet / Arrow, so they can use whatever training stack they choose (Hugging Face `datasets`, PyTorch, Polars, …). The engine never depends on a training framework; any training helpers would be a separate optional extra, decided when an experiment needs one.
+**Modules, not packages.** A new capability (say, a training-data helper or a new kind of processing) is added as a new subpackage under `src/framekit/`, with its own import contract and, if it brings heavy dependencies, its own extra. It becomes a separate package only when a consumer needs it without the rest *and* the extras can't provide that (e.g. conflicting dependency ranges).
+
+**Training experiments** read datasets as plain Parquet / Arrow, so they can use whatever training stack they choose (Hugging Face `datasets`, PyTorch, Polars, …). framekit never depends on a training framework; any training helpers would be a separate optional extra, decided when an experiment needs one.
 
 ### 2.1 Dependency rules (import-linter)
 
@@ -101,7 +105,7 @@ flowchart LR
 | LangGraph | nowhere |
 | No consumer code | no import of any consumer package, web framework, ORM or queue library |
 
-A **vocabulary test** scans engine code (and prompt, JSON and text files shipped with it) for known lens and corpus terms. Example lens specs and corpus profiles used by tests live under `tests/fixtures/`, outside the scan, and contain no footage.
+A **vocabulary test** scans library code (and prompt, JSON and text files shipped with it) for known lens and corpus terms. Example lens specs and corpus profiles used by tests live under `tests/fixtures/`, outside the scan, and contain no footage.
 
 ---
 
@@ -113,7 +117,7 @@ A **vocabulary test** scans engine code (and prompt, JSON and text files shipped
 | **Schemas** | `ExtractionContext` (A), `Corpus` + `CorpusProfile` (V), `LensSpec`, `ModelProfile`, `DatasetManifest`: Pydantic models, versioned with the dataset schema |
 | **Dataset** | `Dataset.open(path)` → typed readers per table (Arrow); `manifest` |
 | **Model access** | `ConversationRouter`, `ConversationRequest` / `ConversationResult`, `with_cache(port, store, settings)`; the same API consumers use for their own roles |
-| **CLI** | `vxe extract --context a.yaml --corpus v.yaml --out ./ds`; `vxe bench …`; `vxe cache stats|wipe` |
+| **CLI** | `framekit extract --context a.yaml --corpus v.yaml --out ./ds`; `framekit bench …`; `framekit cache stats|wipe` |
 
 Changing a public schema or port is a **release** with a version bump; the dataset manifest records the schema version so readers can refuse or migrate old datasets.
 
@@ -171,10 +175,10 @@ This stack is seeded from short_extract, where it's built and tested today (§7)
 - **Dependency:** consumers install the library from its git repository at a **release tag**, with the extras they need. With uv:
   ```toml
   [project]
-  dependencies = ["video-extraction-engine[langchain]"]
+  dependencies = ["framekit[langchain]"]
 
   [tool.uv.sources]
-  video-extraction-engine = { git = "https://github.com/edyhtan/video_extraction_engine", tag = "v0.1.0" }
+  framekit = { git = "https://github.com/edyhtan/framekit", tag = "v0.1.0" }
   ```
   A contract change means a library release, then a version bump in the consumer.
 - **short_extract (the search agent):**
@@ -188,12 +192,12 @@ This stack is seeded from short_extract, where it's built and tested today (§7)
 
 ## 7. Seeding plan
 
-The engine's first code comes from short_extract, keeping its history:
+framekit's first code comes from short_extract, keeping its history:
 
 | Step | Repository | Work |
 |---|---|---|
 | 1. Restructure in place | short_extract | Gather contracts into `engine/core` and model access into `engine/models` (transitional folders), introduce the `ResponseStore` port, new import contracts. Behavior-preserving. |
-| 2. Seed this library | this repo | `git subtree split` of `engine/core` + `engine/models`, merged here; move them into `src/video_extraction_engine/` per §2 and write the library `pyproject.toml` (hatchling, ranges, extras); add tooling (pytest, ruff, import-linter contracts, vocabulary test) and CI. Tag **`v0.1.0`**. |
+| 2. Seed this library | this repo | `git subtree split` of `engine/core` + `engine/models`, merged here; move them into `src/framekit/` per §2 and write the library `pyproject.toml` (hatchling, ranges, extras); add tooling (pytest, ruff, import-linter contracts, vocabulary test) and CI. Tag **`v0.1.0`**. |
 | 3. Depend on the library | short_extract | Replace the local copies with this library at `v0.1.0`. Behavior-preserving. |
 
 Then extraction (E1 onward, DESIGN.md §7) is built here.
@@ -204,7 +208,7 @@ Then extraction (E1 onward, DESIGN.md §7) is built here.
 
 ## 8. Open decisions
 
-- Package and CLI names (proposed: distribution `video-extraction-engine`, import package `video_extraction_engine`, CLI `vxe`). The packaging convention itself is decided (§2).
+- **Name clash on PyPI:** an unrelated, active package named `framekit` exists there. Installing from git is unaffected, but publishing would need another distribution name (e.g. `framekit-ml`), and a project must not install both (same import name). Decide before any publishing.
 - Publishing wheels to a package index (instead of git tags), if the repo goes public or installs from git get slow.
 - Dataset layout details, A / V schema details, lens spec file format (DESIGN.md §9).
 - Distributed runner technology, once corpus size needs it.

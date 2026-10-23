@@ -39,7 +39,15 @@ These were decided in short_extract (dates are from its journal) and bind this e
 - **Consequence for training:** experiments read datasets as plain Parquet / Arrow with whatever training stack they choose; the engine never depends on a training framework. Experiment code lives in the consumer.
 - **Recorded in:** ARCHITECTURE.md §2, §6, §7, §8; DESIGN.md §2.2, §9; CLAUDE.md "Key decisions".
 
+### 19:03 — Renamed to framekit: a general library, not a single-purpose engine
+- **Decision** (owner): the repository and library are renamed from `video_extraction_engine` to **`framekit`** (repo `edyhtan/framekit`; distribution, import package and CLI all `framekit`). It's framed as a **general library of AI building blocks for video datasets**: `framekit.contracts`, `framekit.models` (model access) and `framekit.extraction` are modules of one package, each usable on its own.
+  - **Modules, not packages:** new capabilities are added as subpackages, with their own import contract and, if heavy, their own extra. A separate package only when a consumer needs one part without the rest and extras can't provide it.
+- **Why:** the old name described only one of the three parts; model access is general LLM access used by the search app too, and training experiments will use the library beyond extraction. The owner wants a general library but not many small packages.
+- **Supersedes:** the repository name in "Repository created: video_extraction_engine", and the proposed names (`video_extraction_engine`, `vxe`) in "Package layout proposed (not decided)".
+- **Open:** an unrelated, active package named `framekit` exists on PyPI. Installing from git is unaffected; publishing would need another distribution name, and a project must not install both.
+- **Recorded in:** README.md; CLAUDE.md "Project", "Key decisions"; DESIGN.md title and intro; ARCHITECTURE.md §1, §2, §6, §7, §8.
+
 ---
 
 ## Still open
-See DESIGN.md §9: video, text and embedding models; A / V schema details and the lens spec file format; dataset layout; package and CLI names; distributed runner; per-lens taxonomies.
+See DESIGN.md §9: video, text and embedding models; A / V schema details and the lens spec file format; dataset layout; a distribution name if ever published to PyPI; distributed runner; per-lens taxonomies.

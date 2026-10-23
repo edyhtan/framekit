@@ -1,7 +1,7 @@
 # CLAUDE.md
 
 ## Project
-Video Extraction Engine: a non-commercial, general-purpose library and CLI. One function, `extract(A, V) → dataset`: **A** is the extraction context (lens specs, perception modules, segmentation, embedding spec, model profile, budget), **V** is a video corpus (corpus profile + unit references). The dataset holds segments, text, vectors and provenance (Parquet / Arrow + manifest).
+framekit: a non-commercial, general-purpose Python library of AI building blocks for video datasets. One package with modules: `contracts` (ports, schemas), `models` (model access: catalog, router, adapters, response cache) and `extraction`. New capabilities become new modules, not new packages, unless there's a concrete reason to split. The extraction module's main function is `extract(A, V) → dataset`: **A** is the extraction context (lens specs, perception modules, segmentation, embedding spec, model profile, budget), **V** is a video corpus (corpus profile + unit references). The dataset holds segments, text, vectors and provenance (Parquet / Arrow + manifest).
 
 Consumers: the video clip search agent ([short_extract](https://github.com/edyhtan/short_extract)), benchmarks, and experimental model training. The library never depends on a consumer.
 
@@ -22,7 +22,7 @@ Always use rendered diagrams, never ASCII art: Mermaid code blocks (`flowchart` 
 
 ## Architecture rule (most important)
 Layers: **contracts** (pure: ports, schemas, lens spec format) · **model access** (catalog, router, adapters, response cache) · **extraction** (stages, runner, dataset, benchmarks, CLI). See `docs/ARCHITECTURE.md` §1–§2.
-- Engine code and the dataset schema never reference lens concepts (emotion, dynamic, situation, gag, …) or corpus concepts (short, era, Tom, …). They enter only as data: lens specs in A, the corpus profile in V.
+- Library code and the dataset schema never reference lens concepts (emotion, dynamic, situation, gag, …) or corpus concepts (short, era, Tom, …). They enter only as data: lens specs in A, the corpus profile in V.
 - No lens-specific columns: lens output lives in `annotations` / `phrasings`, validated against the lens spec.
 - If a feature seems to need a lens- or corpus-specific branch, extend the lens spec format or the corpus profile instead, and discuss first.
 - **Model-agnostic:** no provider SDK calls, and no provider or library types, outside model adapters. Stages call ports (`video_understand`, `vision_generate`, `conversation`, `embed_*`). Models are chosen per role in the model profile. Every model output records `model_id`; switching models creates new versions and never overwrites.
@@ -35,7 +35,7 @@ Layers: **contracts** (pure: ports, schemas, lens spec format) · **model access
 - **Lens specs are declarative data** (schema, vocabulary, prompts, rubric), passed in A.
 - **The output is a full dataset**, not vectors alone: segments, text, vectors, provenance.
 - **Idempotent, resumable runs** keyed by input hash; the response cache makes replays free and deterministic.
-- **Packaged as a Python library** (`docs/ARCHITECTURE.md` §2): `pyproject.toml` with `hatchling`, **src layout** (`src/video_extraction_engine/`), loose dependency ranges, heavy dependencies as optional extras, `py.typed`, semver git tags. No training framework as a dependency; consumers (including training experiments) bring their own.
+- **Packaged as a Python library** (`docs/ARCHITECTURE.md` §2): `pyproject.toml` with `hatchling`, **src layout** (`src/framekit/`), loose dependency ranges, heavy dependencies as optional extras, `py.typed`, semver git tags. No training framework as a dependency; consumers (including training experiments) bring their own.
 
 ## Constraints
 - **Rights mode per corpus** (`byo_media` | `hosted` | `embed`). Tom and Jerry is `byo_media`: no footage, frames, thumbnails, ripping tools or YouTube downloaders in the repo, ever (`docs/DESIGN.md` §8). Datasets from a `byo_media` corpus stay local; training on them follows the same rule. Test fixtures use synthetic media only.
