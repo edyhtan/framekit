@@ -35,6 +35,7 @@ Layers: **contracts** (pure: ports, schemas, lens spec format) · **model access
 - **Lens specs are declarative data** (schema, vocabulary, prompts, rubric), passed in A.
 - **The output is a full dataset**, not vectors alone: segments, text, vectors, provenance.
 - **Idempotent, resumable runs** keyed by input hash; the response cache makes replays free and deterministic.
+- **Packaged as a Python library** (`docs/ARCHITECTURE.md` §2): `pyproject.toml` with `hatchling`, **src layout** (`src/video_extraction_engine/`), loose dependency ranges, heavy dependencies as optional extras, `py.typed`, semver git tags. No training framework as a dependency; consumers (including training experiments) bring their own.
 
 ## Constraints
 - **Rights mode per corpus** (`byo_media` | `hosted` | `embed`). Tom and Jerry is `byo_media`: no footage, frames, thumbnails, ripping tools or YouTube downloaders in the repo, ever (`docs/DESIGN.md` §8). Datasets from a `byo_media` corpus stay local; training on them follows the same rule. Test fixtures use synthetic media only.
