@@ -15,6 +15,7 @@ flowchart TB
     subgraph LIB["framekit (this repository)"]
         CT["contracts<br/>ports, A / V / dataset schemas,<br/>lens spec format, ids, run records"]
         MA["model access<br/>catalog, router, adapters,<br/>response cache"]
+        VI["vision<br/>frame selection, image prep,<br/>delivery (vision_params)"]
         EX["extraction<br/>stages L0–L4, runner,<br/>dataset writer and reader,<br/>benchmark harness, CLI"]
     end
     APP["short_extract<br/>search agent"]
@@ -23,11 +24,14 @@ flowchart TB
     DS[("dataset<br/>Parquet / Arrow + manifest")]
 
     EX --> MA
+    EX --> VI
     EX --> CT
     MA --> CT
+    VI --> CT
     EX -- "writes" --> DS
     APP -- "model access for its roles" --> MA
     APP -- "lens specs, schemas" --> CT
+    APP -. "query-time sampling" .-> VI
     APP -. "loads" .-> DS
     BEN --> EX
     TRN -. "reads" .-> DS
@@ -37,6 +41,7 @@ flowchart TB
 |---|---|---|
 | **contracts** | ports (`conversation`; later `video_understand`, `vision_generate`, `embed_*`), media ports, the `ResponseStore` port, the A / V / dataset schemas, the lens spec format, ids, run records | import anything else in the library, any provider SDK, or any I/O library |
 | **model access** | model catalog, router, our own adapters on the official provider SDKs, the response cache wrapper and its file store | know stages, datasets or lenses |
+| **vision** | frame selection strategies (candidates, anchors, filters, budget allocation), image preparation and delivery, all driven by `vision_params` (DESIGN.md §2.3) | call a model; know stages, lenses or corpora |
 | **extraction** | stages L0–L4 + embed, the stage runner, the dataset writer and reader, the benchmark harness, the CLI | call a provider SDK directly; contain lens or corpus vocabulary |
 
 **What the library never knows:** any consumer. No sessions, no web framework, no Postgres, no task queue, no consumer's services. A consumer depends on the library; never the other way round.
@@ -66,8 +71,9 @@ src/
   framekit/
     __init__.py    public API: extract, Dataset, schemas
     py.typed
-    contracts/     ports, schemas (A, V, dataset, lens spec), ids, clock, run records, ResponseStore
+    contracts/     ports, schemas (A, V, dataset, lens spec, VisionParams), ids, clock, run records, ResponseStore
     models/        catalog, router, adapters (openai_compatible, anthropic), cache/ (wrapper + file store)
+    vision/        strategies/ (candidates, anchors, filters, allocation), image prep, delivery, registry
     extraction/    stages/ (normalize, signals, segment, perceive, lens_pass, embed, qc),
                    runner/, dataset/ (writer, reader, manifest), bench/, alignment/
     cli.py         `framekit extract …`, `framekit bench …`, `framekit cache stats|wipe`
@@ -78,7 +84,7 @@ docs/
 | Install | Adds | Typical consumer |
 |---|---|---|
 | `framekit` | contracts, model access (official SDKs), the dataset reader | anything reading datasets: training experiments, the search app's loader |
-| `[media]` | ffmpeg bindings, scene detection, audio | running extraction |
+| `[media]` | ffmpeg bindings, scene detection, audio, image hashing | running extraction; `framekit.vision` |
 | `[speech]` | Whisper + VAD | the `speech` perception module |
 
 **Modules, not packages.** A new capability (say, a training-data helper or a new kind of processing) is added as a new subpackage under `src/framekit/`, with its own import contract and, if it brings heavy dependencies, its own extra. It becomes a separate package only when a consumer needs it without the rest *and* the extras can't provide that (e.g. conflicting dependency ranges).
@@ -91,17 +97,19 @@ docs/
 flowchart LR
     CLI["cli"] --> EX["extraction"]
     EX --> MA["models"]
+    EX --> VI["vision"]
     EX --> CT["contracts"]
     MA --> CT
+    VI --> CT
 ```
 
 | Contract | Rule |
 |---|---|
-| Layers | `cli` → `extraction` → `models` → `contracts` |
+| Layers | `cli` → `extraction` → `models` or `vision` → `contracts`; `models` and `vision` don't import each other |
 | Contracts are pure | `contracts` imports no provider SDK, media library, or I/O framework |
 | Provider SDKs | only inside `models` adapters |
 | Model-access libraries (LangChain, LiteLLM, …) | nowhere; adding one needs a journal decision |
-| Media libraries (ffmpeg bindings, scene detection, audio, Whisper) | only inside `extraction.stages` behind media ports |
+| Media libraries (ffmpeg bindings, scene detection, audio, Whisper, image hashing) | only inside `extraction.stages` and `vision`, behind media ports |
 | LangGraph | nowhere |
 | No consumer code | no import of any consumer package, web framework, ORM or queue library |
 
@@ -114,8 +122,9 @@ A **vocabulary test** scans library code (and prompt, JSON and text files shippe
 | Surface | Shape |
 |---|---|
 | **Function** | `extract(context: ExtractionContext, corpus: Corpus, *, models: ModelProfile, runner: Runner = LocalRunner(), out: Path, cache: ResponseStore | None = None) -> Dataset` |
-| **Schemas** | `ExtractionContext` (A), `Corpus` + `CorpusProfile` (V), `LensSpec`, `ModelProfile`, `DatasetManifest`: Pydantic models, versioned with the dataset schema |
+| **Schemas** | `ExtractionContext` (A), `Corpus` + `CorpusProfile` (V), `LensSpec`, `ModelProfile`, `VisionParams`, `DatasetManifest`: Pydantic models, versioned with the dataset schema |
 | **Dataset** | `Dataset.open(path)` → typed readers per table (Arrow); `manifest` |
+| **Vision** | `select_frames(unit, span, signals, params) -> FrameSet` (timestamps + images), `prepare(frames, params)`; usable without extraction |
 | **Model access** | `ConversationRouter`, `ConversationRequest` / `ConversationResult`, `with_cache(port, store, settings)`; the same API consumers use for their own roles |
 | **CLI** | `framekit extract --context a.yaml --corpus v.yaml --out ./ds`; `framekit bench …`; `framekit cache stats|wipe` |
 

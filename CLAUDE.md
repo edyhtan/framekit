@@ -34,6 +34,7 @@ Layers: **contracts** (pure: ports, schemas, lens spec format) · **model access
 - **Perception and interpretation are separate passes.** L3a records observable facts only (core record + optional modules). Every interpretation is a text-only lens pass (L3b).
 - **Fixed, versioned vocabularies per lens.** Never write free-text labels; validate against the lens spec.
 - **Lens specs are declarative data** (schema, vocabulary, prompts, rubric), passed in A.
+- **Vision parameters are their own structured data** (`vision_params`, `docs/DESIGN.md` §2.3): named, versioned vision profiles assigned per stage (frame selection, image prep, delivery). Strategies are versioned code in `framekit.vision`; profiles only select and parameterize them. Resolved profiles go in the manifest and the stage input hash; frames actually sent are recorded per scene.
 - **The output is a full dataset**, not vectors alone: segments, text, vectors, provenance.
 - **Idempotent, resumable runs** keyed by input hash; the response cache makes replays free and deterministic.
 - **Packaged as a Python library** (`docs/ARCHITECTURE.md` §2): `pyproject.toml` with `hatchling`, **src layout** (`src/framekit/`), loose dependency ranges, heavy dependencies as optional extras, `py.typed`, semver git tags. No training framework as a dependency; consumers (including training experiments) bring their own.

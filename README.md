@@ -6,6 +6,7 @@ A general-purpose Python library of AI building blocks for video datasets. One p
 |---|---|
 | `framekit.contracts` | provider-neutral ports, ids, run records, and the schemas shared by the other modules |
 | `framekit.models` | model access: a catalog, a router, adapters for several LLM providers, and a record / replay response cache |
+| `framekit.vision` | how a model sees video: frame selection, image preparation and delivery, driven by structured `vision_params` |
 | `framekit.extraction` | turns a video corpus into a dataset (below), plus a benchmark harness and the CLI |
 
 New capabilities are added as new modules in this package, not as new packages, until there's a concrete reason to split (docs/ARCHITECTURE.md §2).
