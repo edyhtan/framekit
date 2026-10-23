@@ -357,7 +357,7 @@ flowchart LR
 ```
 
 **E0: seed the library**
-- Contracts (ports, ids, run records, the response-store port) and model access (catalog, router, SDK and LangChain adapter families, response cache) are moved here from short_extract with `git subtree split`, keeping their history. Tag `v0.1.0`. See [ARCHITECTURE.md](ARCHITECTURE.md) §7.
+- Contracts (ports, ids, run records, the response-store port) and model access (catalog, router, adapters on the official SDKs, response cache) are moved here from short_extract with `git subtree split`, keeping their history. Tag `v0.1.0`. See [ARCHITECTURE.md](ARCHITECTURE.md) §7.
 
 **E1: first dataset (5 units of the test corpus)**
 - A, V and dataset schemas; lens spec format and loader.

@@ -47,6 +47,12 @@ These were decided in short_extract (dates are from its journal) and bind this e
 - **Open:** an unrelated, active package named `framekit` exists on PyPI. Installing from git is unaffected; publishing would need another distribution name, and a project must not install both.
 - **Recorded in:** README.md; CLAUDE.md "Project", "Key decisions"; DESIGN.md title and intro; ARCHITECTURE.md §1, §2, §6, §7, §8.
 
+### 19:15 — Model access: own adapters on the official SDKs only; no LangChain family, no [langchain] extra
+- **Decision** (owner): framekit's model access is our own adapters on the official `openai` and `anthropic` SDKs, nothing else. The LangChain adapter family and the `[langchain]` extra are dropped from the plan; short_extract removed LangChain the same day (its PR #17), and the OpenAI-compatible adapter gained `function_calling` structured output (a forced tool call), which was the one thing LangChain provided.
+- **Why:** an adapter library sees every API key and prompt, so its supply chain matters more than its features. LiteLLM had two PyPI compromises in 2026 (March and October 21, the latter a credential stealer), and the LangChain family alone added 20 packages. Our adapters are a thin, tested layer; the hard parts (catalog, reasoning switches, error mapping, cache) are ours anyway.
+- **Who owns frameworks:** the owner asked why framekit, not the app, would own LangChain. Answer recorded: it shouldn't. A framework used by one consumer belongs in that consumer, wrapping framekit's port; framekit carries only what its own modules and every consumer need. The earlier plan put it here only to keep one catalog, and that reason goes away with the family.
+- **Recorded in:** ARCHITECTURE.md §1, §2, §2.1, §5, §6; DESIGN.md §7; CLAUDE.md "Architecture rule".
+
 ---
 
 ## Still open

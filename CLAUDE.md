@@ -25,6 +25,7 @@ Layers: **contracts** (pure: ports, schemas, lens spec format) · **model access
 - Library code and the dataset schema never reference lens concepts (emotion, dynamic, situation, gag, …) or corpus concepts (short, era, Tom, …). They enter only as data: lens specs in A, the corpus profile in V.
 - No lens-specific columns: lens output lives in `annotations` / `phrasings`, validated against the lens spec.
 - If a feature seems to need a lens- or corpus-specific branch, extend the lens spec format or the corpus profile instead, and discuss first.
+- **No model-access libraries** (LangChain, LiteLLM, …): our own adapters on the official provider SDKs only, to keep supply-chain exposure low in code that holds API keys. Adding one needs discussion and a journal entry.
 - **Model-agnostic:** no provider SDK calls, and no provider or library types, outside model adapters. Stages call ports (`video_understand`, `vision_generate`, `conversation`, `embed_*`). Models are chosen per role in the model profile. Every model output records `model_id`; switching models creates new versions and never overwrites.
 - **No consumer knowledge:** no sessions, web framework, ORM, Postgres or task queue in this repo.
 

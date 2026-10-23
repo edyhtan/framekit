@@ -36,7 +36,7 @@ flowchart TB
 | Layer | Owns | Must not |
 |---|---|---|
 | **contracts** | ports (`conversation`; later `video_understand`, `vision_generate`, `embed_*`), media ports, the `ResponseStore` port, the A / V / dataset schemas, the lens spec format, ids, run records | import anything else in the library, any provider SDK, or any I/O library |
-| **model access** | model catalog, router, the SDK and LangChain adapter families, the response cache wrapper and its file store | know stages, datasets or lenses |
+| **model access** | model catalog, router, our own adapters on the official provider SDKs, the response cache wrapper and its file store | know stages, datasets or lenses |
 | **extraction** | stages L0–L4 + embed, the stage runner, the dataset writer and reader, the benchmark harness, the CLI | call a provider SDK directly; contain lens or corpus vocabulary |
 
 **What the library never knows:** any consumer. No sessions, no web framework, no Postgres, no task queue, no consumer's services. A consumer depends on the library; never the other way round.
@@ -67,7 +67,7 @@ src/
     __init__.py    public API: extract, Dataset, schemas
     py.typed
     contracts/     ports, schemas (A, V, dataset, lens spec), ids, clock, run records, ResponseStore
-    models/        catalog, router, adapters (sdk/, langchain/), cache/ (wrapper + file store)
+    models/        catalog, router, adapters (openai_compatible, anthropic), cache/ (wrapper + file store)
     extraction/    stages/ (normalize, signals, segment, perceive, lens_pass, embed, qc),
                    runner/, dataset/ (writer, reader, manifest), bench/, alignment/
     cli.py         `framekit extract …`, `framekit bench …`, `framekit cache stats|wipe`
@@ -80,7 +80,6 @@ docs/
 | `framekit` | contracts, model access (official SDKs), the dataset reader | anything reading datasets: training experiments, the search app's loader |
 | `[media]` | ffmpeg bindings, scene detection, audio | running extraction |
 | `[speech]` | Whisper + VAD | the `speech` perception module |
-| `[langchain]` | the LangChain adapter family | the search app's conversational roles |
 
 **Modules, not packages.** A new capability (say, a training-data helper or a new kind of processing) is added as a new subpackage under `src/framekit/`, with its own import contract and, if it brings heavy dependencies, its own extra. It becomes a separate package only when a consumer needs it without the rest *and* the extras can't provide that (e.g. conflicting dependency ranges).
 
@@ -99,8 +98,9 @@ flowchart LR
 | Contract | Rule |
 |---|---|
 | Layers | `cli` → `extraction` → `models` → `contracts` |
-| Contracts are pure | `contracts` imports no provider SDK, LangChain, media library, or I/O framework |
-| Provider SDKs and LangChain | only inside `models` adapters |
+| Contracts are pure | `contracts` imports no provider SDK, media library, or I/O framework |
+| Provider SDKs | only inside `models` adapters |
+| Model-access libraries (LangChain, LiteLLM, …) | nowhere; adding one needs a journal decision |
 | Media libraries (ffmpeg bindings, scene detection, audio, Whisper) | only inside `extraction.stages` behind media ports |
 | LangGraph | nowhere |
 | No consumer code | no import of any consumer package, web framework, ORM or queue library |
@@ -151,17 +151,18 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    R["caller<br/>(stage, or a consumer's role)"] -- "ConversationRequest<br/>+ cache_class, family" --> C["response cache<br/>(off / record / replay)"]
+    R["caller<br/>(stage, or a consumer's role)"] -- "ConversationRequest<br/>+ cache_class" --> C["response cache<br/>(off / record / replay)"]
     C -- "miss" --> RT["ConversationRouter<br/>catalog → provider"]
     C -. "ResponseStore port" .-> FS[("file store (built in)<br/>or a consumer's store")]
-    RT --> F1["SDK family<br/>openai · anthropic"]
-    RT --> F2["LangChain family<br/>ChatDeepSeek · ChatAnthropic"]
+    RT --> F1["OpenAI-compatible adapter<br/>openai SDK: Hive, DeepSeek, …"]
+    RT --> F2["Anthropic adapter<br/>anthropic SDK"]
     F1 --> P["provider"]
     F2 --> P
 ```
 
-- **Catalog:** one entry per model: provider, wire protocol, context window, structured-output method, the reasoning switches (`ReasoningControl`), the LangChain class. Reasoning is off unless a request asks for it.
-- **Two adapter families behind one port:** the SDK family (official `openai` and `anthropic` SDKs) and the LangChain family. Both share a base that owns the key check, output budget, timing, error mapping, stop-reason normalization and the result.
+- **Catalog:** one entry per model: provider, wire protocol, context window, structured-output method, the reasoning switches (`ReasoningControl`). Reasoning is off unless a request asks for it.
+- **Our own adapters on the official SDKs, one per wire protocol:** OpenAI-compatible (`openai` SDK; Hive, DeepSeek and any compatible provider) and Anthropic (`anthropic` SDK). They share a base that owns the key check, output budget, timing, error mapping, stop-reason normalization and the result. Structured output follows the catalog's method per model, including a forced tool call (`function_calling`) for providers that reject a native JSON Schema response format.
+- **No adapter libraries.** Code holding API keys is the worst place for a supply-chain compromise, so model access depends on the providers' official SDKs only. A consumer that wants a framework (LangChain, an agent framework) wraps framekit's port in its own code; framekit doesn't carry it.
 - **Keys** come from the environment only (`HIVE_API_KEY`, `DEEPSEEK_API_KEY`, `ANTHROPIC_API_KEY`); never in files, never logged.
 - **Response cache:** keyed by the request (including model and method) per cache class; replays are marked `cached`, cost 0, adapter version suffixed `+cache`. The store is a port: the library ships a file store; a consumer may plug in its own (short_extract uses Valkey).
 - `video_understand`, `vision_generate` and `embed_*` are added the same way when E1 needs them.
@@ -175,7 +176,7 @@ This stack is seeded from short_extract, where it's built and tested today (§7)
 - **Dependency:** consumers install the library from its git repository at a **release tag**, with the extras they need. With uv:
   ```toml
   [project]
-  dependencies = ["framekit[langchain]"]
+  dependencies = ["framekit"]
 
   [tool.uv.sources]
   framekit = { git = "https://github.com/edyhtan/framekit", tag = "v0.1.0" }
