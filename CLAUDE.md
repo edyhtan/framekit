@@ -1,7 +1,7 @@
 # CLAUDE.md
 
 ## Project
-framekit: a non-commercial, general-purpose Python library of AI building blocks for video datasets. One package with modules: `contracts` (ports, schemas), `models` (model access: catalog, router, adapters, response cache) and `extraction`. New capabilities become new modules, not new packages, unless there's a concrete reason to split. The extraction module's main function is `extract(A, V) → dataset`: **A** is the extraction context (lens specs, perception modules, segmentation, embedding spec, model profile, budget), **V** is a video corpus (corpus profile + unit references). The dataset holds segments, text, vectors and provenance (Parquet / Arrow + manifest).
+framekit: a non-commercial, general-purpose Python library of AI building blocks for video datasets. One package with modules: `contracts` (ports, schemas), `models` (model access: catalog, router, adapters, response cache) and `extraction`. New capabilities become new modules, not new packages, unless there's a concrete reason to split. The extraction module's main function is `extract(A, V) → dataset`: **A** is the given description of the search space (intent, lens specs, target moment length, scope, example queries), **V** is a video corpus (corpus profile + unit references), and an optional **plan** says how A is realized (vision, segmentation, models, quality rules, budget, formatting). The dataset holds segments, text, vectors and provenance (Parquet / Arrow + manifest).
 
 Consumers: the video clip search agent ([short_extract](https://github.com/edyhtan/short_extract)), benchmarks, and experimental model training. The library never depends on a consumer.
 
@@ -22,7 +22,7 @@ Always use rendered diagrams, never ASCII art: Mermaid code blocks (`flowchart` 
 
 ## Architecture rule (most important)
 Layers: **contracts** (pure: ports, schemas, lens spec format) · **model access** (catalog, router, adapters, response cache) · **extraction** (stages, runner, dataset, benchmarks, CLI). See `docs/ARCHITECTURE.md` §1–§2.
-- Library code and the dataset schema never reference lens concepts (emotion, dynamic, situation, gag, …) or corpus concepts (short, era, Tom, …). They enter only as data: lens specs in A, the corpus profile in V.
+- Library code and the dataset schema never reference lens concepts (emotion, dynamic, situation, gag, …) or corpus concepts (short, era, Tom, …). They enter only as data: lens specs in A, the corpus profile in V, overrides in the plan.
 - No lens-specific columns: lens output lives in `annotations` / `phrasings`, validated against the lens spec.
 - If a feature seems to need a lens- or corpus-specific branch, extend the lens spec format or the corpus profile instead, and discuss first.
 - **No model-access libraries** (LangChain, LiteLLM, …): our own adapters on the official provider SDKs only, to keep supply-chain exposure low in code that holds API keys. Adding one needs discussion and a journal entry.
@@ -33,6 +33,7 @@ Layers: **contracts** (pure: ports, schemas, lens spec format) · **model access
 - **Units are the reference and are never split as a reference.** Every timestamp is on the unit timeline. Chunk files cut from the normalized copy are derived, cacheable processing artifacts; outputs are mapped back to the unit timeline; the source is never modified.
 - **Perception and interpretation are separate passes.** L3a records observable facts only (core record + optional modules). Every interpretation is a text-only lens pass (L3b).
 - **Fixed, versioned vocabularies per lens.** Never write free-text labels; validate against the lens spec.
+- **A is given, never augmented here.** framekit doesn't create or augment A; producing A is outside the library, so augmentation strategies can be benchmarked by running their A's through the same pinned plan (`docs/DESIGN.md` §2.4). Plans derive from A only through documented, recorded rules.
 - **Lens specs are declarative data** (schema, vocabulary, prompts, rubric), passed in A.
 - **Vision parameters are their own structured data** (`vision_params`, `docs/DESIGN.md` §2.3): named, versioned vision profiles assigned per stage (frame selection, image prep, delivery). Strategies are versioned code in `framekit.vision`; profiles only select and parameterize them. Resolved profiles go in the manifest and the stage input hash; frames actually sent are recorded per scene.
 - **The output is a full dataset**, not vectors alone: segments, text, vectors, provenance.

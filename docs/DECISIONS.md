@@ -69,7 +69,19 @@ These were decided in short_extract (dates are from its journal) and bind this e
 - **Open:** default profiles (from a sweep); the schema of the other extraction settings, which follow the same pattern.
 - **Recorded in:** DESIGN.md §2 (A), §2.3 (new), §3 L2 / L3a / Cost, §6.2, §9; ARCHITECTURE.md §1, §2, §2.1, §3; DESIGN.md §0.1 diagram; README.md; CLAUDE.md "Key decisions".
 
+### 19:39 — A is the given search space; the plan is separate; benchmarking augmentation strategies
+- **Decision** (owner):
+  - **A is the description of the search space,** the user's input or an already-augmented input, saying what should become findable in the corpus: dimensions (lens specs), evidence (required perception modules), resolution (target moment length), scope, and query style (example queries).
+  - **Augmentation is out of scope for framekit.** framekit takes A as given and never creates or augments it.
+- **Why:** the owner's goal for this abstraction is an artifact for **benchmarking augmentation strategies**: different ways of producing A from a raw intent, compared on the same corpus. That only works if framekit is a fixed machine that A passes through.
+- **Consequences:**
+  - **A and the plan are separate.** How A is realized (vision, segmentation, signals, perception and lens-pass settings, embedding, models, quality control, budget, formatting; governance inherited from V) is an optional **plan**, with defaults, overrides, and documented derivation rules from A. The signature becomes `extract(A, V, plan=…)`. This supersedes the earlier framing of A as "the extraction context" holding these settings, including the vision-profile wording earlier today.
+  - **The manifest records A verbatim with its hash,** the resolved plan, and the derivation rules applied.
+  - **Benchmark fairness:** the harness compares A's under a pinned plan, or plans under a fixed A, and refuses comparisons where the other side differs. Strategy labels are recorded; L0–L3a are reused when only lenses differ; the gold queries and moments are fixed and independent of A; randomness is pinned.
+  - **Scoring is a plug-in** (owner agreed): framekit ships a neutral **baseline retriever** (fixed embedding model, recall@k, gold-moment rank) as the default; consumers can plug in their real search agent.
+- **Recorded in:** DESIGN.md intro, §0.2, §2, §2.2, §2.3 wording, §2.4 (new), §3 Embed / Cost, §5.1, §6.2, §9; ARCHITECTURE.md §1, §2, §3, §4, §8; README.md; CLAUDE.md "Project", "Architecture rule", "Key decisions".
+
 ---
 
 ## Still open
-See DESIGN.md §9: video, text and embedding models; A / V schema details and the lens spec file format; default vision profiles; dataset layout; a distribution name if ever published to PyPI; distributed runner; per-lens taxonomies.
+See DESIGN.md §9: video, text and embedding models; A / V / plan schema details and the lens spec file format; default vision profiles; baseline scorer details and gold queries; dataset layout; a distribution name if ever published to PyPI; distributed runner; per-lens taxonomies.

@@ -16,10 +16,11 @@ New capabilities are added as new modules in this package, not as new packages, 
 The extraction module turns a video corpus into a dataset:
 
 ```python
-dataset = extract(context=A, corpus=V, models=profile, out=path)
+dataset = extract(A, V, plan=plan, out=path)
 ```
 
-- **A**, the extraction context: what to extract. Lens specs (vocabulary, schema, prompts, rubric) as data, perception modules, segmentation and embedding settings, a model profile and a budget.
+- **A**, the search space: what should become findable in the corpus. Given input: intent, lens specs (vocabulary, schema, prompts, rubric) as data, target moment length, scope, example queries. framekit doesn't create A, so different ways of producing it can be benchmarked on the same corpus.
+- **plan**: how A is realized (vision profiles, segmentation, models, quality rules, budget, formatting). Optional; defaults apply.
 - **V**, the corpus: a corpus profile plus references to the video files (never copies).
 - **Dataset:** segments with timestamps, text (perception records, annotations, phrasings), vectors per embedding model, and provenance, as Parquet / Arrow tables plus a manifest.
 
