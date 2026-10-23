@@ -190,7 +190,7 @@ erDiagram
 |---|---|
 | **Search agent** (short_extract) | loads a dataset into Postgres + pgvector (its own loader); reads the same lens specs for query mapping, specificity, retrieval weights and the judge rubric |
 | **Benchmarks** | the benchmark harness (§6.2) compares datasets from different models, prompts or lens versions on gold sets |
-| **Training experiments** | phrasing ↔ segment pairs, annotation labels and vectors as training data, subject to the rights rule (§8) |
+| **Training experiments** | phrasing ↔ segment pairs, annotation labels and vectors as training data, read as plain Parquet / Arrow with any training stack; the engine installs as a normal library and never depends on a training framework (ARCHITECTURE.md §2); subject to the rights rule (§8) |
 
 ---
 
@@ -410,7 +410,7 @@ Users' copies of a corpus differ (releases, edits, frame rates). A dedicated mod
 - **Text model** for lens passes; **embedding models** (text + SigLIP).
 - **A and V schemas in detail,** including the lens spec file format (YAML or JSON plus prompt files).
 - **Dataset layout details:** table split, partitioning, manifest fields.
-- **Package layout** inside this repository (proposed in [ARCHITECTURE.md](ARCHITECTURE.md) §2).
+- **Package and CLI names** (proposed in [ARCHITECTURE.md](ARCHITECTURE.md) §2; the library packaging convention is decided).
 - **Distributed runner** technology, when it's needed.
 - Per lens: see the lens appendix (e.g. base emotion taxonomy in Appendix B).
 

@@ -32,6 +32,13 @@ These were decided in short_extract (dates are from its journal) and bind this e
 - **Status:** open until seeding (E0); names are proposals.
 - **Recorded in:** ARCHITECTURE.md §2, §8.
 
+### 18:55 — Packaging: the Python library convention, src layout
+- **Decision** (owner): the engine is packaged as a standard Python **library**, not an app: one `pyproject.toml` with the `hatchling` build backend (wheel + sdist), **src layout** (`src/video_extraction_engine/`), loose dependency ranges, heavy dependencies as optional extras (`[media]`, `[speech]`, `[langchain]`), `py.typed`, semantic-version git tags. `uv.lock` is committed for the engine's own development only. Consumers install it from git at a tag.
+- **Supersedes:** the flat layout in the 18:42 proposal (names stay proposals).
+- **Why:** the engine will be installed by other projects, including **experimental model-training projects** (owner, 2026-10-23). The library convention keeps it installable next to their own stacks: ranges instead of pins avoid version clashes with training frameworks, extras keep media and speech dependencies optional, and the src layout makes tests run against the installed package, as consumers see it.
+- **Consequence for training:** experiments read datasets as plain Parquet / Arrow with whatever training stack they choose; the engine never depends on a training framework. Experiment code lives in the consumer.
+- **Recorded in:** ARCHITECTURE.md §2, §6, §7, §8; DESIGN.md §2.2, §9; CLAUDE.md "Key decisions".
+
 ---
 
 ## Still open
