@@ -1,10 +1,10 @@
-# Video Extraction Engine — Design
+# framekit — Design
 
-A general-purpose library and CLI that turns a video corpus into a **dataset**: segments with timestamps, text describing them, vectors, and the provenance of every value. Its whole job is one function:
+framekit is a general-purpose library of AI building blocks for video datasets: provider-neutral **contracts**, **model access**, and **extraction** ([ARCHITECTURE.md](ARCHITECTURE.md) §1). This document is the functional design; most of it is about extraction, which turns a video corpus into a **dataset**: segments with timestamps, text describing them, vectors, and the provenance of every value. Extraction's job is one function:
 
 > **`extract(A, V) → dataset`**: given **A**, the extraction context (what to extract), and **V**, a video corpus, produce a dataset of segments, text, vectors and provenance.
 
-**What gets extracted is not built into the engine.** It's defined by **lens specs**: declarative data (schema, vocabulary, prompts, rubric) passed inside A. The engine is corpus-neutral too: any video library plugs in through a **corpus profile**, part of V.
+**What gets extracted is not built into framekit.** It's defined by **lens specs**: declarative data (schema, vocabulary, prompts, rubric) passed inside A. framekit is corpus-neutral too: any video library plugs in through a **corpus profile**, part of V.
 
 **Consumers:**
 - the **video clip search agent** ([`short_extract`](https://github.com/edyhtan/short_extract)), which loads datasets into Postgres + pgvector and searches them;
@@ -30,7 +30,7 @@ flowchart TB
         CP["corpus profile<br/>unit definition, metadata, entities, rights"]
         MP["model profile<br/>role → model and settings"]
     end
-    subgraph ENG["Engine (lens-free, corpus-free)"]
+    subgraph ENG["framekit (lens-free, corpus-free)"]
         EX["extraction<br/>stages L0–L4, runner, dataset writer, benchmarks, CLI"]
         MA["model access<br/>catalog, router, adapters, response cache"]
         CT["contracts<br/>ports, A / V / dataset schemas, lens spec format"]
@@ -43,9 +43,9 @@ flowchart TB
     MA --> CT
 ```
 
-**Rule:** engine code and the dataset schema never reference a lens concept (emotion, dynamic, situation, gag, …) or a corpus concept (a corpus's unit type, eras, character names, …; for the example corpus: short, era, Tom). Anything lens- or corpus-specific enters only through the lens spec (§4) or the corpus profile (§1). A CI check greps engine code for known lens and corpus terms.
+**Rule:** library code and the dataset schema never reference a lens concept (emotion, dynamic, situation, gag, …) or a corpus concept (a corpus's unit type, eras, character names, …; for the example corpus: short, era, Tom). Anything lens- or corpus-specific enters only through the lens spec (§4) or the corpus profile (§1). A CI check greps library code for known lens and corpus terms.
 
-The engine knows only: **units** (source files), **shots**, **scenes**, **beats**, **signals**, **perception records**, **annotations** (opaque, lens-validated), **phrasings** (query-shaped text per lens), **vectors** and **runs**.
+framekit knows only: **units** (source files), **shots**, **scenes**, **beats**, **signals**, **perception records**, **annotations** (opaque, lens-validated), **phrasings** (query-shaped text per lens), **vectors** and **runs**.
 
 ### 0.2 Model-agnostic rule
 
@@ -59,7 +59,7 @@ Stages never call a model provider directly. They call **ports** by capability:
 | `embed_text`, `embed_image` | the embedding stage |
 
 - **Adapters** implement ports per provider; a **model profile** (in A) maps each role to a model and settings. Swapping a model is a config change.
-- Adapters declare **capabilities** (native video, image limits, structured output, batch, context size). If a model lacks one, the engine picks a documented fallback (e.g. video → sampled frames) or refuses at startup. It never branches silently.
+- Adapters declare **capabilities** (native video, image limits, structured output, batch, context size). If a model lacks one, framekit picks a documented fallback (e.g. video → sampled frames) or refuses at startup. It never branches silently.
 - Prompts are provider-neutral. Any provider-specific formatting stays in the adapter.
 - **Provenance:** every model output records `model_id` and adapter version. Changing a model creates new versions of perception, annotations or vectors; it never overwrites. Vectors are keyed by embedding model, and caches include the model in their key.
 - Consumers (such as the search agent) use the same model access for their own roles; the `conversation` port is shared.
@@ -74,7 +74,7 @@ The video model only records what is **observable** (L3a). Every interpretation 
 
 **Goals**
 - One call, `extract(A, V)`, produces a self-describing dataset that any consumer can read without this library's internals.
-- Lens- and corpus-neutral: a new lens or corpus is new data, never new engine code.
+- Lens- and corpus-neutral: a new lens or corpus is new data, never new library code.
 - Reproducible: the same A and V, with the same models, give the same dataset; a response cache makes reruns free and deterministic.
 - Resumable and incremental: a failed or interrupted run continues where it stopped; adding a lens re-runs only L3b and later.
 
@@ -83,7 +83,7 @@ The video model only records what is **observable** (L3a). Every interpretation 
 - Original source files are never modified; analysis uses normalized copies.
 - Each corpus declares a **rights mode**: `byo_media` (users supply their own copies; no footage hosted, §8) | `hosted` (owned, licensed or public-domain corpus) | `embed` (official embeds only).
 
-**Corpus profile** (data, part of V). Every corpus supplies the same fields; the engine reads nothing else about it:
+**Corpus profile** (data, part of V). Every corpus supplies the same fields; framekit reads nothing else about it:
 
 | Field | Meaning |
 |---|---|
@@ -190,7 +190,7 @@ erDiagram
 |---|---|
 | **Search agent** (short_extract) | loads a dataset into Postgres + pgvector (its own loader); reads the same lens specs for query mapping, specificity, retrieval weights and the judge rubric |
 | **Benchmarks** | the benchmark harness (§6.2) compares datasets from different models, prompts or lens versions on gold sets |
-| **Training experiments** | phrasing ↔ segment pairs, annotation labels and vectors as training data, read as plain Parquet / Arrow with any training stack; the engine installs as a normal library and never depends on a training framework (ARCHITECTURE.md §2); subject to the rights rule (§8) |
+| **Training experiments** | phrasing ↔ segment pairs, annotation labels and vectors as training data, read as plain Parquet / Arrow with any training stack; framekit installs as a normal library and never depends on a training framework (ARCHITECTURE.md §2); subject to the rights rule (§8) |
 
 ---
 
@@ -259,14 +259,14 @@ For each lens spec in A, a text-only pass reads the L3a records and produces, pe
 - **annotations** conforming to the lens's output schema and vocabulary;
 - **phrasings**: query-shaped sentences a user of this lens would type to find the moment (doc2query).
 
-The engine stores both without understanding them.
+framekit stores both without understanding them.
 
 ### Embed
 - Text vectors for scene summaries and phrasings (per lens); image vectors for keyframes (e.g. SigLIP), per the embedding spec in A.
 - Every vector is keyed by its embedding model. Image vectors from a `byo_media` corpus stay local (§8).
 
 ### L4 — Quality control
-- **Engine checks:** beat timestamps inside the scene and ordered; entities in the corpus profile's list; perception modules complete.
+- **Library checks:** beat timestamps inside the scene and ordered; entities in the corpus profile's list; perception modules complete.
 - **Lens checks:** every label in the lens vocabulary; output validates against the lens schema; validators declared in the lens spec.
 - **Self-consistency:** run each lens pass twice; flag or down-weight scenes whose annotations disagree.
 - QC results are part of the dataset's provenance; failing rows are flagged, not silently dropped.
@@ -280,7 +280,7 @@ The engine stores both without understanding them.
 
 ## 4. Lens specs (declarative)
 
-A lens is **data**: a spec file plus prompt files, versioned. The engine validates it against the lens spec format (a contract) at load time. Some fields drive extraction; the rest are carried for consumers, so one spec serves both sides.
+A lens is **data**: a spec file plus prompt files, versioned. framekit validates it against the lens spec format (a contract) at load time. Some fields drive extraction; the rest are carried for consumers, so one spec serves both sides.
 
 | Item | Used by |
 |---|---|
@@ -334,7 +334,7 @@ Per corpus × lens:
 - a **gold set** (~10 hand-annotated scenes to start): label agreement, self-consistency, vocabulary validity;
 - perception checks: entity naming consistency against the profile, beat timestamp accuracy on a sample.
 
-**Engine contract test:** the engine must run end to end with a second, minimal lens spec without code changes.
+**Library contract test:** framekit must run end to end with a second, minimal lens spec without code changes.
 
 ### 6.2 Benchmark harness
 - Runs `extract` over a fixed V with variants of A (model profile, prompts, lens version) and scores each dataset against the gold sets.
@@ -357,12 +357,12 @@ flowchart LR
 ```
 
 **E0: seed the library**
-- Contracts (ports, ids, run records, the response-store port) and model access (catalog, router, SDK and LangChain adapter families, response cache) are moved here from short_extract with `git subtree split`, keeping their history. Tag `v0.1.0`. See [ARCHITECTURE.md](ARCHITECTURE.md) §7.
+- Contracts (ports, ids, run records, the response-store port) and model access (catalog, router, adapters on the official SDKs, response cache) are moved here from short_extract with `git subtree split`, keeping their history. Tag `v0.1.0`. See [ARCHITECTURE.md](ARCHITECTURE.md) §7.
 
 **E1: first dataset (5 units of the test corpus)**
 - A, V and dataset schemas; lens spec format and loader.
 - L0–L3a end to end with the corpus profile and modular perception.
-- Emotions & dynamics lens (Appendix B) with a ~10-scene gold set, plus a **minimal second lens** (e.g. comedy craft, ~10 labels) on the same scenes, purely to prove the engine has no lens leakage.
+- Emotions & dynamics lens (Appendix B) with a ~10-scene gold set, plus a **minimal second lens** (e.g. comedy craft, ~10 labels) on the same scenes, purely to prove framekit has no lens leakage.
 - Dataset writer and reader v1; CLI `extract`.
 
 **E2: full test corpus**
@@ -379,7 +379,7 @@ flowchart LR
 
 ## 8. Rights and distribution
 
-Code is corpus- and lens-agnostic. Corpus profiles and lens specs ship as data, separately from the engine.
+Code is corpus- and lens-agnostic. Corpus profiles and lens specs ship as data, separately from framekit.
 
 ### 8.1 What may leave the machine
 
@@ -410,7 +410,7 @@ Users' copies of a corpus differ (releases, edits, frame rates). A dedicated mod
 - **Text model** for lens passes; **embedding models** (text + SigLIP).
 - **A and V schemas in detail,** including the lens spec file format (YAML or JSON plus prompt files).
 - **Dataset layout details:** table split, partitioning, manifest fields.
-- **Package and CLI names** (proposed in [ARCHITECTURE.md](ARCHITECTURE.md) §2; the library packaging convention is decided).
+- **A distribution name for PyPI,** if the library is ever published (`framekit` is taken there; [ARCHITECTURE.md](ARCHITECTURE.md) §8).
 - **Distributed runner** technology, when it's needed.
 - Per lens: see the lens appendix (e.g. base emotion taxonomy in Appendix B).
 
@@ -418,7 +418,7 @@ Users' copies of a corpus differ (releases, edits, frame rates). A dedicated mod
 
 ## Appendix A — Example corpus profile: Tom and Jerry
 
-A filled-in instance of the corpus profile template (§1), used as the test corpus. Everything here is specific to this corpus and lives in its profile; none of it belongs in engine code.
+A filled-in instance of the corpus profile template (§1), used as the test corpus. Everything here is specific to this corpus and lives in its profile; none of it belongs in library code.
 
 - **Unit:** the **short**, a complete original theatrical cartoon. Never a TV "episode" (which bundles and often edits shorts). One file per short; never concatenate.
 - **Size:** ~114 Hanna-Barbera MGM (1940–58), 13 Gene Deitch (1961–62), 34 Chuck Jones (1963–67); ≈161 shorts × ~7 min ≈ 19 h.

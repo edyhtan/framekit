@@ -1,6 +1,18 @@
-# video_extraction_engine
+# framekit
 
-A general-purpose library and CLI that turns a video corpus into a dataset:
+A general-purpose Python library of AI building blocks for video datasets. One package, with modules that can be used on their own:
+
+| Module | What it gives you |
+|---|---|
+| `framekit.contracts` | provider-neutral ports, ids, run records, and the schemas shared by the other modules |
+| `framekit.models` | model access: a catalog, a router, adapters for several LLM providers, and a record / replay response cache |
+| `framekit.extraction` | turns a video corpus into a dataset (below), plus a benchmark harness and the CLI |
+
+New capabilities are added as new modules in this package, not as new packages, until there's a concrete reason to split (docs/ARCHITECTURE.md §2).
+
+### Extraction
+
+The extraction module turns a video corpus into a dataset:
 
 ```python
 dataset = extract(context=A, corpus=V, models=profile, out=path)

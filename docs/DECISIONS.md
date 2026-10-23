@@ -39,7 +39,21 @@ These were decided in short_extract (dates are from its journal) and bind this e
 - **Consequence for training:** experiments read datasets as plain Parquet / Arrow with whatever training stack they choose; the engine never depends on a training framework. Experiment code lives in the consumer.
 - **Recorded in:** ARCHITECTURE.md §2, §6, §7, §8; DESIGN.md §2.2, §9; CLAUDE.md "Key decisions".
 
+### 19:03 — Renamed to framekit: a general library, not a single-purpose engine
+- **Decision** (owner): the repository and library are renamed from `video_extraction_engine` to **`framekit`** (repo `edyhtan/framekit`; distribution, import package and CLI all `framekit`). It's framed as a **general library of AI building blocks for video datasets**: `framekit.contracts`, `framekit.models` (model access) and `framekit.extraction` are modules of one package, each usable on its own.
+  - **Modules, not packages:** new capabilities are added as subpackages, with their own import contract and, if heavy, their own extra. A separate package only when a consumer needs one part without the rest and extras can't provide it.
+- **Why:** the old name described only one of the three parts; model access is general LLM access used by the search app too, and training experiments will use the library beyond extraction. The owner wants a general library but not many small packages.
+- **Supersedes:** the repository name in "Repository created: video_extraction_engine", and the proposed names (`video_extraction_engine`, `vxe`) in "Package layout proposed (not decided)".
+- **Open:** an unrelated, active package named `framekit` exists on PyPI. Installing from git is unaffected; publishing would need another distribution name, and a project must not install both.
+- **Recorded in:** README.md; CLAUDE.md "Project", "Key decisions"; DESIGN.md title and intro; ARCHITECTURE.md §1, §2, §6, §7, §8.
+
+### 19:15 — Model access: own adapters on the official SDKs only; no LangChain family, no [langchain] extra
+- **Decision** (owner): framekit's model access is our own adapters on the official `openai` and `anthropic` SDKs, nothing else. The LangChain adapter family and the `[langchain]` extra are dropped from the plan; short_extract removed LangChain the same day (its PR #17), and the OpenAI-compatible adapter gained `function_calling` structured output (a forced tool call), which was the one thing LangChain provided.
+- **Why:** an adapter library sees every API key and prompt, so its supply chain matters more than its features. LiteLLM had two PyPI compromises in 2026 (March and October 21, the latter a credential stealer), and the LangChain family alone added 20 packages. Our adapters are a thin, tested layer; the hard parts (catalog, reasoning switches, error mapping, cache) are ours anyway.
+- **Who owns frameworks:** the owner asked why framekit, not the app, would own LangChain. Answer recorded: it shouldn't. A framework used by one consumer belongs in that consumer, wrapping framekit's port; framekit carries only what its own modules and every consumer need. The earlier plan put it here only to keep one catalog, and that reason goes away with the family.
+- **Recorded in:** ARCHITECTURE.md §1, §2, §2.1, §5, §6; DESIGN.md §7; CLAUDE.md "Architecture rule".
+
 ---
 
 ## Still open
-See DESIGN.md §9: video, text and embedding models; A / V schema details and the lens spec file format; dataset layout; package and CLI names; distributed runner; per-lens taxonomies.
+See DESIGN.md §9: video, text and embedding models; A / V schema details and the lens spec file format; dataset layout; a distribution name if ever published to PyPI; distributed runner; per-lens taxonomies.
