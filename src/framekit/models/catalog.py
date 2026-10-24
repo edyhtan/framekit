@@ -4,11 +4,15 @@
 - `CATALOG`: the selectable models, each naming its provider
 - `ModelSettings`: the defaults a router uses (default model, output cap, timeout)
 
-Adding an OpenAI-compatible provider is one `ProviderConfig` plus its models, here.
+These dicts are the built-ins, served by `framekit.models.DEFAULT_REGISTRY`. Your own
+providers and models go into a registry of your own (`DEFAULT_REGISTRY.extend(...)`,
+docs/adapters.md), not into these dicts: editing them in place still reaches the default
+router, but it's unsupported and changes every router in the process.
 Prices are per 1M tokens, used only to record an estimated cost (never displayed).
 """
 
 import os
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
@@ -20,9 +24,17 @@ MILLION = Decimal(1_000_000)
 
 @dataclass(frozen=True)
 class ProviderConfig:
+    """How to reach one provider. Plain data: the built-ins are in `PROVIDERS`; your own
+    go into a `ModelRegistry`. framekit sends the provider's key to its base URL, so point
+    a provider only at a host you trust (docs/adapters.md, "Security")."""
+
     name: str
-    protocol: str  # "openai" (Chat Completions) or "anthropic" (Messages)
-    key_env: str
+    # The wire protocol, which picks the adapter: "openai" (Chat Completions) or
+    # "anthropic" (Messages) built in, or one a registry adds.
+    protocol: str
+    # The environment variable holding the key. None: the provider takes no key (e.g. a
+    # local server); its adapter is then built with PLACEHOLDER_KEY, never with None.
+    key_env: str | None = None
     base_url: str | None = None  # None: the SDK's default endpoint
     base_url_env: str | None = None  # optional override, e.g. a regional endpoint
     stream: bool = False
@@ -219,9 +231,9 @@ CATALOG: dict[str, ModelSpec] = {spec.model_id: spec for spec in _SPECS}
 
 
 class ModelSettings(BaseModel):
-    """What a router needs besides the catalog. Plain data: consumers build it from their
-    own configuration (framekit reads no settings from the environment, only provider keys
-    and optional base-URL overrides named in `PROVIDERS`)."""
+    """What a router needs besides its model registry. Plain data: consumers build it from
+    their own configuration (framekit reads no settings from the environment, only provider
+    keys and optional base-URL overrides named in the provider configs)."""
 
     default_model: str = "deepseek-ai/deepseek-v4.1-flash"
     max_tokens_cap: int = 256  # caps every request's output budget
@@ -236,8 +248,11 @@ def estimate_cost(spec: ModelSpec, input_tokens: int, output_tokens: int) -> Dec
     return cost.quantize(Decimal("0.000001"))
 
 
-def catalog_listing(default_model: str | None = None) -> list[dict[str, Any]]:
-    """The selectable models, for clients choosing one (no prices)."""
+def model_listing(
+    specs: Iterable[ModelSpec], default_model: str | None = None
+) -> list[dict[str, Any]]:
+    """Models as rows for clients choosing one (no prices). Shared by `catalog_listing` and
+    `ModelRegistry.listing`."""
     return [
         {
             "provider": spec.provider,
@@ -246,5 +261,12 @@ def catalog_listing(default_model: str | None = None) -> list[dict[str, Any]]:
             "default": spec.model_id == default_model,
             "reasoning": spec.reasoning_mode,
         }
-        for spec in CATALOG.values()
+        for spec in specs
     ]
+
+
+def catalog_listing(default_model: str | None = None) -> list[dict[str, Any]]:
+    """The built-in models, for clients choosing one (no prices). The same rows as
+    `DEFAULT_REGISTRY.listing(default_model)`; a registry of your own lists its models with
+    its own `listing`."""
+    return model_listing(CATALOG.values(), default_model)

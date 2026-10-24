@@ -40,7 +40,7 @@ flowchart TB
 | Layer | Owns | Must not |
 |---|---|---|
 | **contracts** | ports (`conversation`; later `video_understand`, `vision_generate`, `embed_*`), media ports, the `ResponseStore` port, ids, run records, and the pure shared types they use. Not the Pydantic schemas (A, V, plan, dataset manifest, lens spec): contracts stays free of Pydantic, and the plan embeds `VisionParams` from `vision`, so those need a module above `vision` and `models`; which one is open (§8) | import anything else in the library, Pydantic, any provider SDK, or any I/O library |
-| **model access** | model catalog, router, our own adapters on the official provider SDKs, the response cache wrapper and its file store | know stages, datasets or lenses |
+| **model access** | model catalog and registry, router, our own adapters on the official provider SDKs and the template for consumers' own, the response cache wrapper and its file store | know stages, datasets or lenses |
 | **vision** | the `vision_params` schema (`VisionParams`, Pydantic, so it can't live in the pure `contracts`) and its checks; the strategy registry and frame selection strategies (candidates, anchors, filters, budget allocation); resolution and digests; frame planning; later image preparation and delivery (DESIGN.md §2.3) | call a model or import `models`; know stages, lenses or corpora |
 | **extraction** | stages L0–L4 + embed, the stage runner, the dataset writer and reader, the benchmark harness, the CLI | call a provider SDK directly; contain lens or corpus vocabulary |
 
@@ -73,7 +73,7 @@ src/
     py.typed
     contracts/     ports, ids, clock, run records, ResponseStore (pure: no Pydantic; the Pydantic
                    A / V / plan / dataset / lens spec schemas go above vision and models, §8)
-    models/        catalog, router, adapters (openai_compatible, anthropic), cache/ (wrapper + file store)
+    models/        catalog, registry, router, adapters (base = the template, openai_compatible, anthropic), cache/ (wrapper + file store)
     vision/        params (VisionParams schema + load-time checks), registry, builtin (v1 strategies),
                    resolve (canonical form, digests), checks (source, model), signals (L1 signals
                    for planning), planning (pixel-free); later: pixel filters, image prep, delivery
@@ -161,10 +161,12 @@ How to report a vulnerability: [SECURITY.md](../SECURITY.md).
 | **Schemas** | `SearchSpace` (A), `Corpus` + `CorpusProfile` (V), `ExtractionPlan` (incl. `VisionParams` from `framekit.vision`, `ModelProfile`), `LensSpec`, `GoldSet`, `DatasetManifest`: Pydantic models, versioned with the dataset schema. They can't live in `contracts` (pure, and below `vision`); which module above `vision` and `models` holds them is open (§8) |
 | **Dataset** | `Dataset.open(path)` → typed readers per table (Arrow); `manifest` |
 | **Vision** (`framekit.vision`, built: schema, checks, planning) | `VisionParams.from_mapping(data) -> VisionParams` and `VisionProfile.from_mapping(data)` (raise one `VisionParamsError` with `.problems`, every problem at once); `.to_mapping()`; `params.profile_for(stage)`. Parsed parameters are frozen and read-only all the way down (settings are a read-only dict, lists are tuples) and hashable. `resolve(params) -> ResolvedVisionParams` (`.digest`, `.canonical_json()`, `.mapping` and `.to_mapping()` as fresh copies, `.for_stage(stage) -> ResolvedProfile` with its own `.digest`); `resolve_profile(profile)`. `check_against_source(params, SourceLimits(fps, width_px, height_px)) -> list[str]`; `check_against_model(profile, ModelVisionCaps(native_video, max_images, max_image_side_px)) -> list[str]` (one profile; a wrong argument type raises `TypeError`). `plan_frames(profile, span, signals=Signals(shot_boundaries, audio_onsets, motion)) -> FramePlan(timestamps, pending_filters, notes, views)`, with `span = (start_s, end_s)`. Registry: `get_strategy(kind, name, version=None)`, `strategies(kind=None)`, `register_strategy(Strategy(...))`. Later, with the media stage: frame extraction, pixel filters, image preparation and delivery. Usable without extraction (e.g. query-time sampling) |
-| **Model access** | `ConversationRouter(ModelSettings)`, `ConversationRequest` / `ConversationResult`, `with_cache(factory, settings=CacheSettings, store=ResponseStore)`, `FileResponseStore`; the same API consumers use for their own roles. Settings are plain data: framekit reads no configuration from the environment, only provider keys (and optional base-URL overrides) named in the catalog |
+| **Model access** | `ConversationRouter(ModelSettings, *, registry=...)`, `ConversationRequest` / `ConversationResult`, `with_cache(factory, settings=CacheSettings, store=ResponseStore)`, `FileResponseStore`; the same API consumers use for their own roles. Settings are plain data: framekit reads no configuration from the environment, only provider keys (and optional base-URL overrides) named in the provider configs |
+| **Model registry** | `ModelRegistry(providers=..., models=..., adapters=...)` and `DEFAULT_REGISTRY` (the built-in `PROVIDERS`, `CATALOG` and `PROTOCOLS`): providers by name, models by `model_id`, adapter classes by wire protocol. Immutable, checked when built (every problem reported at once); `extend(..., override=False)` returns a new registry; `resolve`, `create_adapter`, `listing`. Consumers add their own models and providers here, not by editing the built-in dicts ([adapters.md](adapters.md)) |
+| **Adapter template** | `framekit.models.adapters`: `ExternalAIAdapterBase` (required: `adapter_version`, `build_params`, `call`; optional: `make_client` / `from_environment`, `iterate`, `map_error`, `aclose`, `structured_modes`, `sdk`), `Reply`, `PLACEHOLDER_KEY` and the request helpers. The base owns the call lifecycle (budget, reasoning switches, timing, error mapping, stop reasons, cost, provenance). Guide: [adapters.md](adapters.md) |
 | **CLI** | `framekit extract --space search-space.yaml --corpus corpus.yaml [--plan plan.yaml] --out …`; `framekit bench …` (search spaces or plans as variants); `framekit cache stats|wipe`. Every flag: [settings.md](settings.md) §2 |
 
-Changing a public schema or port is a **release** with a version bump; the dataset manifest records the schema version so readers can refuse or migrate old datasets.
+Changing a public schema, a port, the model registry or the adapter template is a **release** with a version bump (an incompatible change is a new minor version while framekit is 0.x); the dataset manifest records the schema version so readers can refuse or migrate old datasets.
 
 ---
 
@@ -199,19 +201,24 @@ flowchart LR
 ```mermaid
 flowchart LR
     R["caller<br/>(stage, or a consumer's role)"] -- "ConversationRequest<br/>+ cache_class" --> C["response cache<br/>(off / record / replay)"]
-    C -- "miss" --> RT["ConversationRouter<br/>catalog → provider"]
+    C -- "miss" --> RT["ConversationRouter"]
     C -. "ResponseStore port" .-> FS[("file store (built in)<br/>or a consumer's store")]
+    RT -- "resolve, create_adapter" --> REG["ModelRegistry<br/>models → provider →<br/>protocol adapter"]
     RT --> F1["OpenAI-compatible adapter<br/>openai SDK: Hive, DeepSeek, …"]
     RT --> F2["Anthropic adapter<br/>anthropic SDK"]
+    RT --> F3["a consumer's adapter<br/>(the template)"]
     F1 --> P["provider"]
     F2 --> P
+    F3 --> P
 ```
 
-- **Catalog:** one entry per model: provider, wire protocol, context window, structured-output method, the reasoning switches (`ReasoningControl`). Reasoning is off unless a request asks for it.
-- **Our own adapters on the official SDKs, one per wire protocol:** OpenAI-compatible (`openai` SDK; Hive, DeepSeek and any compatible provider) and Anthropic (`anthropic` SDK). They share a base that owns the key check, output budget, timing, error mapping, stop-reason normalization and the result. Structured output follows the catalog's method per model, including a forced tool call (`function_calling`) for providers that reject a native JSON Schema response format.
+- **Catalog:** one entry per model: provider, wire protocol, context window, structured-output method, the reasoning switches (`ReasoningControl`). Reasoning is off unless a request asks for it. The built-in entries (`CATALOG`, `PROVIDERS`) are served by `DEFAULT_REGISTRY`.
+- **Model registry:** the router resolves models and builds adapters through a `ModelRegistry`: providers by name, models by `model_id`, adapter classes by wire protocol. Consumers add their own models, providers and adapters with `DEFAULT_REGISTRY.extend(...)` and pass the result to the router (`registry=`), without a change to framekit. A registry is immutable and checked when built; the default one reads the built-in dicts live, so legacy in-place edits still reach the default router (unsupported).
+- **Our own adapters on the official SDKs, one per wire protocol:** OpenAI-compatible (`openai` SDK; Hive, DeepSeek and any compatible provider, including self-hosted servers) and Anthropic (`anthropic` SDK). They share a base that owns the key check, output budget, timing, error mapping, stop-reason normalization and the result. Structured output follows the catalog's method per model, including a forced tool call (`function_calling`) for providers that reject a native JSON Schema response format.
+- **The adapter template:** that base, `ExternalAIAdapterBase`, is public API for consumers' own adapters: required `adapter_version`, `build_params` and `call`; optional `make_client`, `iterate` (real streaming), `map_error` (the consumer's own exceptions to `ModelCallError`; a `ModelCallError` passes through unchanged), `aclose`, `structured_modes` and `sdk`. Guide: [adapters.md](adapters.md).
 - **No adapter libraries.** Code holding API keys is the worst place for a supply-chain compromise, so model access depends on the providers' official SDKs only. A consumer that wants a framework (LangChain, an agent framework) wraps framekit's port in its own code; framekit doesn't carry it.
-- **Keys** come from the environment only (`HIVE_API_KEY`, `DEEPSEEK_API_KEY`, `ANTHROPIC_API_KEY`); never in files, never logged.
-- **Response cache:** keyed by the request (including model and method) per cache class; replays are marked `cached`, cost 0, adapter version suffixed `+cache`. The store is a port: the library ships a file store; a consumer may plug in its own (short_extract uses Valkey).
+- **Keys** come from the environment only (built in: `HIVE_API_KEY`, `DEEPSEEK_API_KEY`, `ANTHROPIC_API_KEY`; a provider a consumer adds names its own variable), never in files, never logged. A provider without a key (`key_env=None`, e.g. a local server) is built with a fixed placeholder, never with no key, so the SDKs can't fall back to their own key variables and send a cloud key to that host. Known gap: SDK environment variables such as `OPENAI_CUSTOM_HEADERS` / `ANTHROPIC_CUSTOM_HEADERS` are still sent to custom hosts ([adapters.md](adapters.md), "Security").
+- **Response cache:** keyed by the request (including the resolved model and the method) per cache class; replays are marked `cached`, cost 0, adapter version suffixed `+cache`. The key doesn't include the provider or host yet, so registries that map one `model_id` to different hosts need separate cache namespaces. The store is a port: the library ships a file store; a consumer may plug in its own (short_extract uses Valkey).
 - `video_understand`, `vision_generate` and `embed_*` are added the same way when E1 needs them.
 
 This stack is seeded from short_extract, where it's built and tested today (§7).

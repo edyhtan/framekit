@@ -7,13 +7,13 @@ AI building blocks for video datasets, in Python. One package with modules you c
 | Module | What it gives you | Status |
 |---|---|---|
 | `framekit.contracts` | provider-neutral types: the conversation port, the response-store port | **v0.1.0** |
-| `framekit.models` | model access: a catalog of providers and models, a router, adapters on the official `openai` and `anthropic` SDKs, a record / replay response cache | **v0.1.0** |
+| `framekit.models` | model access: a catalog of providers and models (extendable with your own), a router, adapters on the official `openai` and `anthropic` SDKs, a record / replay response cache | **v0.1.0** |
 | `framekit.vision` | how a model sees video: frame selection, image preparation and delivery | **partial** on `main`: schema, checks, pixel-free planning ([settings](docs/settings.md) §5.2) |
 | `framekit.extraction` | turns a video corpus into a dataset of segments, text, vectors and provenance, plus a benchmark harness and a CLI | designed ([design](docs/DESIGN.md)) |
 
 Used by the video clip search agent ([short_extract](https://github.com/edyhtan/short_extract)), and built for benchmarks and experimental model training.
 
-**Contents:** [Install](#install) · [Configure](#configure) · [Quick start](#quick-start) · [Usage guide](#usage-guide) · [Models](#models) · [Response cache](#response-cache) · [Vision parameters](#vision-parameters) · [Extraction (preview)](#extraction-preview) · [Development](#development) · [Documents](#documents) · [Licence](#licence)
+**Contents:** [Install](#install) · [Configure](#configure) · [Quick start](#quick-start) · [Usage guide](#usage-guide) · [Models](#models) · [Your own models and providers](#your-own-models-and-providers) · [Response cache](#response-cache) · [Vision parameters](#vision-parameters) · [Extraction (preview)](#extraction-preview) · [Development](#development) · [Documents](#documents) · [Licence](#licence)
 
 ---
 
@@ -57,7 +57,7 @@ framekit reads **no settings from the environment** except provider keys and an 
 | `ANTHROPIC_API_KEY` | Claude models |
 | `HIVE_BASE_URL` | optional Hive endpoint override (e.g. a regional one) |
 
-A missing key fails only the calls to that provider, with a non-retryable error. Keep keys in your shell or a git-ignored `.env`; never commit them.
+A missing key fails only the calls to that provider, with a non-retryable error. Keep keys in your shell or a git-ignored `.env`; never commit them. Providers you add name their own key variable, or none ([Your own models and providers](#your-own-models-and-providers)).
 
 ## Quick start
 
@@ -218,7 +218,31 @@ catalog_listing(default_model="claude-haiku-4-5")   # for a model picker: no pri
 CATALOG["claude-sonnet-5"].context_window             # 1_000_000
 ```
 
-Adding a model or an OpenAI-compatible provider means one catalog entry (a `ProviderConfig` plus its `ModelSpec`s), contributed here through a pull request.
+These are the built-ins. To add your own, see the next section.
+
+## Your own models and providers
+
+Add models and providers in your own code, without changing framekit: extend the built-in registry and hand the result to the router. (On `main`, for the release after v0.1.0.)
+
+```python
+from decimal import Decimal
+
+from framekit.models import DEFAULT_REGISTRY, ConversationRouter, ModelSettings, ModelSpec, ProviderConfig
+
+local = ProviderConfig(name="local", protocol="openai", base_url="http://127.0.0.1:8000/v1")  # no key_env: keyless
+registry = DEFAULT_REGISTRY.extend(
+    providers=[local],
+    models=[ModelSpec("local", "my-local-model", "My local model", Decimal("0"), Decimal("0"))],
+)
+async with ConversationRouter(ModelSettings(default_model="my-local-model"), registry=registry) as router:
+    ...  # your models and the built-ins, side by side
+```
+
+- **Any OpenAI-compatible server** (a hosted provider, a self-hosted vLLM server, Ollama's `/v1` endpoint) is config only, as above. Probe it before relying on it: reasoning switches, structured output and streaming differ from server to server.
+- **Another protocol or client** needs an adapter: subclass `ExternalAIAdapterBase` from `framekit.models.adapters`, set `adapter_version`, implement `build_params` and `call`. The base does the rest: output budget, reasoning switches, timing, error mapping, stop reasons, cost, provenance.
+- **Only point a provider at a host you trust.** framekit sends the provider's key to its `base_url`, and the SDKs also send some of their own environment variables there (a known gap, described in the guide).
+
+Guide, with a complete runnable adapter: **[docs/adapters.md](docs/adapters.md)**.
 
 ## Response cache
 
@@ -347,6 +371,7 @@ uv build                  # wheel + sdist
 | [docs/DESIGN.md](docs/DESIGN.md) | what extraction does: inputs, the dataset, stages L0–L4, lens specs, runs, evaluation, roadmap, rights |
 | [docs/settings.md](docs/settings.md) | every extraction setting in one place: the six questions a run answers, commands, the search space, corpus, plan and gold-set files, the output, open decisions |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | how the code is layered, the public API, model access, CI and security checks, how consumers connect, the seeding plan |
+| [docs/adapters.md](docs/adapters.md) | your own models, providers and adapters: the model registry, the adapter template with a runnable example, errors, keyless servers, streaming, provenance, security |
 | [docs/DECISIONS.md](docs/DECISIONS.md) | why, in date order |
 | [CLAUDE.md](CLAUDE.md) | rules for contributors and coding agents |
 | [SECURITY.md](SECURITY.md) | how to report a vulnerability privately, supported versions, scope |
