@@ -2,7 +2,7 @@
 
 How framekit's code is organized and how other projects connect to it. Written for collaborators who need the map before writing code. The functional design (what `extract(A, V)` does, stage by stage) is in [DESIGN.md](DESIGN.md); decisions are dated in [DECISIONS.md](DECISIONS.md).
 
-> **Status:** target architecture, approved by the owner on 2026-10-23. No code yet: the first code arrives by seeding from short_extract (§7).
+> **Status:** target architecture, approved by the owner on 2026-10-23. **Built (v0.1.0): `contracts` and `models`**, seeded from short_extract (§7). `vision`, `extraction` and the CLI are designed, not built.
 
 ---
 
@@ -126,7 +126,7 @@ A **vocabulary test** scans library code (and prompt, JSON and text files shippe
 | **Schemas** | `SearchSpace` (A), `Corpus` + `CorpusProfile` (V), `ExtractionPlan` (incl. `VisionParams`, `ModelProfile`), `LensSpec`, `GoldSet`, `DatasetManifest`: Pydantic models, versioned with the dataset schema |
 | **Dataset** | `Dataset.open(path)` → typed readers per table (Arrow); `manifest` |
 | **Vision** | `select_frames(unit, span, signals, params) -> FrameSet` (timestamps + images), `prepare(frames, params)`; usable without extraction |
-| **Model access** | `ConversationRouter`, `ConversationRequest` / `ConversationResult`, `with_cache(port, store, settings)`; the same API consumers use for their own roles |
+| **Model access** | `ConversationRouter(ModelSettings)`, `ConversationRequest` / `ConversationResult`, `with_cache(factory, settings=CacheSettings, store=ResponseStore)`, `FileResponseStore`; the same API consumers use for their own roles. Settings are plain data: framekit reads no configuration from the environment, only provider keys (and optional base-URL overrides) named in the catalog |
 | **CLI** | `framekit extract --context a.yaml --corpus v.yaml --out ./ds`; `framekit bench …`; `framekit cache stats|wipe` |
 
 Changing a public schema or port is a **release** with a version bump; the dataset manifest records the schema version so readers can refuse or migrate old datasets.
@@ -193,6 +193,7 @@ This stack is seeded from short_extract, where it's built and tested today (§7)
   [tool.uv.sources]
   framekit = { git = "https://github.com/edyhtan/framekit", tag = "v0.1.0" }
   ```
+  Images without git (e.g. slim Docker images) can use the tag's source archive instead, still pinned and hash-locked: `framekit = { url = "https://github.com/edyhtan/framekit/archive/refs/tags/v0.1.0.tar.gz" }`.
   A contract change means a library release, then a version bump in the consumer.
 - **short_extract (the search agent):**
   - uses model access for its Interpreter, Responder and digest roles, exactly as before the move;
@@ -210,12 +211,12 @@ framekit's first code comes from short_extract, keeping its history:
 | Step | Repository | Work |
 |---|---|---|
 | 1. Restructure in place | short_extract | Gather contracts into `engine/core` and model access into `engine/models` (transitional folders), introduce the `ResponseStore` port, new import contracts. Behavior-preserving. |
-| 2. Seed this library | this repo | `git subtree split` of `engine/core` + `engine/models`, merged here; move them into `src/framekit/` per §2 and write the library `pyproject.toml` (hatchling, ranges, extras); add tooling (pytest, ruff, import-linter contracts, vocabulary test) and CI. Tag **`v0.1.0`**. |
+| 2. Seed this library | this repo | `git subtree split` of `engine/core` + `engine/models`, merged here; move them into `src/framekit/` per §2 and write the library `pyproject.toml` (hatchling, ranges, extras); add tooling (pytest, ruff, import-linter contracts, vocabulary test) and CI. Tag **`v0.1.0`**. **Done 2026-10-23, differently:** step 1 was skipped; the files were taken straight from short_extract's packages with `git filter-repo` (history kept, 15 commits, including earlier file names), then reshaped. |
 | 3. Depend on the library | short_extract | Replace the local copies with this library at `v0.1.0`. Behavior-preserving. |
 
 Then extraction (E1 onward, DESIGN.md §7) is built here.
 
-**Acceptance for step 2:** the moved tests pass here unchanged in count; `uv build` produces a wheel, and a fresh environment can install it from the tag and import the public API; `lint-imports` and `ruff` pass; a cache record → replay round trip works with the file store; no file in the repository contains footage, frames or keys.
+**Acceptance for step 2** (met, except the app-only tests, which stay in short_extract: the Valkey store, its CLI, and API-level replays): the moved tests pass here unchanged in count; `uv build` produces a wheel, and a fresh environment can install it from the tag and import the public API; `lint-imports` and `ruff` pass; a cache record → replay round trip works with the file store; no file in the repository contains footage, frames or keys.
 
 ---
 

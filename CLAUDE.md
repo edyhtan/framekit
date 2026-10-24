@@ -46,11 +46,12 @@ Layers: **contracts** (pure: ports, schemas, lens spec format) · **model access
 - API keys come from `HIVE_API_KEY` / `DEEPSEEK_API_KEY` / `ANTHROPIC_API_KEY` in the local environment only: never commit them, never print or read their values.
 
 ## Workflow
+- framekit has no environment-bound settings: configuration is plain data (Pydantic models) that consumers build. Only provider keys (and base-URL overrides) are read from the environment, by name from the catalog.
 - Changes go on feature branches and reach `main` through pull requests. PRs are squash-merged, so never stack PRs: each targets `main`.
-- Code checks (once code exists): `uv run pytest`, `uv run lint-imports`, `uv run ruff check .`. Keep all three passing; never weaken an import-linter contract or the vocabulary test to make code pass.
+- Code checks: `uv run pytest`, `uv run lint-imports`, `uv run ruff check .` (CI: the `tests` workflow runs pytest and the build on locked and newest dependencies; the `lint` workflow runs ruff and the import contracts). Keep all three passing; never weaken an import-linter contract or the vocabulary test to make code pass.
 
 ## Current milestone
-E0: seed contracts and model access from short_extract with `git subtree split`, tag `v0.1.0` (`docs/ARCHITECTURE.md` §7). Then E1: first dataset on 5 units with two lenses (`docs/DESIGN.md` §7).
+E0 done (v0.1.0: `contracts`, `models`). Next, E1: first dataset on 5 units with two lenses (`docs/DESIGN.md` §7); it needs the video and embedding model choices first (ask).
 
 ## Open decisions
 See `docs/DESIGN.md` §9. Ask before picking models, the lens spec file format, the dataset layout, a distributed runner, or a lens's base taxonomy.

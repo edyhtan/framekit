@@ -1,0 +1,91 @@
+[project]
+name = "framekit"
+version = "0.1.0"
+description = "AI building blocks for video datasets: provider-neutral contracts, model access, and (soon) frame selection and corpus extraction"
+readme = "README.md"
+requires-python = ">=3.12"
+# Library convention (docs/ARCHITECTURE.md §2): loose ranges, so framekit fits into
+# consumers' environments. Exact versions for development are in uv.lock.
+dependencies = [
+    "pydantic>=2.6,<3",
+    "openai>=3.20,<4",
+    "anthropic>=1.9,<2",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+    "import-linter>=2",
+    "ruff>=0.6",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/framekit"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["framekit"]
+
+# Layer rules (docs/ARCHITECTURE.md §2.1): run with `uv run lint-imports`.
+[tool.importlinter]
+root_package = "framekit"
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Layers: models -> contracts"
+type = "layers"
+layers = [
+    "framekit.models",
+    "framekit.contracts",
+]
+
+[[tool.importlinter.contracts]]
+name = "Contracts are pure: no provider SDK, model library or I/O framework"
+type = "forbidden"
+source_modules = ["framekit.contracts"]
+forbidden_modules = ["openai", "anthropic", "pydantic", "httpx", "httpx2"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "Provider SDKs only inside the adapters"
+type = "forbidden"
+source_modules = [
+    "framekit.contracts",
+    "framekit.models.catalog",
+    "framekit.models.router",
+    "framekit.models.cache",
+]
+forbidden_modules = ["openai", "anthropic"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "No model-access libraries or agent frameworks (DECISIONS 2026-10-23)"
+type = "forbidden"
+source_modules = ["framekit"]
+forbidden_modules = [
+    "langchain", "langchain_core", "langchain_openai", "langchain_anthropic",
+    "langchain_deepseek", "langsmith", "langgraph", "litellm",
+]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "No consumer code: no web framework, ORM, queue or key-value client"
+type = "forbidden"
+source_modules = ["framekit"]
+forbidden_modules = ["fastapi", "sqlalchemy", "dramatiq", "redis"]
+allow_indirect_imports = true

@@ -81,7 +81,30 @@ These were decided in short_extract (dates are from its journal) and bind this e
   - **Scoring is a plug-in** (owner agreed): framekit ships a neutral **baseline retriever** (fixed embedding model, recall@k, gold-moment rank) as the default; consumers can plug in their real search agent.
 - **Recorded in:** DESIGN.md intro, §0.2, §2, §2.2, §2.3 wording, §2.4 (new), §3 Embed / Cost, §5.1, §6.2, §9; ARCHITECTURE.md §1, §2, §3, §4, §8; README.md; CLAUDE.md "Project", "Architecture rule", "Key decisions".
 
+### 21:34 — v0.1.0: contracts and model access seeded from short_extract; repository made public
+- **Built:**
+  - `framekit.contracts`: the conversation port types and the `ResponseStore` port.
+  - `framekit.models`: catalog, router, the OpenAI-compatible and Anthropic adapters on the official SDKs, and the response cache.
+  - A new `FileResponseStore` for standalone runs. 89 tests; 5 import contracts; vocabulary test; CI on locked and newest dependency versions; wheel and sdist build; a fresh install imports the public API.
+- **How it was seeded:** the plan's step 1 (restructure short_extract in place) was skipped. The files were taken straight from short_extract with **`git filter-repo`**, keeping their history (15 commits, including earlier file names), then reshaped into `src/framekit/`. `git subtree split` wouldn't have worked, since the files were spread over several packages.
+- **Changes from the app's version:**
+  - **No environment-bound settings:** `ModelSettings` and `CacheSettings` are plain Pydantic models that consumers build. The app keeps its own `CLIPSEARCH_*` variables.
+  - **The router's app-specific helpers** (`from_environment`, `for_search`) stay in short_extract.
+  - `with_cache` now requires a store: no default backend, so the library never reaches for a server.
+  - The Valkey store and its stats/wipe CLI stay in short_extract.
+- **Repository made public** (owner, 2026-10-23), so consumers' Docker builds can install it without credentials. It contains no footage, frames, thumbnails or keys; the seeded history was scanned for key-like strings first.
+- **Open:** the code licence (DESIGN.md §8.3 says MIT or Apache-2.0); until it's chosen, no licence is granted.
+- **Recorded in:** README.md "Status"; ARCHITECTURE.md status, §3, §7; DESIGN.md §7; CLAUDE.md "Workflow", "Current milestone".
+
+### 21:36 — CI: separate unit-test and lint workflows
+- **Decision** (owner, now that the repository is public): CI is two workflows, each with its own status badge in the README.
+  - **`tests`:** pytest and the wheel/sdist build, on **locked** and **newest** dependency versions. The newest run is what a consumer installing framekit today gets.
+  - **`lint`:** ruff, plus the import contracts, which enforce the layer rules.
+  - Both run on pull requests and on pushes to `main`, with read-only permissions.
+- **Why:** contributors and users of a public library see at a glance whether the code passes its tests and its rules, and a lint failure is told apart from a test failure.
+- **Recorded in:** `.github/workflows/tests.yml`, `.github/workflows/lint.yml` (replacing `ci.yml`); README.md badges; CLAUDE.md "Workflow".
+
 ---
 
 ## Still open
-See DESIGN.md §9: video, text and embedding models; A / V / plan schema details and the lens spec file format; default vision profiles; baseline scorer details and gold queries; dataset layout; a distribution name if ever published to PyPI; distributed runner; per-lens taxonomies.
+See DESIGN.md §9: video, text and embedding models; A / V / plan schema details and the lens spec file format; default vision profiles; baseline scorer details and gold queries; dataset layout; a distribution name if ever published to PyPI; distributed runner; per-lens taxonomies; the code licence.

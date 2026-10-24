@@ -1,0 +1,34 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    name: unit tests (${{ matrix.deps }} dependencies)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # locked: the versions in uv.lock. newest: the newest versions the dependency ranges
+        # allow, which is what a consumer installing framekit today gets.
+        deps: [locked, newest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Install
+        run: |
+          if [ "${{ matrix.deps }}" = "newest" ]; then uv sync --upgrade; else uv sync --locked; fi
+      - name: Unit tests
+        run: uv run pytest -q
+      - name: Build wheel and sdist
+        run: uv build
