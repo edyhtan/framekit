@@ -3,7 +3,7 @@ benchmarks and tests.
 
 Layout: `<dir>/<namespace>/<cache class>/<xx>/<sha256 of the key>`, taken from the
 cache's keys (`llmcache:<namespace>:<class>:...`), so one class can be counted or wiped
-(`stats()`, `clear(cache_class=...)`); other keys go under `_other/`. Key hashes are the file
+(`framekit cache stats|wipe`); other keys go under `_other/`. Key hashes are the file
 names (keys may contain characters a file system rejects). Each file holds an 8-byte
 expiry time (Unix seconds) followed by the value. Writes are atomic (a temporary file, then
 a rename), so a crash never leaves a half entry.

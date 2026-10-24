@@ -9,7 +9,7 @@ AI building blocks for video datasets, in Python. One package with modules you c
 | `framekit.contracts` | provider-neutral types: the conversation port, the response-store port | **v0.1.0** |
 | `framekit.models` | model access: a catalog of providers and models (extendable with your own), a router, adapters on the official `openai` and `anthropic` SDKs, a record / replay response cache | **v0.1.0** |
 | `framekit.vision` | how a model sees video: frame selection, image preparation and delivery | on `main`: schema, checks, planning, pixel filters ([settings](docs/settings.md) §5.2) |
-| `framekit.extraction` | turns a video corpus into a dataset of segments, text, vectors and provenance, plus a benchmark harness and a CLI | on `main`: runs end to end ([below](#extraction)); the CLI and benchmarks next |
+| `framekit.extraction` | turns a video corpus into a dataset of segments, text, vectors and provenance, plus a benchmark harness and the `framekit` command | on `main` ([below](#extraction), [settings](docs/settings.md)) |
 
 Used by the video clip search agent ([short_extract](https://github.com/edyhtan/short_extract)), and built for benchmarks and experimental model training.
 
@@ -302,7 +302,7 @@ assert again.cached and again.text == first.text and again.cost_usd == 0
 - **Marked replays:** replays come back with `cached=True`, `cost_usd=0`, and `adapter_version` ending in `+cache`, so stored records never mistake a replay for a real call.
 - **Streams:** they replay their pieces in order; use `CacheSettings(replay_pace="original")` to keep the recorded timing.
 - **Settings:** `ttl_s` (default 7 days), `namespace` (change it to invalidate everything at once), `max_entry_bytes` (larger replies aren't stored).
-- **The file store** keeps entries in a folder per namespace and cache class, so `store.stats()` counts them per class and `store.clear(cache_class="...")` wipes one class.
+- **The file store** keeps entries in a folder per namespace and cache class, so `store.stats()` counts them per class and `store.clear(cache_class="...")` wipes one class (on the command line: `framekit cache stats|wipe --cache-dir DIR [--class L3b]`).
 - **Your own store:** implement the `ResponseStore` protocol from `framekit.contracts`: `async get(key) -> bytes | None` and `async put(key, value, ttl_s) -> bool`. A store must never raise: a failed read is a miss, and a failed write is a skipped write. The search agent, for example, stores entries in Valkey.
 
 ## Vision parameters
@@ -340,7 +340,7 @@ print(plan.timestamps)                                # seconds on the video's o
 
 ## Extraction
 
-Turns a video corpus into a dataset: scenes and beats on each video's timeline, signals, observable facts, lens annotations and query-like phrasings, vectors, and the provenance of every value. On `main`, after v0.1.0; the `framekit` command and the benchmark harness come next. It needs the media extra and an **ffmpeg** binary (on PATH, or `LocalRunner(ffmpeg=path)`):
+Turns a video corpus into a dataset: scenes and beats on each video's timeline, signals, observable facts, lens annotations and query-like phrasings, vectors, and the provenance of every value. On `main`, after v0.1.0. It needs the media extra and an **ffmpeg** binary (on PATH, or passed with `--ffmpeg`):
 
 ```bash
 pip install "framekit[media] @ git+https://github.com/edyhtan/framekit@main"
@@ -384,7 +384,15 @@ plan:
   budget: {max_cost_usd: 5}
 ```
 
-In Python, and reading the result:
+```bash
+framekit extract --space search-space.yaml --corpus corpus.yaml --plan plan.yaml \
+                 --out ~/framekit-data/datasets/first --dry-run      # checks + cost estimate
+framekit extract --space search-space.yaml --corpus corpus.yaml --plan plan.yaml \
+                 --out ~/framekit-data/datasets/first \
+                 --cache-dir ~/framekit-data/model-cache            # records every model reply
+```
+
+The same in Python, and reading the result:
 
 ```python
 from framekit.extraction import Corpus, Dataset, ExtractionPlan, LocalRunner, SearchSpace, extract
@@ -402,13 +410,20 @@ dataset.rows("annotations")          # dicts: lens, field, label, value, target,
 dataset.manifest.derivations         # what the derivation rules filled in, and from what
 ```
 
-- **Checked before any spend, every problem at once:** the files' structure and values, a model for every role (vision models where frames are sent, within their image limits), the vision profiles against each video's analysis copy, signal detectors, the provider keys, and governance. `dry_run=True` stops after the checks with an upper-bound cost estimate.
-- **Reruns are free where nothing changed:** every step is a task keyed by its inputs, stored in the work folder (default: `<out>.work`). Adding a lens reruns only lens passes and embeddings; `rerun={"L3b"}` forces a stage. With a response cache (`cache=FileResponseStore(path)`), model replies are recorded and can be replayed.
+- **Checked before any spend, every problem at once:** the files' structure and values, a model for every role (vision models where frames are sent, within their image limits), the vision profiles against each video's analysis copy, signal detectors, the provider keys, and governance. `--dry-run` stops after the checks with an upper-bound cost estimate.
+- **Reruns are free where nothing changed:** every step is a task keyed by its inputs, stored in the work folder (default: `<out>.work`). Adding a lens reruns only lens passes and embeddings; `--rerun L3b` forces a stage. With `--cache-dir`, model replies are recorded and can be replayed (`--cache-mode replay`).
 - **Problems are flagged, never dropped:** an unusable reply is retried with what was wrong with it, then flagged; quality checks (times, names, vocabulary, the lens's validators, agreement between self-consistency runs) are written to the `qc` table.
 - **Datasets:** Parquet tables (`units`, `shots`, `scenes`, `beats`, `windows`, `signals`, `perception`, `frames_sent`, `annotations`, `phrasings`, `vectors`, `runs`, `qc`) plus `manifest.json`, which records the search space verbatim, the resolved plan, the models, every digest and the estimated cost. Frames are never stored: `frames_sent` holds their times and image digests.
-- **Your own models and detectors:** pass `ModelSource`s (`sources=[...]`), and register signal detectors with `register_detector` (e.g. a speech model). Plan files only name models; they never hold keys or endpoints.
+- **Your own models and detectors:** pass `ModelSource`s (`sources=[...]`, or `--sources my.module:SOURCES`), and register signal detectors with `register_detector` (e.g. a speech model). Plan files only name models; they never hold keys or endpoints.
 
-**Not built yet:** the command and the benchmark harness (next), native video input (needs a `video_understand` port), image embeddings, a built-in speech model or audio tagger (register a detector), chunked long units (units over `long_units.enabled_over_s` are excluded with the reason), aligning a file to a reference timeline, and a distributed runner.
+**Benchmarks** compare search spaces with a pinned plan (augmentation strategies), or plans with a pinned search space, on a fixed gold set. The default scorer, `baseline_retriever`, ranks scenes by embedding similarity and reports recall@k and the gold moment's rank:
+
+```bash
+framekit bench --corpus corpus.yaml --plan plan.yaml --gold gold/queries.yaml \
+               --space raw=space-raw.yaml --space llm=space-llm.yaml --out reports/aug-1
+```
+
+**Not built yet:** native video input (needs a `video_understand` port), image embeddings, a built-in speech model or audio tagger (register a detector), chunked long units (units over `long_units.enabled_over_s` are excluded with the reason), aligning a file to a reference timeline, and a distributed runner.
 
 ## Development
 

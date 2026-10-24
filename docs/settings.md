@@ -1,10 +1,10 @@
 # Extraction Settings: Full Reference
 
-Every setting that shapes an extraction run, in one place: what you give, what framekit decides, what comes out. It's the spec for the schemas built in milestone E1 (`SearchSpace`, `Corpus`, `ExtractionPlan`, `GoldSet`). Why it's shaped this way: [DESIGN.md](DESIGN.md) §2.3–§2.4; decisions: [DECISIONS.md](DECISIONS.md).
+Every setting that shapes an extraction run, in one place: what you give, what framekit decides, what comes out. It's the reference for the schemas in `framekit.extraction` (`SearchSpace`, `Corpus`, `ExtractionPlan`, `LensSpec`, `GoldSet`). Why it's shaped this way: [DESIGN.md](DESIGN.md) §2.3–§2.4; decisions: [DECISIONS.md](DECISIONS.md).
 
-> **Status:** in progress on `main` (2026-10-24), after v0.1.0. Built: every setting below is parsed and checked (§3–§6), resolved (§5.1) and run, from the analysis copy to the lens passes and vectors, written as a dataset (§7). Not yet: the `framekit` command (§2) and the benchmark harness (§6), the next step of milestone E1. Defaults are placeholders until a benchmark sweep sets them.
+> **Status:** built on `main` (2026-10-24), after v0.1.0: every setting below is in code, in `framekit.extraction` and `framekit.vision`, unless its tag says otherwise. Defaults are placeholders until a benchmark sweep sets them.
 
-**Tags:** **[built]** in code (v0.1.0, or on `main` since) · **[not built]** accepted or refused with a clear reason, but not implemented yet · **[designed]** in DESIGN.md / ARCHITECTURE.md · **[discussed]** agreed with the owner, first written down here · **[open]** value or choice not decided · **[fixed]** a rule, not a setting. **Every number is a placeholder** until a benchmark sweep sets it.
+**Tags:** **[built]** in code (v0.1.0, or on `main` since) · **[not built]** accepted or refused with a clear reason, but not implemented yet · **[open]** value or choice not decided · **[fixed]** a rule, not a setting. **Every number is a placeholder** until a benchmark sweep sets it.
 
 ---
 
@@ -75,61 +75,77 @@ Extraction run: emotional moments, test corpus (5 units)
 
 ```bash
 framekit extract \
-  --space    search-space.yaml \                  # 1. what should be findable     [designed]
-  --corpus   corpus.yaml \                        # 2. which videos                [designed]
-  --plan     plan.yaml \                          # 3–6. how (optional)            [discussed flag]
-  --out      ~/framekit-data/datasets/tj-emotions-v1 \                          # [designed]
-  --work-dir ~/framekit-data/work \               # video copies: outside any repo [discussed]
-  --concurrency 8 \                                                             # [discussed]
-  --rate-limit hive=4/s --rate-limit anthropic=2/s \                            # [discussed]
-  --provider-retries 3 \                          # transport errors only          [discussed]
-  --cache-dir ~/framekit-data/model-cache \                                     # [discussed]
-  --cache-mode record --cache-mode L3b=replay \   # default, then per call class   [built: CacheSettings.classes]
-  --dry-run                                       # validate + cost estimate, no spend [discussed]
+  --space    search-space.yaml \                  # 1. what should be findable      [built]
+  --corpus   corpus.yaml \                        # 2. which videos                 [built]
+  --plan     plan.yaml \                          # 3–6. how (optional)             [built]
+  --out      ~/framekit-data/datasets/tj-emotions-v1 \                           # [built]
+  --work-dir ~/framekit-data/work \               # default <out>.work; outside any repo
+  --concurrency 8 \                               # model calls in flight
+  --media-concurrency 4 \                         # ffmpeg processes (default: half the CPUs)
+  --rate-limit hive=4/s --rate-limit anthropic=120/m \                           # per provider
+  --provider-retries 3 \                          # transport, rate-limit, overload errors only
+  --timeout 120 \                                 # seconds per model call
+  --cache-dir ~/framekit-data/model-cache \       # the model response cache
+  --cache-mode record --cache-mode L3b=replay \   # default mode, then per class (L2, L3a, L3b)
+  --ffmpeg /usr/bin/ffmpeg \                      # default: ffmpeg on PATH
+  --sources my_models:SOURCES \                   # ModelSources from your own code
+  --label run-1 \                                 # recorded in the manifest
+  --dry-run                                       # checks + cost estimate, nothing runs
 # Runs always resume: tasks are keyed by their inputs and finished ones are skipped.
-# --rerun L3b forces one stage again (ignores its existing run records).        [discussed]
+# --rerun L3b runs a stage again, ignoring its stored tasks (repeatable).
+# Exit code: 0 complete, 2 a unit is partial, failed, excluded or skipped, 1 bad input.
 
 framekit bench --corpus corpus.yaml --plan plan.yaml \       # compare search spaces,
-  --space raw=space-raw.yaml --space llm=space-llm.yaml \    # plan pinned       [designed]
+  --space raw=space-raw.yaml --space llm=space-llm.yaml \    # plan pinned
   --gold gold/queries.yaml --scorer baseline_retriever --out reports/aug-1
 framekit bench --corpus corpus.yaml --space search-space.yaml \   # compare plans,
-  --plan v8=plan-8f.yaml --plan v16=plan-16f.yaml \               # space pinned   [designed]
-  --gold gold/queries.yaml --out reports/frames-1
+  --plan v8=plan-8f.yaml --plan v16=plan-16f.yaml \               # space pinned
+  --gold gold/queries.yaml --out reports/frames-1                  # --scorer MODULE:NAME for yours
 
-framekit cache stats --cache-dir ~/framekit-data/model-cache     # [designed]
-framekit cache wipe  --cache-dir ~/framekit-data/model-cache [--class L3b]
+framekit cache stats --cache-dir ~/framekit-data/model-cache [--class L3b]
+framekit cache wipe  --cache-dir ~/framekit-data/model-cache [--class L3b] [--namespace v1]
 ```
 
-The default folders live outside the project on purpose: the work directory holds normalized copies and chunk files, which count as footage for a bring-your-own corpus, so they must never land in a repository. framekit also writes a `.gitignore` containing `*` into every folder it creates. [discussed]
+Every flag above is [built]. Execution flags change speed and cost, never the dataset; they're logged in the manifest (`tools.execution`), never hashed.
 
-**Python** (designed for E1; the cache classes are built):
+- **Folders:** the work folder holds analysis copies, which count as footage for a bring-your-own corpus, so it must never land in a repository. framekit writes a `.gitignore` containing `*` into the work folder, the dataset folder and the benchmark folder.
+- **An existing dataset folder** is rewritten only by a rerun of the same search space, corpus and plan; a folder holding another dataset is refused (datasets are never overwritten).
+- **Keys:** a role whose provider key isn't set stops the run before any media work (a dry run lists them as notes). Plan files only name models; endpoints and keys come from `--sources` (your code) or the built-in catalog and its environment variables.
+
+**Python** [built]:
 
 ```python
-from framekit.extraction import SearchSpace, Corpus, ExtractionPlan, GoldSet   # [built]
-from framekit.extraction import extract, benchmark, baseline_retriever, Dataset, LocalRunner
-from framekit.models.cache import FileResponseStore, CacheSettings, ClassPolicy   # [built]
+from framekit.extraction import (
+    Corpus, ExtractionPlan, GoldSet, LocalRunner, SearchSpace, baseline_retriever, benchmark,
+    extract, Dataset,
+)
+from framekit.models.cache import FileResponseStore, CacheSettings, ClassPolicy
 
 dataset = extract(
     SearchSpace.load("search-space.yaml"),
     Corpus.load("corpus.yaml"),
     plan=ExtractionPlan.load("plan.yaml"),                    # None: defaults + derivation rules
-    runner=LocalRunner(concurrency=8, rate_limits={"hive": 4.0}, provider_retries=3,
-                       work_dir="~/framekit-data/work"),
     out="~/framekit-data/datasets/tj-emotions-v1",
+    runner=LocalRunner(concurrency=8, rate_limits={"hive": 4.0}, provider_retries=3,
+                       work_dir="~/framekit-data/work", ffmpeg="ffmpeg"),
     cache=FileResponseStore("~/framekit-data/model-cache"),
     cache_settings=CacheSettings(mode="record", classes={"L3b": ClassPolicy(mode="replay")}),
-    dry_run=False,
+    sources=[],                                               # your ModelSources, if any
+    dry_run=False,                                            # True: a CostEstimate instead
 )
-again = Dataset.open("~/framekit-data/datasets/tj-emotions-v1")   # typed readers + .manifest
+again = Dataset.open("~/framekit-data/datasets/tj-emotions-v1")   # tables + .manifest
 
 report = benchmark(
     {"raw": SearchSpace.load("space-raw.yaml"), "llm": SearchSpace.load("space-llm.yaml")},
     Corpus.load("corpus.yaml"),
     plan=ExtractionPlan.load("plan.yaml"),                    # pinned for the comparison
     gold=GoldSet.load("gold/queries.yaml"),
-    scorer=baseline_retriever,                                # or any score(dataset, gold)
+    out="reports/aug-1",
+    scorer=baseline_retriever,                                # or any async scorer
 )
 ```
+
+`extract_async` and `benchmark_async` are the same for callers already in an event loop.
 
 ---
 
@@ -498,7 +514,7 @@ Transport retries (`--provider-retries`), concurrency and rate limits are execut
 
 ## 6. Benchmark gold set: `gold/queries.yaml`
 
-The yardstick. It's fixed per corpus and **independent of any search space**: gold queries must never appear in a search space's `query_style.examples` (`overlapping_queries` finds the same words, or at least 80% of the words in common); the benchmark harness will reject them. [built: the schema]
+The yardstick. It's fixed per corpus and **independent of any search space**: gold queries must never appear in a search space's `query_style.examples`, and the harness rejects overlap (the same words, or at least 80% of the words in common). [built]
 
 ```yaml
 gold:
@@ -513,7 +529,9 @@ gold:
                                                    #   consumer scorers may score abstention
 ```
 
-The baseline scorer (`baseline_retriever`) embeds each gold query with a fixed model, ranks segments by similarity to their phrasings and summaries, and reports recall@k and the rank of the gold moment. [designed]
+The baseline scorer (`baseline_retriever`) embeds each gold query with the dataset's own text-embedding model (every variant must use the same one), ranks scenes by their best cosine similarity over their summary and phrasing vectors, and reports `recall@1`, `recall@5`, `recall@10`, `mrr`, `median_rank`, `not_found` and `queries_scored`. [built] A scorer of your own is an async callable `(dataset, gold, context) -> metrics`, where `context.embed(texts)` embeds with the dataset's model.
+
+**Fairness** [built]: comparing search spaces, every resolved plan must be identical except where the derivation rules wrote (`plan.fairness_digest`); comparing plans, the search space is one object. Every variant shares the work folder, so tasks with the same inputs run once.
 
 ---
 
@@ -553,5 +571,6 @@ The baseline scorer (`baseline_retriever`) embeds each gold query with a fixed m
 2. ~~The response cache and repeated runs~~: done 2026-10-24. `temperature` and `seed` are in `ConversationRequest` and, when set, in the cache key, so each self-consistency run can have its own seed.
 3. **Dropped rows.** Rows are flagged, never dropped, per DESIGN.md §3 L4. Should a "drop" ever exist, meaning excluded from the main tables but kept with its reason in `qc`?
 4. **Default numbers** for every placeholder above, from benchmark sweeps (vision profiles first).
-5. **Model choices** per role (video, vision, text, embeddings) and the L1 tools.
+5. **Model choices** per role (video, vision, text, embeddings) and any L1 tools beyond the built-in detectors (speech, audio tags).
 6. ~~Schema details~~: decided 2026-10-24 (v1): the lens spec file format (§3.1) and the dataset layout (§7).
+7. **Not built yet:** native video (`video_understand`), image embeddings, chunked long units, file matching and alignment, annotation gold-set scoring, a distributed runner, refilling the frame budget after pixel filters.

@@ -498,8 +498,8 @@ flowchart LR
 **E1: first dataset (5 units of the test corpus)**
 - A, V and dataset schemas; lens spec format and loader. **Built (2026-10-24).**
 - Vision parameters (§2.3): schema, checks, resolution, planning, pixel filters, image preparation and delivery. **Built (2026-10-24).**
-- L0–L4 + embed end to end with the corpus profile and modular perception; dataset writer and reader v1. **Built (2026-10-24)**, tested on generated test patterns with a scripted model; not yet run against a real provider.
-- Next: the CLI (`extract`, `bench`, `cache`) and the benchmark harness; then a run on 5 units with real models (the model choice is open, §9), the emotions & dynamics lens (Appendix B) with a ~10-scene gold set, plus a **minimal second lens** (e.g. comedy craft, ~10 labels) on the same scenes, purely to prove framekit has no lens leakage.
+- L0–L4 + embed end to end with the corpus profile and modular perception; dataset writer and reader v1; CLI `extract`, `bench`, `cache`. **Built (2026-10-24)**, tested on generated test patterns with a scripted model; not yet run against a real provider.
+- Still to do: run it on 5 units with real models (the model choice is open, §9); the emotions & dynamics lens (Appendix B) with a ~10-scene gold set, plus a **minimal second lens** (e.g. comedy craft, ~10 labels) on the same scenes, purely to prove framekit has no lens leakage.
 
 **E2: full test corpus**
 - L0–L4 on every unit (~161 units, ~19 h for the example corpus); the search app loads the result.
@@ -545,7 +545,7 @@ Users' copies of a corpus differ (releases, edits, frame rates). A dedicated mod
 - **Video model** for L2/L3a (Gemini assumed; Claude via frames is an option; verify cost and limits). Gemini integration is **paused** (DECISIONS.md 2026-10-24): native video needs a `video_understand` port and a native adapter; text roles would work through the OpenAI-compatible adapter after small fixes.
 - **Text model** for lens passes; **embedding models** (text + SigLIP).
 - **Frames to remote models for bring-your-own corpora:** no default; each plan says (`governance.model_inputs`), and `local_only` is enforced against each role's provider address (2026-10-24).
-- **A, V and plan schemas, and the lens spec file format:** built as v1 (2026-10-24; DECISIONS), in `framekit.extraction.schemas`, revisitable. Every setting: [settings.md](settings.md); its §8 lists the open decisions they raised.
+- **A, V and plan schemas, the lens spec file format, the dataset layout:** built as v1 (2026-10-24; DECISIONS), revisitable. Still open from [settings.md](settings.md) §8: a drop policy for rows (today: flagged, never dropped).
 - **Vision:** refilling the frame budget after pixel filters drop frames; planning `split_by_budget` and `per_module` views; keeping `budget.max_frames` across the spans of a unit (planning applies it per span).
 - **Baseline scorer details:** its fixed embedding model and metrics (§6.2); the gold-query set per corpus.
 - **Default vision profiles** per stage, from a benchmark sweep (§2.3, §6.2).

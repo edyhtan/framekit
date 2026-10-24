@@ -142,7 +142,7 @@ class FFmpeg:
         if found is None:
             raise MediaError(
                 f"ffmpeg not found ({binary!r}): install ffmpeg, or pass its path "
-                "(LocalRunner(ffmpeg=...))"
+                "(LocalRunner(ffmpeg=...), or --ffmpeg on the command line)"
             )
         self.path = found
         self._version: str | None = None

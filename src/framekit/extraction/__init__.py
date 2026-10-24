@@ -12,12 +12,9 @@ of segments, text, vectors and provenance (docs/DESIGN.md §2–§6).
     )
     dataset.scenes, dataset.rows("annotations")
 
-Runs end to end: the analysis copy, signals, scenes, observable facts, lens passes and
-vectors. The `framekit` command and the benchmark harness follow in milestone E1.
-
 The schemas, resolution and the dataset reader need only the base install; running
-extraction needs the media extra (`pip install "framekit[media]"`, for numpy) and an
-ffmpeg binary. Every setting: docs/settings.md.
+extraction and the benchmark harness needs the media extra (`pip install
+"framekit[media]"`, for numpy) and an ffmpeg binary. Every setting: docs/settings.md.
 """
 
 from typing import Any
@@ -44,6 +41,13 @@ _LAZY = {
     "extract": "framekit.extraction.pipeline",
     "extract_async": "framekit.extraction.pipeline",
     "CostEstimate": "framekit.extraction.estimate",
+    "benchmark": "framekit.extraction.bench",
+    "benchmark_async": "framekit.extraction.bench",
+    "baseline_retriever": "framekit.extraction.bench",
+    "BaselineRetriever": "framekit.extraction.bench",
+    "Report": "framekit.extraction.bench",
+    "Scorer": "framekit.extraction.bench",
+    "ScoringContext": "framekit.extraction.bench",
     "Detector": "framekit.extraction.media",
     "MediaContext": "framekit.extraction.media",
     "register_detector": "framekit.extraction.media",
@@ -70,6 +74,7 @@ def __getattr__(name: str) -> Any:
 __all__ = [
     "MODULES",
     "SCHEMAS",
+    "BaselineRetriever",
     "BudgetExceeded",
     "ConfigError",
     "Corpus",
@@ -84,9 +89,15 @@ __all__ = [
     "LensSpec",
     "LocalRunner",
     "MediaContext",
+    "Report",
     "ResolvedRun",
     "RoleBinding",
+    "Scorer",
+    "ScoringContext",
     "SearchSpace",
+    "baseline_retriever",
+    "benchmark",
+    "benchmark_async",
     "detectors",
     "extract",
     "extract_async",

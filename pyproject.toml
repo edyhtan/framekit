@@ -29,11 +29,14 @@ dev = [
 ]
 
 [project.optional-dependencies]
-# Running extraction (signal detectors, pixel filters, storyboards). ffmpeg itself is a
-# system binary, never a Python dependency.
+# Running extraction (signal detectors, pixel filters, storyboards) and the benchmark
+# harness. ffmpeg itself is a system binary, never a Python dependency.
 media = [
     "numpy>=1.26,<3",
 ]
+
+[project.scripts]
+framekit = "framekit.cli:main"
 
 [tool.uv]
 # Supply-chain cooldown (DECISIONS 2026-10-23, "Security checks"): resolve only releases
@@ -78,9 +81,10 @@ include_external_packages = true
 
 [[tool.importlinter.contracts]]
 # vision and models are independent siblings: neither may import the other.
-name = "Layers: extraction -> vision | models -> contracts"
+name = "Layers: cli -> extraction -> vision | models -> contracts"
 type = "layers"
 layers = [
+    "framekit.cli",
     "framekit.extraction",
     "framekit.vision | framekit.models",
     "framekit.contracts",
@@ -112,6 +116,7 @@ source_modules = [
     "framekit.models.cache",
     "framekit.vision",
     "framekit.extraction",
+    "framekit.cli",
 ]
 forbidden_modules = ["openai", "anthropic"]
 allow_indirect_imports = true
@@ -134,9 +139,9 @@ forbidden_modules = ["fastapi", "sqlalchemy", "dramatiq", "redis"]
 allow_indirect_imports = true
 
 [[tool.importlinter.contracts]]
-# The media extra stays optional: only media work and the pixel filters import numpy, so
-# the schemas, model access and the dataset reader work without it.
-name = "numpy only in media work and the pixel filters (the media extra)"
+# The media extra stays optional: only media work, pixel filters and the benchmark
+# harness import numpy, so schemas, model access and the dataset reader work without it.
+name = "numpy only in media work, pixel filters and the benchmark harness"
 type = "forbidden"
 source_modules = [
     "framekit.contracts",
