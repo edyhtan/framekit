@@ -115,6 +115,11 @@ class ModelSpec:
     # Accepts images (`ConversationRequest.images`), per the provider's documentation.
     # A request with images to a model without it fails before any call.
     vision: bool = False
+    # Image limits per request, from the provider's documentation (None: not stated).
+    # Extraction checks vision profiles against them before any spend, so nothing is
+    # downscaled or rejected by the provider halfway through a run.
+    max_images: int | None = None
+    max_image_side_px: int | None = None  # the long edge the model reads without resizing
 
     @property
     def reasoning_mode(self) -> str:
@@ -193,6 +198,11 @@ _SPECS = (
         # stays "prompted" until probed with a key.
         context_window=200_000,
         vision=True,  # Claude models take image input (Messages API image blocks)
+        # platform.claude.com/docs/en/build-with-claude/vision (2026-10-24): 100 images per
+        # request for 200k-context models; 1,568 px native long edge on this tier (larger
+        # images are downscaled; over 20 images, 2,000 px is a hard limit).
+        max_images=100,
+        max_image_side_px=1568,
     ),
     ModelSpec(
         "anthropic",
@@ -212,6 +222,10 @@ _SPECS = (
         ),
         context_window=1_000_000,
         vision=True,
+        # Same page: 600 images per request for other models; native long edge 2,576 px,
+        # but a request with over 20 images rejects any side over 2,000 px, so 2,000.
+        max_images=600,
+        max_image_side_px=2000,
     ),
     ModelSpec(
         "anthropic",
@@ -231,6 +245,8 @@ _SPECS = (
         ),
         context_window=1_000_000,
         vision=True,
+        max_images=600,
+        max_image_side_px=2000,
     ),
 )
 CATALOG: dict[str, ModelSpec] = {spec.model_id: spec for spec in _SPECS}
