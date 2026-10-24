@@ -8,7 +8,7 @@ AI building blocks for video datasets, in Python. One package with modules you c
 |---|---|---|
 | `framekit.contracts` | provider-neutral types: the conversation port, the response-store port | **v0.1.0** |
 | `framekit.models` | model access: a catalog of providers and models (extendable with your own), a router, adapters on the official `openai` and `anthropic` SDKs, a record / replay response cache | **v0.1.0** |
-| `framekit.vision` | how a model sees video: frame selection, image preparation and delivery | **partial** on `main`: schema, checks, pixel-free planning ([settings](docs/settings.md) §5.2) |
+| `framekit.vision` | how a model sees video: frame selection, image preparation and delivery | on `main`: schema, checks, planning, pixel filters ([settings](docs/settings.md) §5.2) |
 | `framekit.extraction` | turns a video corpus into a dataset of segments, text, vectors and provenance, plus a benchmark harness and a CLI | in progress on `main`: lens specs and the run inputs ([settings](docs/settings.md) §3–§6); the rest designed ([design](docs/DESIGN.md)) |
 
 Used by the video clip search agent ([short_extract](https://github.com/edyhtan/short_extract)), and built for benchmarks and experimental model training.
@@ -335,7 +335,7 @@ print(plan.timestamps)                                # seconds on the video's o
 
 - **Checks before any spend, all reported at once:** unknown strategies or keys, a strategy in the wrong slot, missing settings, `true` or `"4"` where a number belongs, `native_video` with anything but uniform sampling, views that overflow the frame budget. `check_against_source` and `check_against_model` add the analysis copy's and the model's limits.
 - **Read-only once checked:** parsed and resolved parameters can't be changed in place, so the digest always describes what runs.
-- **Strategies are versioned code:** `uniform`, `shot_based`, `shot_boundaries`, `audio_onsets`, `dedupe`, `sharpness`, `motion`; a changed algorithm gets a new version (`dedupe@2`), so old datasets stay reproducible. Filters that need pixels (`dedupe`, `sharpness`) are recorded now and run with the media stage (E1).
+- **Strategies are versioned code:** `uniform`, `shot_based`, `shot_boundaries`, `audio_onsets`, `dedupe`, `sharpness`, `motion`; a changed algorithm gets a new version (`dedupe@2`), so old datasets stay reproducible. Filters that need pixels (`dedupe`, `sharpness`) run in extraction's media stage (`framekit.vision.pixels`, with the media extra), after the budget; anchors are never dropped.
 - Every setting, check and default: [docs/settings.md](docs/settings.md) §5.2.
 
 ## Extraction (preview)
@@ -364,7 +364,7 @@ framekit bench   --corpus corpus.yaml --plan plan.yaml \
 
 ```bash
 uv sync                   # Python 3.12, dev tools included
-uv run pytest             # unit tests
+uv run pytest             # unit tests (the media ones need ffmpeg: on PATH, or FRAMEKIT_TEST_FFMPEG=/path)
 uv run lint-imports       # layer rules: contracts stay pure, SDKs only in adapters, no model libraries
 uv run ruff check .       # lint
 uv build                  # wheel + sdist

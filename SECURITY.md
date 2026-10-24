@@ -25,12 +25,12 @@ In scope: the library code in this repository (`framekit.contracts`, `framekit.m
 
 - a way for a provider key to leak, for instance into logs, error messages or response-cache files;
 - unsafe handling of model responses or cache records (code execution, path traversal, deserialization);
-- a way for an input file (a lens spec, search space, corpus, plan or gold set) to make framekit run code or read a file it shouldn't, or send one to a model provider. Spec files are read with YAML's safe loader, and a lens's prompt files must stay inside its folder;
+- a way for an input file (a lens spec, search space, corpus, plan or gold set) to make framekit run code or read a file it shouldn't, or send one to a model provider. Spec files are read with YAML's safe loader, a lens's prompt files must stay inside its folder, and ffmpeg runs with argument lists, never through a shell;
 - a workflow that could run untrusted code with write access, or a dependency or action pin that can be swapped.
 
 Context that limits what framekit can expose:
 
-- **No footage:** the repository contains no video, frames, thumbnails, ripping tools or downloaders, and test fixtures are synthetic. The 0.1.x line (contracts and model access) doesn't read video files at all.
+- **No footage:** the repository contains no video, frames, thumbnails, ripping tools or downloaders, and test videos are generated test patterns. Media work reads the video files it's given and writes only where it's told (analysis copies go to a work folder). The 0.1.x line (contracts and model access) doesn't read video files at all.
 - **The only secrets it reads are provider API keys** (and optional base-URL overrides), from the environment, by the names in the provider configs: the built-in catalog's (`HIVE_API_KEY`, `DEEPSEEK_API_KEY`, `ANTHROPIC_API_KEY`), or the variable a provider registered by an application names. It has no other environment-bound settings.
 - **Known gaps**, to be closed later ([docs/adapters.md](docs/adapters.md), "Security"):
   - a provider's key is sent to that provider's base URL, and the official SDKs also send headers taken from their own environment variables (`OPENAI_CUSTOM_HEADERS`, `ANTHROPIC_CUSTOM_HEADERS`, `OPENAI_ORG_ID`, `OPENAI_PROJECT_ID`) to whatever host a provider points at, including custom ones. framekit doesn't strip them yet;

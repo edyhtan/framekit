@@ -25,6 +25,14 @@ dev = [
     "pytest-asyncio>=0.23",
     "import-linter>=2",
     "ruff>=0.6",
+    "numpy>=1.26",
+]
+
+[project.optional-dependencies]
+# Running extraction (signal detectors, pixel filters, storyboards). ffmpeg itself is a
+# system binary, never a Python dependency.
+media = [
+    "numpy>=1.26,<3",
 ]
 
 [tool.uv]
@@ -121,4 +129,24 @@ name = "No consumer code: no web framework, ORM, queue or key-value client"
 type = "forbidden"
 source_modules = ["framekit"]
 forbidden_modules = ["fastapi", "sqlalchemy", "dramatiq", "redis"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+# The media extra stays optional: only media work and the pixel filters import numpy, so
+# the schemas, model access and the dataset reader work without it.
+name = "numpy only in media work and the pixel filters (the media extra)"
+type = "forbidden"
+source_modules = [
+    "framekit.contracts",
+    "framekit.models",
+    "framekit.vision.params",
+    "framekit.vision.planning",
+    "framekit.vision.resolve",
+    "framekit.vision.checks",
+    "framekit.vision.registry",
+    "framekit.vision.builtin",
+    "framekit.vision.signals",
+    "framekit.extraction.schemas",
+]
+forbidden_modules = ["numpy"]
 allow_indirect_imports = true

@@ -1,8 +1,9 @@
 """Vision: how a model sees video (`vision_params`, docs/DESIGN.md §2.3), as data.
 
-Built so far: the schema and its load-time checks, resolution to the canonical form the
-manifest records (with digests), the strategy registry, and pixel-free frame planning.
-Filters that need pixels, image preparation and delivery run in the media stage (E1).
+The schema and its load-time checks, resolution to the canonical form the manifest records
+(with digests), the strategy registry, and pixel-free frame planning. The filters that need
+pixels are in `framekit.vision.pixels` (numpy, the media extra); extraction's media stage
+reads the frames, runs them, and prepares and delivers the images.
 
     params = VisionParams.from_mapping(                  # VisionParamsError lists problems
         {"vision_profiles": plan["vision_profiles"], "stages": plan["stages"]}
