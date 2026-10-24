@@ -7,6 +7,7 @@ clients are only constructed, never used.
 
 import pickle
 from dataclasses import replace
+from urllib.parse import urlparse
 
 import pytest
 from pydantic import SecretStr
@@ -115,7 +116,10 @@ def test_a_source_may_route_a_built_in_model_through_another_provider():
     spec = router.resolve("claude-via-proxy")
     assert spec.provider == "corp-proxy" and spec.model_id == "claude-haiku-4-5"
     adapter = router.sources["claude-via-proxy"].build(ModelSettings())
-    assert str(adapter.client.base_url).startswith("https://llm-proxy.corp.example")
+    # The exact scheme and host, not a prefix: a prefix would also match
+    # https://llm-proxy.corp.example.attacker.net (CodeQL incomplete-url-substring-sanitization).
+    url = urlparse(str(adapter.client.base_url))
+    assert (url.scheme, url.hostname) == ("https", "llm-proxy.corp.example")
 
 
 def test_a_source_reusing_a_catalog_id_overrides_it_for_this_router_only():
