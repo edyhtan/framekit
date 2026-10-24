@@ -269,6 +269,8 @@ stages:
 - **Reusable outside extraction:** consumers use the same profiles and `framekit.vision` at query time (e.g. the search app's grounding samples densely on a few candidate scenes), so offline and online sampling are described the same way.
 - **Defaults come from a sweep**, not a guess: the benchmark harness compares profiles on the gold set at equal cost (§6.2). The values above are placeholders.
 
+**Built so far** (`framekit.vision`, 2026-10-24): the schema (`VisionParams`, `VisionProfile`), the strategy registry with the version-1 strategies named above, every load-time check, the checks against the analysis copy and against a model's limits, resolution to the canonical recorded form with SHA-256 digests (per profile and for the whole block), and **pixel-free planning**: frame timestamps from candidates, anchors, the budget, allocation signals and overview-plus-detail views, using L1 signals only. Filters that need pixels (`dedupe`, `sharpness`) are checked and recorded now; they run in the media stage, with image preparation and delivery (E1). The schema lives in `framekit.vision`, not in `contracts`, because contracts stay free of Pydantic ([ARCHITECTURE.md](ARCHITECTURE.md) §2.1). Signatures: ARCHITECTURE.md §3; every setting, check and filled-in default: [settings.md](settings.md) §5.2.
+
 The plan's other settings (segment granularity, L1 detector settings, phrasings per scene, self-consistency runs, embedding inputs; groups in §2.4; every one listed in [settings.md](settings.md)) follow the same pattern: named, resolved into the manifest, and part of the input hash of the stages they affect. Their detailed schema is open (§9).
 
 ### 2.4 A, the plan, and benchmarking A
@@ -493,6 +495,7 @@ flowchart LR
 
 **E1: first dataset (5 units of the test corpus)**
 - A, V and dataset schemas; lens spec format and loader.
+- Vision parameters (§2.3): schema, checks, resolution and pixel-free planning **done (2026-10-24)**; frame extraction, pixel filters, image preparation and delivery come with the media stage.
 - L0–L3a end to end with the corpus profile and modular perception.
 - Emotions & dynamics lens (Appendix B) with a ~10-scene gold set, plus a **minimal second lens** (e.g. comedy craft, ~10 labels) on the same scenes, purely to prove framekit has no lens leakage.
 - Dataset writer and reader v1; CLI `extract`.

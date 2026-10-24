@@ -2,9 +2,9 @@
 
 Every setting that shapes an extraction run, in one place: what you give, what framekit decides, what comes out. It's the spec for the schemas built in milestone E1 (`SearchSpace`, `Corpus`, `ExtractionPlan`, `GoldSet`). Why it's shaped this way: [DESIGN.md](DESIGN.md) §2.3–§2.4; decisions: [DECISIONS.md](DECISIONS.md).
 
-> **Status:** reference, not built. framekit v0.1.0 implements only model access (`ModelSettings`, `CacheSettings`, per-request options). Everything below is the target.
+> **Status:** reference, mostly not built. framekit v0.1.0 implements model access (`ModelSettings`, `CacheSettings`, per-request options); `main` adds the vision parameters (`framekit.vision`, §5.2: schema, checks, resolution, pixel-free planning; not released yet). Everything else below is the target.
 
-**Tags:** **[built]** in v0.1.0 · **[designed]** in DESIGN.md / ARCHITECTURE.md · **[discussed]** agreed with the owner, first written down here · **[open]** value or choice not decided · **[fixed]** a rule, not a setting. **Every number is a placeholder** until a benchmark sweep sets it.
+**Tags:** **[built]** in code (v0.1.0, or on `main` since) · **[designed]** in DESIGN.md / ARCHITECTURE.md · **[discussed]** agreed with the owner, first written down here · **[open]** value or choice not decided · **[fixed]** a rule, not a setting. **Every number is a placeholder** until a benchmark sweep sets it.
 
 ---
 
@@ -237,7 +237,7 @@ Rules v1 [discussed]. Each is deterministic, versioned, and recorded when applie
     deinterlace: auto                              # [discussed]
     color: {normalize: auto}                       # [discussed]
 
-  vision_profiles:                                 # [designed] DESIGN.md §2.3
+  vision_profiles:                                 # [built] DESIGN.md §2.3 (numbers [open])
     scene_overview:                                # native video: the provider samples, so only
       version: 1                                   #   uniform fps, a clip range and a size apply
       frame_selection: {candidates: {strategy: uniform, fps: 1}}
@@ -245,8 +245,10 @@ Rules v1 [discussed]. Each is deterministic, versioned, and recorded when applie
       delivery: {mode: native_video}
     scene_detail:
       version: 1
-      views:                                       # [discussed] several looks per segment
+      views:                                       # [built] several looks per segment
         mode: overview_plus_detail                 # single | split_by_budget | overview_plus_detail | per_module
+                                                   #   (split_by_budget, per_module: checked and
+                                                   #   recorded; their planning is [open])
         overview: {fps: 1, max_frames: 6}
         detail: {around: [motion, audio_onsets], span_s: 3, max_views: 2, max_frames: 5}
       frame_selection:                             # applied inside each view
@@ -261,15 +263,16 @@ Rules v1 [discussed]. Each is deterministic, versioned, and recorded when applie
           min_gap_s: 0.25
       image: {max_side_px: 768, aspect: preserve, format: jpeg, quality: 85}
       delivery: {mode: images}                     # images | storyboard | native_video
-    keyframes:                                     # [discussed] frames for image vectors
+    keyframes:                                     # [built] as a profile: frames for image vectors
       version: 1
       frame_selection:
         candidates: {strategy: shot_based, pick: middle}
         filters: [{sharpness: {keep: best_per_window, window_s: 0.5}}]
         budget: {max_frames_per_scene: 4}
       image: {max_side_px: 384, aspect: preserve, format: jpeg, quality: 85}
+                                                   # no delivery: images (filled at resolution)
 
-  stages:                                          # [designed] which profile each stage uses
+  stages:                                          # [built] which profile each stage uses
     L2:          {vision: scene_overview}
     L3a:         {vision: scene_detail}
     embed_image: {vision: keyframes}               # [discussed]
@@ -297,7 +300,52 @@ Rules v1 [discussed]. Each is deterministic, versioned, and recorded when applie
     merge: {role: L2_merge}                        # [discussed] text-only merge, see models
 ```
 
-Load-time checks [designed]: no profile may ask for more fps or pixels than the analysis copy has (`max_side_px` against the copy's long side for each unit's real aspect ratio). `native_video` rejects any non-uniform selection. Unknown strategies or missing settings fail before any spend.
+**Strategies** [built] are referenced three ways, all meaning the same: a name (`shot_boundaries`, or `shot_boundaries@1` with its version), a single-key mapping (`{dedupe: {method: phash, max_distance: 6}}`) or inline (`{strategy: uniform, fps: 4}`). Version 1 has: candidates `uniform` (`fps`) and `shot_based` (`pick: first | middle | last`); anchors `shot_boundaries` and `audio_onsets`; filters `dedupe` (`method: phash`, `max_distance`) and `sharpness` (`keep: best_per_window`, `window_s`), which need pixels, so they're checked and recorded now and run in the media stage (E1); allocation signals `motion` and `audio_onsets` (`window_s`). A changed algorithm gets a new version, never a changed meaning.
+
+**Load-time checks** [built], before any spend. One `VisionParamsError` lists every problem with its path (`vision_profiles.scene_overview.frame_selection.filters: not allowed with native_video delivery …`):
+- unknown keys anywhere; unknown strategies or versions; a strategy in the wrong slot (a filter as candidates); settings that fail the strategy's own schema. Missing settings fail: nothing is guessed;
+- `native_video` takes only uniform candidates, `image.max_side_px` and `image.aspect`: no anchors, filters, budget, views, `format` or `quality`;
+- views: `overview_plus_detail` needs `overview` and `detail` (other modes take neither); `overview.max_frames + detail.max_views × detail.max_frames` must be ≤ `budget.max_frames_per_scene` when that cap is set;
+- `aspect` is always `preserve` [fixed]; `quality` only with jpeg or webp; a storyboard grid only with storyboard delivery; an anchor or allocation signal listed once;
+- every stage names an existing profile (unused profiles are fine).
+
+**When the facts are known** [built], two more checks return their problems (raise `VisionParamsError(problems)` to stop):
+- `check_against_source`: no profile asks for more fps (candidates, the overview) or pixels than the analysis copy has (`max_side_px` against the copy's long side, per unit);
+- `check_against_model`: native video only on a model that takes it; no more images than the model accepts, counted from the profile's frame cap (a storyboard sends ⌈frames ÷ tiles⌉ images, each tile a frame of `max_side_px`); no larger images than it accepts. The catalog doesn't declare vision capabilities yet [open], so callers describe a model with `ModelVisionCaps`.
+
+**Filled at resolution** [built]; the values are placeholders [open] like every number:
+
+| Unset | Becomes |
+|---|---|
+| a strategy's version | the newest registered, pinned in the resolved form (`uniform@1`) |
+| `delivery` | `{mode: images}` |
+| `image.format`, `image.quality` (images, storyboard) | `jpeg`, `85` (png has no quality) |
+| `delivery.storyboard` (storyboard) | `{rows: 2, cols: 2}` |
+| an allocation signal's `window_s` | `1.0` |
+
+The resolved form is canonical (sorted keys, no unset values, anchors and allocation signals sorted, filters in their order) and has a SHA-256 digest per profile and for the whole block. A profile's digest covers its content, not its name; the same parameters give the same digest whatever the key order or spelling.
+
+**Frame planning without pixels** [built]: `plan_frames` turns a profile, a span and the L1 signals into frame timestamps on the unit timeline (milliseconds). Anchors are kept first; the rest of the cap (the tighter of `max_frames` and `max_frames_per_scene`) goes to the candidates with the most `allocate_by` signal nearby, ties to the one farthest from frames already kept; `min_gap_s` holds between kept frames. With `overview_plus_detail`, the overview spreads its frames over the span at its own fps and each detail view takes frames around one of the strongest `around` peaks. Pixel filters come back as pending, for the media stage.
+
+In code [built] (YAML or JSON parsing is the caller's job):
+
+```python
+from framekit.vision import (
+    ModelVisionCaps, Signals, SourceLimits, VisionParams,
+    check_against_model, check_against_source, plan_frames, resolve,
+)
+
+params = VisionParams.from_mapping(
+    {"vision_profiles": plan["vision_profiles"], "stages": plan["stages"]}
+)                                                   # raises VisionParamsError: every problem
+resolved = resolve(params)                          # pinned, defaults filled
+resolved.digest                                     # the manifest's vision digest
+detail = resolved.for_stage("L3a")                  # detail.digest: L3a's input hash
+problems = check_against_source(resolved, SourceLimits(fps=12, width_px=960, height_px=720))
+problems += check_against_model(detail, ModelVisionCaps(max_images=20, max_image_side_px=1024))
+frames = plan_frames(detail, (12.0, 48.5), Signals(shot_boundaries=[12.0, 20.4]))
+frames.timestamps, frames.pending_filters, frames.notes
+```
 
 ### 5.3 Structure: what one data point is (question 4)
 

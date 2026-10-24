@@ -168,7 +168,50 @@ These were decided in short_extract (dates are from its journal) and bind this e
 - **Open:** behavioural malware detection for new dependency releases (e.g. Socket, GuardDog), which doesn't wait for an advisory: the main remaining gap.
 - **Recorded in:** `.github/workflows/security.yml` (new), `tests.yml`, `lint.yml`; `.github/dependabot.yml` (new); `SECURITY.md` (new); `pyproject.toml` (`[tool.uv]`, ruff); `uv.lock`; ARCHITECTURE.md §2 (lockfile row), §2.2 (new); README.md badges, "Development", "Documents"; CLAUDE.md "Workflow".
 
+## 2026-10-24
+
+### 03:16 — `framekit.vision`, first code: vision parameters as checked, resolved data
+- **Decision** (owner: "create vision param now", taking up the proposed first step): `framekit.vision` gets its first code, covering everything that needs no pixels and no model choice.
+  - **Schema:** `VisionParams`, `VisionProfile` and their parts. They're Pydantic models: frozen, and unknown keys are rejected. `from_mapping` / `to_mapping` use the shape of settings.md §5.2. YAML or JSON parsing stays with the caller, so there's no new dependency.
+  - **Where it lives:** `framekit.vision.params`, not `contracts`. The "Contracts are pure" import contract forbids Pydantic there, and contracts are never weakened.
+  - **Import contracts:** the layers contract becomes `framekit.vision | framekit.models` above `framekit.contracts`: independent siblings, checked in both directions. It replaces "models → contracts" and keeps all of it. The provider-SDK contract now covers `vision` too.
+  - **Strategy registry:** strategies are named, versioned code. Each has a kind (`candidates`, `anchor`, `filter`, `allocation`), a settings schema and a `needs_pixels` flag.
+    - Kinds are separate namespaces: the `audio_onsets` anchor and the `audio_onsets` allocation signal are two strategies.
+    - Registering an existing kind + name + version raises.
+    - A reference without a version resolves to the newest version, and the resolved form records it.
+    - Version 1 registers candidates `uniform` and `shot_based`; anchors `shot_boundaries` and `audio_onsets`; filters `dedupe` and `sharpness`; allocation signals `motion` and `audio_onsets`. The two filters need pixels: they're checked and recorded now, and run in the media stage.
+  - **References** come in three shapes, all with the same meaning: a name (`name@N` adds a version), `{name: {settings}}`, or inline `{strategy: name, settings…}` (the candidates shape in the docs).
+  - **Load-time checks** raise one `VisionParamsError` that lists every problem with its path:
+    - unknown or misplaced strategies, and settings that fail a strategy's schema;
+    - native video with anything but uniform candidates, `max_side_px` and `aspect`;
+    - views that don't fit `max_frames_per_scene`;
+    - any `aspect` other than `preserve`, and a quality setting for png;
+    - stages that name a missing profile.
+  - **Checks that need outside facts are separate functions:** `check_against_source` (the analysis copy's fps and long side) and `check_against_model`. A model's limits are described by `ModelVisionCaps`, a dataclass in `framekit.vision`, because the model catalog doesn't declare vision capabilities yet.
+  - **Resolution:**
+    - versions are pinned and defaults filled in: delivery `images`; `jpeg` at quality `85` for images and storyboards; a 2×2 storyboard grid; allocation `window_s` 1.0. All are placeholders;
+    - the form is canonical JSON: sorted keys, no unset values, anchors and allocation signals sorted as sets, filters kept in order;
+    - SHA-256 digests are computed per profile (content only, not the name) and for the whole block.
+  - **Pixel-free planning** (`plan_frames`):
+    - anchors are kept first;
+    - the rest of the cap (the tighter of `max_frames` and `max_frames_per_scene`) goes to the candidates with the highest normalized allocation weight;
+    - `min_gap_s` holds between kept frames;
+    - `overview_plus_detail` views are planned;
+    - native video gives nominal uniform timestamps, with a note;
+    - pixel filters come back as pending;
+    - `split_by_budget` and `per_module` views are checked and recorded but not planned: planning them raises an explicit error, never a silent fallback.
+- **Choices made while building** (each is easy to revisit):
+  - **Budget ties go to the candidate farthest from the frames already kept, then to the earliest,** rather than simply the earliest. With no signal, earliest-first would spend the whole budget at the start of a scene; spreading keeps coverage and is still deterministic.
+  - **`candidates` is required for native video too,** so the fps the provider samples at is always recorded.
+  - **Numeric strategy settings have no defaults** (`fps`, `pick`, a filter's `max_distance` or `window_s`): a missing setting fails instead of being guessed. Settings with a single possible value (`method: phash`, `keep: best_per_window`) and allocation windows do have defaults.
+  - **A storyboard tile is one frame of `max_side_px`.** The grid image's long side is that times the larger grid dimension, and that's what the model check compares with the model's limit.
+  - **In views, anchors count toward the scene cap** and belong to the overview.
+  - **`shot_based` `last` is 1 ms before the cut,** which falls inside the shot's last frame at any frame rate.
+- **Why:** this is the first step that doesn't depend on the open choices (the video model, and default values from a sweep). With the schema, checks and digests in place, the E1 plan, manifest and stage input hashes can build on them, and query-time consumers can already plan frames.
+- **Open:** default values (from a benchmark sweep); vision capabilities in the model catalog; how the media stage feeds pixel-filter results back into the budget; planning for `split_by_budget` and `per_module` views.
+- **Recorded in:** `src/framekit/vision/` (new); `tests/test_vision_params.py`, `tests/test_vision_planning.py`, `tests/vision_examples.py` (new); `pyproject.toml` (import contracts); `src/framekit/__init__.py`; DESIGN.md §2.3, §7 (E1); settings.md status, tags, §5.2; ARCHITECTURE.md status, §1, §2, §2.1, §3; README.md module table, "Vision parameters" (new); CLAUDE.md "Project", "Architecture rule", "Current milestone".
+
 ---
 
 ## Still open
-See DESIGN.md §9: video, text and embedding models; A / V / plan schema details and the lens spec file format; default vision profiles; baseline scorer details and gold queries; dataset layout; a distribution name if ever published to PyPI; distributed runner; per-lens taxonomies; frames to remote models for bring-your-own corpora; temperature/seed in the cache key; a drop policy (settings.md §8).
+See DESIGN.md §9: video, text and embedding models; A / V / plan schema details and the lens spec file format; default vision profiles; baseline scorer details and gold queries; dataset layout; a distribution name if ever published to PyPI; distributed runner; per-lens taxonomies; frames to remote models for bring-your-own corpora; temperature/seed in the cache key; a drop policy (settings.md §8); vision capabilities in the model catalog, pixel-filter results feeding back into the frame budget, and planning for `split_by_budget` and `per_module` views (2026-10-24).

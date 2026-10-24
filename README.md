@@ -8,12 +8,12 @@ AI building blocks for video datasets, in Python. One package with modules you c
 |---|---|---|
 | `framekit.contracts` | provider-neutral types: the conversation port, the response-store port | **v0.1.0** |
 | `framekit.models` | model access: a catalog of providers and models, a router, adapters on the official `openai` and `anthropic` SDKs, a record / replay response cache | **v0.1.0** |
-| `framekit.vision` | how a model sees video: frame selection, image preparation and delivery | designed ([settings](docs/settings.md) §5.2) |
+| `framekit.vision` | how a model sees video: frame selection, image preparation and delivery | **partial** on `main`: schema, checks, pixel-free planning ([settings](docs/settings.md) §5.2) |
 | `framekit.extraction` | turns a video corpus into a dataset of segments, text, vectors and provenance, plus a benchmark harness and a CLI | designed ([design](docs/DESIGN.md)) |
 
 Used by the video clip search agent ([short_extract](https://github.com/edyhtan/short_extract)), and built for benchmarks and experimental model training.
 
-**Contents:** [Install](#install) · [Configure](#configure) · [Quick start](#quick-start) · [Usage guide](#usage-guide) · [Models](#models) · [Response cache](#response-cache) · [Extraction (preview)](#extraction-preview) · [Development](#development) · [Documents](#documents) · [Licence](#licence)
+**Contents:** [Install](#install) · [Configure](#configure) · [Quick start](#quick-start) · [Usage guide](#usage-guide) · [Models](#models) · [Response cache](#response-cache) · [Vision parameters](#vision-parameters) · [Extraction (preview)](#extraction-preview) · [Development](#development) · [Documents](#documents) · [Licence](#licence)
 
 ---
 
@@ -268,6 +268,38 @@ assert again.cached and again.text == first.text and again.cost_usd == 0
 - **Streams:** they replay their pieces in order; use `CacheSettings(replay_pace="original")` to keep the recorded timing.
 - **Settings:** `ttl_s` (default 7 days), `namespace` (change it to invalidate everything at once), `max_entry_bytes` (larger replies aren't stored).
 - **Your own store:** implement the `ResponseStore` protocol from `framekit.contracts`: `async get(key) -> bytes | None` and `async put(key, value, ttl_s) -> bool`. A store must never raise: a failed read is a miss, and a failed write is a skipped write. The search agent, for example, stores entries in Valkey.
+
+## Vision parameters
+
+How a model sees video (which frames, at what size, delivered how) is structured, versioned data: named **vision profiles**, assigned per stage. `framekit.vision` checks them, records them in a canonical form with a digest, and plans frame timestamps from cheap signals (shot cuts, audio onsets, motion) without decoding any video. Not released yet: it's on `main`, after v0.1.0.
+
+```python
+from framekit.vision import Signals, VisionParams, plan_frames, resolve
+
+params = VisionParams.from_mapping({                 # parse your YAML or JSON first
+    "vision_profiles": {
+        "detail": {
+            "version": 1,
+            "frame_selection": {
+                "candidates": {"strategy": "uniform", "fps": 4},
+                "anchors": ["shot_boundaries"],
+                "budget": {"max_frames_per_scene": 16, "allocate_by": ["motion"]},
+            },
+            "image": {"max_side_px": 768},
+        },
+    },
+    "stages": {"L3a": {"vision": "detail"}},
+})                                                    # VisionParamsError lists every problem
+resolved = resolve(params)                            # versions pinned, defaults filled
+print(resolved.digest)                                # same settings, same digest
+plan = plan_frames(resolved.for_stage("L3a"), (12.0, 48.5),
+                   Signals(shot_boundaries=[12.0, 20.4], motion=[(30.0, 4.2)]))
+print(plan.timestamps)                                # seconds on the video's own timeline
+```
+
+- **Checks before any spend:** unknown strategies or keys, a strategy in the wrong slot, missing settings, `native_video` with anything but uniform sampling, views that overflow the frame budget. `check_against_source` and `check_against_model` add the analysis copy's and the model's limits.
+- **Strategies are versioned code:** `uniform`, `shot_based`, `shot_boundaries`, `audio_onsets`, `dedupe`, `sharpness`, `motion`; a changed algorithm gets a new version (`dedupe@2`), so old datasets stay reproducible. Filters that need pixels (`dedupe`, `sharpness`) are recorded now and run with the media stage (E1).
+- Every setting, check and default: [docs/settings.md](docs/settings.md) §5.2.
 
 ## Extraction (preview)
 
