@@ -59,10 +59,10 @@ framekit follows the **Python library convention** (decided 2026-10-23): it's in
 | Layout | **src layout**: the code lives in `src/framekit/`, so tests run against the installed package, never against stray files at the repo root |
 | Dependencies | **loose ranges** (e.g. `pydantic>=2.6,<3`), so framekit fits into consumers' environments (a training project brings its own PyTorch, NumPy, …) |
 | Heavy dependencies | **optional extras**, so consumers install only what they use |
-| Lockfile | `uv.lock` is committed for framekit's own development and CI; consumers never use it, they resolve their own |
+| Lockfile | `uv.lock` is committed for framekit's own development and CI, resolved with a 7-day release cooldown (§2.2); consumers never use it, they resolve their own |
 | Typing | ships `py.typed`, so consumers' type checkers see framekit's types |
 | Versions | semantic versioning, git tags `vX.Y.Z`; the dataset schema version is separate and recorded in each manifest (§3) |
-| Distribution | installed from the git repository at a tag (private repo); publishing wheels to a package index is a later option |
+| Distribution | installed from the git repository at a tag (public repo); publishing wheels to a package index is a later option |
 
 ```
 pyproject.toml
@@ -114,6 +114,37 @@ flowchart LR
 | No consumer code | no import of any consumer package, web framework, ORM or queue library |
 
 A **vocabulary test** scans library code (and prompt, JSON and text files shipped with it) for known lens and corpus terms. Example lens specs and corpus profiles used by tests live under `tests/fixtures/`, outside the scan, and contain no footage.
+
+### 2.2 Checks and security (CI)
+
+framekit is public and its model adapters handle provider keys, so supply-chain exposure is kept low (decided 2026-10-23). Every check runs in GitHub Actions; none of them uses a repository secret.
+
+| Workflow | Jobs | Runs on |
+|---|---|---|
+| `tests` | pytest and the wheel/sdist build, on locked and newest dependency versions | PRs, pushes to `main` |
+| `lint` | ruff (including the `S` security rules) and the import contracts (§2.1) | PRs, pushes to `main` |
+| `security` | **audit:** `uv audit` of `uv.lock` against known vulnerabilities (OSV) · **zizmor:** static audit of the workflows and the Dependabot config, failing on medium severity or higher · **CodeQL:** code scanning of the Python code and of the workflows | PRs, pushes to `main`, daily |
+
+```mermaid
+flowchart LR
+    REL["new release<br/>(PyPI package or action)"] --> CD{"at least<br/>7 days old?"}
+    CD -- "no" --> WAIT["not resolved, not proposed<br/>(exclude-newer, Dependabot cooldown)"]
+    CD -- "yes" --> DB["Dependabot PR<br/>(weekly, minor + patch grouped)"]
+    ADV["security advisory"] --> SEC["Dependabot security update<br/>(no Dependabot cooldown;<br/>a fix under 7 days old needs<br/>an exclude-newer exception)"]
+    DB --> CI["tests · lint · security"]
+    SEC --> CI
+    CI --> MAIN["main"]
+    MAIN -. "daily" .-> AUD["uv audit + CodeQL"]
+```
+
+**Rules for workflows and dependencies:**
+- **Actions are pinned to full commit SHAs**, with the release as a trailing comment (`uses: owner/repo@<40-char sha> # vX.Y.Z`); Dependabot bumps them. A tag can be moved to other code; a commit SHA can't.
+- Every `actions/checkout` sets `persist-credentials: false`. Every workflow and job declares least-privilege `permissions:` (`contents: read`; only the CodeQL job adds `security-events: write`). Matrix values reach shell scripts through `env:`, never as `${{ }}` inside `run:`.
+- **Tool versions are pinned:** uv through `setup-uv`'s `version:` input (the action checks the download against its known checksums), zizmor as `uvx zizmor==X.Y.Z`. Dependabot doesn't bump these; update them by hand.
+- **Release cooldown:** `[tool.uv] exclude-newer = "7 days"` in `pyproject.toml`, so `uv lock` only resolves releases uploaded at least a week ago (a compromised release is usually caught and yanked well within that). Dependabot uses the same 7-day cooldown for version updates. Its cooldown doesn't delay security updates, but `exclude-newer` still applies whenever uv resolves: a security fix newer than 7 days can't be locked, by Dependabot or anyone, until it gets a narrow `exclude-newer-package` exception with a comment and a removal date. This covers framekit's own development and CI only; consumers resolve their own environments.
+- **Ruff `S` (bandit) rules** run on all code. Tests may use `assert` (S101); every other finding is fixed, or kept with an inline `# noqa: Sxxx` and the reason.
+
+How to report a vulnerability: [SECURITY.md](../SECURITY.md).
 
 ---
 

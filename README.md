@@ -1,6 +1,6 @@
 # framekit
 
-[![tests](https://github.com/edyhtan/framekit/actions/workflows/tests.yml/badge.svg)](https://github.com/edyhtan/framekit/actions/workflows/tests.yml) [![lint](https://github.com/edyhtan/framekit/actions/workflows/lint.yml/badge.svg)](https://github.com/edyhtan/framekit/actions/workflows/lint.yml)
+[![tests](https://github.com/edyhtan/framekit/actions/workflows/tests.yml/badge.svg)](https://github.com/edyhtan/framekit/actions/workflows/tests.yml) [![lint](https://github.com/edyhtan/framekit/actions/workflows/lint.yml/badge.svg)](https://github.com/edyhtan/framekit/actions/workflows/lint.yml) [![security](https://github.com/edyhtan/framekit/actions/workflows/security.yml/badge.svg)](https://github.com/edyhtan/framekit/actions/workflows/security.yml)
 
 AI building blocks for video datasets, in Python. One package with modules you can use on their own:
 
@@ -301,8 +301,10 @@ uv run ruff check .       # lint
 uv build                  # wheel + sdist
 ```
 
-- **CI:** `tests` runs the suite and the build against both the locked and the newest dependency versions; `lint` runs ruff and the layer rules.
+- **CI:** `tests` runs the suite and the build against both the locked and the newest dependency versions; `lint` runs ruff (including the bandit `S` rules) and the layer rules; `security` audits `uv.lock` for known vulnerabilities, checks the workflows with zizmor and runs CodeQL (also daily).
+- **Supply chain:** dependencies resolve with a 7-day release cooldown (`exclude-newer`), every action is pinned to a commit SHA, and Dependabot proposes updates weekly (ARCHITECTURE.md §2.2).
 - **Contributing:** changes reach `main` only through pull requests with passing checks. The branch is protected: no force pushes, no merges without CI.
+- **Security:** report vulnerabilities privately, as described in [SECURITY.md](SECURITY.md).
 - **Before architectural work,** read [CLAUDE.md](CLAUDE.md) for the rules: no lens or corpus vocabulary in library code, model-agnostic ports, a decision journal entry for every design decision.
 
 ## Documents
@@ -311,9 +313,10 @@ uv build                  # wheel + sdist
 |---|---|
 | [docs/DESIGN.md](docs/DESIGN.md) | what extraction does: inputs, the dataset, stages L0–L4, lens specs, runs, evaluation, roadmap, rights |
 | [docs/settings.md](docs/settings.md) | every extraction setting in one place: the six questions a run answers, commands, the search space, corpus, plan and gold-set files, the output, open decisions |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | how the code is layered, the public API, model access, how consumers connect, the seeding plan |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | how the code is layered, the public API, model access, CI and security checks, how consumers connect, the seeding plan |
 | [docs/DECISIONS.md](docs/DECISIONS.md) | why, in date order |
 | [CLAUDE.md](CLAUDE.md) | rules for contributors and coding agents |
+| [SECURITY.md](SECURITY.md) | how to report a vulnerability privately, supported versions, scope |
 
 ## Licence
 

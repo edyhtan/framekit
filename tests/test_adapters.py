@@ -12,7 +12,12 @@ import httpx2
 import openai
 import pytest
 
-from framekit.contracts.conversation import STOP_REASONS, ConversationRequest, ModelCallError
+from framekit.contracts.conversation import (
+    STOP_REASONS,
+    ConversationRequest,
+    ModelCallError,
+    TextDelta,
+)
 from framekit.models.adapters.anthropic import AnthropicAdapter
 from framekit.models.adapters.base import (
     ExternalAIAdapterBase,
@@ -553,3 +558,18 @@ async def test_completed_stream_is_closed_too():
     adapter = OpenAICompatibleAdapter(HIVE, openai_client(stream), ModelSettings())
     await adapter.generate(CATALOG[HIVE_MODEL], req())
     assert closed == [True]
+
+
+class NoReplyAdapter(OpenAICompatibleAdapter):
+    """A protocol bug: the stream ends without its final Reply."""
+
+    async def iterate(self, spec, params):
+        yield TextDelta("text", "partial")
+
+
+async def test_streamed_generate_without_a_final_reply_is_a_non_retryable_error():
+    # Explicit check, not an assert, so it still holds under `python -O` (ruff S101).
+    adapter = NoReplyAdapter(HIVE, openai_client(hive_stream()), ModelSettings())
+    with pytest.raises(ModelCallError) as info:
+        await adapter.generate(CATALOG[HIVE_MODEL], req())
+    assert info.value.retryable is False

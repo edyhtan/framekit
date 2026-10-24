@@ -16,18 +16,28 @@ jobs:
   unit:
     name: unit tests (${{ matrix.deps }} dependencies)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
         # locked: the versions in uv.lock. newest: the newest versions the dependency ranges
-        # allow, which is what a consumer installing framekit today gets.
+        # allow, which is what a consumer installing framekit today gets, minus the releases
+        # still inside the 7-day cooldown (pyproject.toml [tool.uv] exclude-newer).
         deps: [locked, newest]
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      # Actions are pinned to full commit SHAs (docs/ARCHITECTURE.md §2.2); Dependabot bumps them.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          version: "0.13.5"
       - name: Install
+        env:
+          DEPS: ${{ matrix.deps }}
         run: |
-          if [ "${{ matrix.deps }}" = "newest" ]; then uv sync --upgrade; else uv sync --locked; fi
+          if [ "$DEPS" = "newest" ]; then uv sync --upgrade; else uv sync --locked; fi
       - name: Unit tests
         run: uv run pytest -q
       - name: Build wheel and sdist

@@ -145,6 +145,29 @@ These were decided in short_extract (dates are from its journal) and bind this e
   - whether a "drop" policy should ever exist.
 - **Recorded in:** docs/settings.md (new); DESIGN.md §2.3, §2.4, §9; ARCHITECTURE.md §3; README.md "Documents"; CLAUDE.md "Project".
 
+### 22:36 — Ruleset protecting `main`
+- **Decision** (owner): framekit's default branch is protected by an active GitHub ruleset, **"protect main"**, with no bypass actors (not even admins). Its rules:
+  - **no force pushes** and **no deletion** of `main`;
+  - **a pull request is required** (0 approvals, single maintainer);
+  - **these checks must pass**, and only GitHub Actions may report them: `lint and layer rules`, `unit tests (locked dependencies)`, `unit tests (newest dependencies)`.
+  - "Require branches to be up to date" is off, so not every PR needs a rebase. All merge methods stay allowed; merge commits are needed to keep seeded history.
+- **Why:** the repository is public. History on `main` must never be rewritten, and nothing should land without CI.
+- **Recorded in:** GitHub repository settings (ruleset 25767064; created directly, so recorded here afterwards); README.md "Development". New CI checks (the `security` workflow) are added to the ruleset once they have run on `main`.
+
+### 22:41 — Security checks: supply-chain hardening for the public library
+- **Decision** (owner, approving the proposed rollout): framekit gets a security baseline in CI and in its dependency resolution.
+  - **`security` workflow** on PRs, pushes to `main` and daily: `uv audit` of `uv.lock` (OSV advisories); **zizmor** on `.github/` (offline audits, fails on medium severity or higher); **CodeQL** for Python and for the workflows (`actions`). Only the CodeQL job may write, to upload its results.
+  - **Workflow hygiene** in all three workflows: every action pinned to a full commit SHA with a `# vX.Y.Z` comment; `persist-credentials: false` on checkout; least-privilege `permissions:` per workflow and per job; uv pinned through `setup-uv` (`0.13.5`), zizmor pinned (`1.31.1`); matrix values reach shell scripts through `env:`. No job uses a secret.
+  - **Release cooldown:** `[tool.uv] exclude-newer = "7 days"`. A security fix newer than that gets a narrow `exclude-newer-package` exception with a comment and a removal date. The `newest` test run now means the newest releases outside the cooldown.
+  - **Dependabot** for uv and GitHub Actions: weekly, 7-day cooldown for version updates, minor and patch updates grouped. Dependabot's own cooldown doesn't delay security updates, but `exclude-newer` still does: a fix younger than 7 days needs the narrow `exclude-newer-package` exception before Dependabot or `uv lock` can pick it up.
+  - **Ruff `S` (bandit) rules.** Tests may use `assert` (S101); the hardcoded-secret rules stay on in tests too. The one finding in library code, an `assert` in the OpenAI-compatible adapter's `call` (the path `generate` takes when the provider streams), became the explicit `ModelCallError` check that `stream` already uses, with a test (an `assert` disappears under `python -O`).
+  - **`SECURITY.md`:** private reporting through GitHub's "Report a vulnerability", supported versions (0.1.x), scope, modest response expectations.
+- **Why:** framekit is public and its adapters handle provider keys. Recent attacks came through freshly published releases (LiteLLM's compromised PyPI releases were live for about two hours before an advisory) and through rewritten action tags (76 of 77 trivy-action tags). Advisory scanners only catch what has an advisory; the cooldown and SHA pins reduce exposure before one exists.
+- **Lock changes** (re-locked under the cooldown; `uv audit` is clean before and after, so none of the skipped releases was a security fix): anthropic 1.17.0 → 1.15.0, openai 3.37.0 → 3.33.0, httpx2 and httpcore2 2.16.0 → 2.13.1, jiter 0.18.0 → 0.17.0, ruff 0.17.2 → 0.17.1. All tests pass on the new lock (90, with the new one).
+- **Needs the owner** (repository settings, not code): secret scanning and push protection; private vulnerability reporting (`SECURITY.md` relies on it); Dependabot alerts and security updates; immutable releases and a ruleset protecting `v*` tags, before tagging the next release; adding this workflow's checks to the `main` ruleset once they have run on `main` (the ruleset itself is in the entry above); the Actions policy requiring SHA-pinned actions. Code scanning's default setup must stay off, or the CodeQL workflow's uploads are rejected.
+- **Open:** behavioural malware detection for new dependency releases (e.g. Socket, GuardDog), which doesn't wait for an advisory: the main remaining gap.
+- **Recorded in:** `.github/workflows/security.yml` (new), `tests.yml`, `lint.yml`; `.github/dependabot.yml` (new); `SECURITY.md` (new); `pyproject.toml` (`[tool.uv]`, ruff); `uv.lock`; ARCHITECTURE.md §2 (lockfile row), §2.2 (new); README.md badges, "Development", "Documents"; CLAUDE.md "Workflow".
+
 ---
 
 ## Still open
