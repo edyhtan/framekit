@@ -67,6 +67,7 @@ Development: `uv sync`, then `uv run pytest`, `uv run lint-imports`, `uv run ruf
 | Document | What it covers |
 |---|---|
 | [docs/DESIGN.md](docs/DESIGN.md) | what extraction does: inputs, the dataset, stages L0–L4, lens specs, runs, evaluation, roadmap, rights |
+| [docs/settings.md](docs/settings.md) | every extraction setting in one place: the six questions a run answers, commands, the search space, corpus, plan and gold-set files, the output, open decisions |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | how the code is layered, the public API, model access, how consumers connect, the seeding plan |
 | [docs/DECISIONS.md](docs/DECISIONS.md) | why, in date order |
 | [CLAUDE.md](CLAUDE.md) | rules for contributors and coding agents |
