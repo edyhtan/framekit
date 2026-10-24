@@ -1,5 +1,5 @@
-"""`extract` end to end on a synthetic video with a scripted model, through L0–L3a: the
-dataset, reruns, the response cache, retries, the budget, governance, the cost estimate.
+"""`extract` end to end on a synthetic video with a scripted model: the dataset, reruns,
+the response cache, retries, the budget, governance, the cost estimate.
 
 The model is `ScriptedAdapter`, served through `ModelSource`s, so requests go through the
 real router, cache and adapter template; nothing leaves the machine.
@@ -63,7 +63,7 @@ def stages(requests):
     return [r.cache_class for r in requests]
 
 
-def test_extract_writes_the_lens_free_dataset(tmp_path, video):
+def test_extract_writes_a_complete_dataset(tmp_path, video):
     files = write_inputs(tmp_path, video)
     dataset = run(tmp_path, files)
 
@@ -90,7 +90,7 @@ def test_extract_writes_the_lens_free_dataset(tmp_path, video):
     assert all(img.media_type == "image/jpeg" for r in l3a for img in r.images)
 
     runs = dataset.rows("runs")
-    assert {r["stage"] for r in runs} == {"L0", "L1", "L2", "L3a"}
+    assert {r["stage"] for r in runs} == {"L0", "L1", "L2", "L3a", "L3b", "embed"}
     assert all(r["status"] in ("ok", "flagged") for r in runs)
     checks = {q["check"] for q in dataset.rows("qc")}
     assert {"schema", "timestamps_in_scene", "entities_in_profile", "modules_complete"} <= checks
@@ -124,7 +124,7 @@ def test_a_dry_run_estimates_and_runs_nothing(tmp_path, video):
     estimate = run(tmp_path, files, dry_run=True)
     assert isinstance(estimate, CostEstimate)
     assert estimate.units == 1 and estimate.scenes == 3
-    assert set(estimate.stages) == {"L2", "L3a"}
+    assert set(estimate.stages) == {"L2", "L3a", "L3b", "embed"}
     assert estimate.stages["L3a"].images == 3 * 4 and estimate.total_usd > 0
     assert ScriptedAdapter.requests == [] and not (tmp_path / "dataset").exists()
     assert "Estimate (upper bound)" in str(estimate)
@@ -142,7 +142,7 @@ def test_the_response_cache_replays_a_whole_run(tmp_path, video):
     assert len(ScriptedAdapter.requests) == calls  # every model call replayed
     assert replayed.rows("perception") == first.rows("perception")
     assert all(r["cached"] for r in replayed.rows("runs") if r["stage"] in ("L2", "L3a"))
-    assert set(store.stats()) == {"v1/L2", "v1/L3a"}
+    assert set(store.stats()) == {"v1/L2", "v1/L3a", "v1/L3b"}
 
 
 def test_an_unusable_reply_is_retried_with_its_problems(tmp_path, video):

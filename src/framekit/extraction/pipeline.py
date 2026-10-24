@@ -6,9 +6,9 @@ the dataset.
 2. **Preflight:** probe every unit's source (no decoding): its facts and content
    fingerprint, the expected duration, long units, and each vision profile against the
    analysis copy the unit will get. A dry run stops here with the cost estimate.
-3. **Run** each unit: L0 → L1 → L2 → L3a per scene, with L4's checks on every result
-   (lens passes and vectors join in the next step of E1). Units run in parallel; every
-   step is a task keyed by its input hash, so a rerun reuses everything unchanged.
+3. **Run** each unit: L0 → L1 → L2 → L3a per scene → L3b per scene, lens and run → embed;
+   L4's checks on every result. Units run in parallel; every step is a task keyed by its
+   input hash, so a rerun reuses everything unchanged.
 4. **Write** the tables, then the manifest.
 """
 
@@ -46,9 +46,17 @@ from framekit.extraction.schemas.plan import STAGES, ExtractionPlan
 from framekit.extraction.schemas.space import SearchSpace
 from framekit.extraction.segmenting import fixed_windows, processable_spans, shots_from_cuts
 from framekit.extraction.stages.context import SceneRow, StageContext, quick_fingerprint
+from framekit.extraction.stages.embed import embed_texts
+from framekit.extraction.stages.lens_pass import agreement, lens_pass, lens_rows
 from framekit.extraction.stages.normalize import normalize
 from framekit.extraction.stages.perceive import beat_rows, perceive
-from framekit.extraction.stages.qc import perception_qc, qc_row, segmentation_qc
+from framekit.extraction.stages.qc import (
+    agreement_qc,
+    lens_qc,
+    perception_qc,
+    qc_row,
+    segmentation_qc,
+)
 from framekit.extraction.stages.segment import segment
 from framekit.extraction.stages.signals import detect, signal_rows
 from framekit.models import ConversationRouter, ModelSettings, ModelSource
@@ -57,7 +65,7 @@ from framekit.models.registry import ModelRegistry
 from framekit.vision import SourceLimits, check_against_source
 
 DURATION_TOLERANCE = (2.0, 0.02)  # a source within 2 s or 2% of the expected duration matches
-MODEL_STAGES = {"L2", "L3a"}
+MODEL_STAGES = {"L2", "L3a", "L3b", "embed"}
 
 
 @dataclass
@@ -245,6 +253,88 @@ async def process_unit(
                 "status": status,
             }
         )
+
+    # L3b: every scene with a record × every lens × every self-consistency run
+    runs = plan.lens_passes.self_consistency.runs
+    jobs = [
+        (scene, lens, k)
+        for scene in scenes
+        if scene.scene_id in records_by_scene
+        for lens in run.lenses
+        for k in range(runs)
+    ]
+    passes = await asyncio.gather(
+        *(
+            _safe(lens_pass(ctx, scene, records_by_scene[scene.scene_id], synopsis, lens, k))
+            for scene, lens, k in jobs
+        )
+    )
+    by_scene_lens: dict[tuple[str, str], list[tuple[int, dict[str, Any], dict[str, Any]]]] = (
+        defaultdict(list)
+    )
+    for (scene, lens, k), (found, error) in zip(jobs, passes, strict=True):
+        if error is not None or found is None:
+            result.problem(
+                "partial", f"L3b {scene.scene_id} {lens.key}: {type(error).__name__}: {error}"
+            )
+            rows["qc"].append(
+                qc_row(
+                    "schema",
+                    target_type="scene",
+                    target_id=scene.scene_id,
+                    unit_id=unit.unit_id,
+                    scene_id=scene.scene_id,
+                    lens=lens.name,
+                    run_index=k,
+                    status="flag",
+                    detail=f"no lens pass: {error}",
+                )
+            )
+            continue
+        out, record = found
+        result.records.append(record)
+        rows["qc"] += lens_qc(scene, lens, k, out, checks, then)
+        if out.get("annotation") is not None:
+            by_scene_lens[(scene.scene_id, lens.name)].append((k, out["annotation"], record))
+    threshold = plan.quality_control.thresholds.agreement_min
+    on_disagreement = plan.lens_passes.self_consistency.on_disagreement
+    scene_by_id = {s.scene_id: s for s in scenes}
+    lens_by_name = {lens.name: lens for lens in run.lenses}
+    for (scene_id, lens_name), done in by_scene_lens.items():
+        scene, lens = scene_by_id[scene_id], lens_by_name[lens_name]
+        score = agreement(lens, [annotation for _, annotation, _ in done])
+        weight = 1.0
+        if score is not None and "agreement" in checks:
+            rows["qc"].append(agreement_qc(scene, lens, score, threshold, on_disagreement))
+            if score < threshold and on_disagreement == "down_weight":
+                weight = score
+        for k, annotation, record in done:
+            annotation_list, phrasing_list = lens_rows(
+                scene, lens, k, annotation, record["run_id"], weight
+            )
+            rows["annotations"] += annotation_list
+            rows["phrasings"] += phrasing_list
+
+    # embed: scene summaries (the record's, else L2's) and phrasings
+    if "embed_text" in run.roles and plan.embedding.text is not None:
+        inputs = plan.embedding.text.inputs
+        items: list[tuple[str, str, str]] = []
+        if "scene_summary" in inputs:
+            for scene in scenes:
+                text = (records_by_scene.get(scene.scene_id) or {}).get("summary") or scene.summary
+                if text:
+                    items.append(("scene", scene.scene_id, text))
+        if "phrasings" in inputs:
+            items += [
+                ("phrasing", p["phrasing_id"], p["text"]) for p in rows["phrasings"] if p["text"]
+            ]
+        embedded, error = await _safe(embed_texts(ctx, unit.unit_id, items))
+        if error is not None or embedded is None:
+            result.problem("partial", f"embed: {type(error).__name__}: {error}")
+        else:
+            vectors, records = embedded
+            rows["vectors"] += vectors
+            result.records += records
 
     rows["units"].append(_unit_row(unit, source, media.copy, fingerprint, result, synopsis))
     return result

@@ -6,8 +6,8 @@
   phrasing style, the lenses, the units in scope.
 - **Checks**, every problem in one `ConfigError`: the units in scope, alignment, signal
   detectors, a model for every role the run uses (vision models for frame-sending roles,
-  checked against each vision profile), frame rates against the analysis copy, and
-  governance (what may leave the machine).
+  checked against each vision profile), embeddings, frame rates against the analysis copy,
+  and governance (what may leave the machine).
 - **Recorded:** the resolved plan in canonical form with its digests, for the manifest and
   the benchmark harness's fairness check.
 """
@@ -23,6 +23,7 @@ from framekit.extraction.schemas.corpus import Corpus, UnitRef
 from framekit.extraction.schemas.lens import LensSpec
 from framekit.extraction.schemas.plan import ExtractionPlan, RoleModel
 from framekit.extraction.schemas.space import SearchSpace
+from framekit.models.adapters.base import ExternalAIAdapterBase
 from framekit.models.catalog import ModelSpec, ProviderConfig
 from framekit.vision import (
     ModelVisionCaps,
@@ -173,6 +174,10 @@ def _lookup(router: Any, model_id: str) -> tuple[ModelSpec, ProviderConfig, type
     if adapter is None:
         raise LookupError(f"no adapter for protocol {config.protocol!r}")
     return spec, config, adapter, None
+
+
+def _serves_embeddings(adapter: type) -> bool:
+    return getattr(adapter, "embed", None) is not getattr(ExternalAIAdapterBase, "embed", None)
 
 
 def resolve_run(
@@ -377,9 +382,16 @@ def resolve_run(
         ]
 
     # --- models ----------------------------------------------------------------------
-    needed_roles = ["L3a"]
+    needed_roles = ["L3a", "L3b"]
     if plan.segmentation.method == "model":
         needed_roles.insert(0, "L2")
+    if plan.embedding.text is not None:
+        needed_roles.append("embed_text")
+    if plan.embedding.image is not None:
+        problems.append(
+            "plan: embedding.image: image embeddings need an embed_image port, which isn't "
+            "built yet (set embedding.image to null)"
+        )
     if plan.models.L2_merge is not None:
         notes.append("models.L2_merge is for chunked long units, which aren't built yet: unused")
     defaults = plan.models.defaults
@@ -390,6 +402,8 @@ def resolve_run(
             hint = (
                 " (or set segmentation.method: shot_groups for scenes without a model)"
                 if role == "L2"
+                else " (or set embedding.text: null for no vectors)"
+                if role == "embed_text"
                 else ""
             )
             problems.append(f"plan: models.{role}: this run needs a model for {role}{hint}")
@@ -423,6 +437,11 @@ def resolve_run(
             source=source,
         )
         roles[role] = binding
+        if embedding and not _serves_embeddings(adapter):
+            problems.append(
+                f"plan: models.{role}: {adapter.__name__} (provider {config.name}) serves no "
+                "embeddings"
+            )
         if role in frame_roles and role in vision.stages:
             if not spec.vision:
                 problems.append(

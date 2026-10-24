@@ -10,11 +10,10 @@ of segments, text, vectors and provenance (docs/DESIGN.md §2–§6).
         out="~/framekit-data/datasets/first",
         runner=LocalRunner(concurrency=8),
     )
-    dataset.scenes, dataset.rows("perception")
+    dataset.scenes, dataset.rows("annotations")
 
-Built so far: runs through L0–L3a (the lens-free part: the analysis copy, signals, scenes,
-observable facts). Lens passes and vectors, the `framekit` command and the benchmark
-harness follow in milestone E1.
+Runs end to end: the analysis copy, signals, scenes, observable facts, lens passes and
+vectors. The `framekit` command and the benchmark harness follow in milestone E1.
 
 The schemas, resolution and the dataset reader need only the base install; running
 extraction needs the media extra (`pip install "framekit[media]"`, for numpy) and an

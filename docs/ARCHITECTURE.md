@@ -2,7 +2,7 @@
 
 How framekit's code is organized and how other projects connect to it. Written for collaborators who need the map before writing code. The functional design (what `extract(A, V)` does, stage by stage) is in [DESIGN.md](DESIGN.md); decisions are dated in [DECISIONS.md](DECISIONS.md).
 
-> **Status:** target architecture, approved by the owner on 2026-10-23. **Built (v0.1.0): `contracts` and `models`**, seeded from short_extract (§7). **Built on `main` since (2026-10-24): `vision`** (the `vision_params` schema, checks, resolution, planning, pixel filters) **and `extraction` through L0–L3a** (schemas, resolution, media work, the stages up to perception, the local runner, the dataset writer and reader). Not built yet: lens passes and vectors, the CLI and the benchmark harness (next in E1); a `video_understand` port (native video), image embeddings, chunked long units, file alignment, a distributed runner.
+> **Status:** target architecture, approved by the owner on 2026-10-23. **Built (v0.1.0): `contracts` and `models`**, seeded from short_extract (§7). **Built on `main` since (2026-10-24): `vision`** (the `vision_params` schema, checks, resolution, planning, pixel filters) **and `extraction`** (schemas, resolution, media work, stages L0–L4 + embed, the local runner, the dataset writer and reader). Not built yet: the CLI and the benchmark harness (next in E1); a `video_understand` port (native video), image embeddings, chunked long units, file alignment, a distributed runner.
 
 ---
 

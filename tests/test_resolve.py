@@ -91,6 +91,8 @@ def test_every_role_the_run_uses_needs_a_known_model():
     text = problems_of(space(lens(COLOUR_LENS)), None, ExtractionPlan.from_mapping(data))
     assert "models.L2: this run needs a model for L2 (or set segmentation.method" in text
     assert "models.L3a.model_id" in text and "nope" in text
+    assert "models.L3b: this run needs a model" in text
+    assert "models.embed_text: this run needs a model for embed_text (or set embedding" in text
 
 
 def test_frame_sending_roles_need_a_vision_model_within_its_limits():
@@ -156,3 +158,14 @@ def test_unknown_detectors_are_refused():
         space(lens(COLOUR_LENS)), None, plan(signals={"shots": {"detector": "transnet"}})
     )
     assert "signals.shots.detector: no shots detector 'transnet'" in text
+
+
+def test_embeddings_need_an_adapter_that_serves_them():
+    models = dict(base_plan()["models"], embed_text={"model_id": "claude-haiku-4-5"})
+    text = problems_of(space(lens(COLOUR_LENS)), None, plan(models=models))
+    assert "AnthropicAdapter (provider anthropic) serves no embeddings" in text
+
+
+def test_image_embeddings_are_refused_until_built():
+    text = problems_of(space(lens(COLOUR_LENS)), None, plan(embedding={"image": {}}))
+    assert "image embeddings need an embed_image port" in text
