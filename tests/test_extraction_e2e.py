@@ -239,6 +239,19 @@ def test_a_byo_media_corpus_needs_an_explicit_frames_policy(tmp_path, video):
         run(tmp_path, files)
 
 
+def test_a_missing_key_stops_the_run_before_any_work(tmp_path, video, monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    models = dict(base_plan()["models"], L3a={"model_id": "claude-haiku-4-5"})
+    files = write_inputs(
+        tmp_path, video, plan={"models": models, "governance": {}}, rights_mode="hosted"
+    )
+    estimate = run(tmp_path, files, dry_run=True)
+    assert "a real run would stop here: models.L3a: ANTHROPIC_API_KEY" in str(estimate)
+    with pytest.raises(ConfigError, match="ANTHROPIC_API_KEY is not set"):
+        run(tmp_path, files)
+    assert not (tmp_path / "work").exists()  # no analysis copy, no task
+
+
 def test_a_folder_holding_another_dataset_is_refused(tmp_path, video):
     run(tmp_path, write_inputs(tmp_path, video))
     files = write_inputs(tmp_path, video, lenses=("colour",))

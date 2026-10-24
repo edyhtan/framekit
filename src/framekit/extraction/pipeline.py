@@ -13,6 +13,7 @@ the dataset.
 """
 
 import asyncio
+import os
 from collections import defaultdict
 from collections.abc import Awaitable, Iterable, Mapping
 from dataclasses import dataclass, field
@@ -446,6 +447,24 @@ async def preflight(run: ResolvedRun, ffmpeg: FFmpeg, slots: asyncio.Semaphore) 
     return Preflight(probes, fingerprints, excluded)
 
 
+def missing_keys(run: ResolvedRun, router: ConversationRouter) -> list[str]:
+    """The roles whose provider key isn't in the environment (checked for presence only,
+    never read further), so a run stops before any media work rather than at its first
+    model call. A source with its own credential, or a keyless provider, needs none."""
+    missing = []
+    for role, binding in run.roles.items():
+        source = router.sources.get(binding.model_id) if binding.source else None
+        if source is not None and source.credential is not None:
+            continue
+        variable = binding.provider.key_env
+        if variable and not os.environ.get(variable):
+            missing.append(
+                f"models.{role}: {variable} is not set (the key for provider "
+                f"{binding.provider.name})"
+            )
+    return missing
+
+
 def build_router(
     run: ResolvedRun | None,
     runner: LocalRunner,
@@ -481,13 +500,18 @@ async def extract_async(
     unknown = sorted(set(rerun) - set(STAGES))
     if unknown:
         raise ValueError(f"rerun: unknown stages {unknown} (stages: {', '.join(STAGES)})")
-    run = resolve_run(space, corpus, plan, router=build_router(None, runner, registry, sources))
+    lookup = build_router(None, runner, registry, sources)
+    run = resolve_run(space, corpus, plan, router=lookup)
+    keys = missing_keys(run, lookup)
     ffmpeg = FFmpeg(runner.ffmpeg)
     checked = await preflight(run, ffmpeg, asyncio.Semaphore(runner.media_slots()))
     if dry_run:
         found = estimate(run, checked.probes)
         found.notes += [f"{u} excluded: {why}" for u, why in sorted(checked.excluded.items())]
+        found.notes += [f"a real run would stop here: {k}" for k in keys]
         return found
+    if keys:
+        raise ConfigError(keys, "the model keys")
 
     identity = {"search_space": space.digest, "corpus": corpus.digest, "plan": run.plan_digest}
     prepare_output(out, identity)
@@ -648,6 +672,7 @@ __all__ = [
     "build_router",
     "extract",
     "extract_async",
+    "missing_keys",
     "preflight",
     "process_unit",
 ]

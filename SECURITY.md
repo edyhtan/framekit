@@ -21,15 +21,17 @@ Fixes go into the latest release on the supported line, published as a new patch
 
 ## Scope
 
-In scope: the library code in this repository (`framekit.contracts`, `framekit.models`, and later modules), its packaging, and its CI workflows and dependency pins. Examples:
+In scope: the library code in this repository (`framekit.contracts`, `framekit.models`, `framekit.vision`, `framekit.extraction` and the `framekit` command), its packaging, and its CI workflows and dependency pins. Examples:
 
 - a way for a provider key to leak, for instance into logs, error messages or response-cache files;
 - unsafe handling of model responses or cache records (code execution, path traversal, deserialization);
+- a way for an input file (a lens spec, search space, corpus, plan or gold set) to make framekit run a command, read a file it shouldn't, or send one to a model provider. Spec files are read with YAML's safe loader, a lens's prompt files must stay inside its folder, and ffmpeg runs with argument lists, never through a shell;
 - a workflow that could run untrusted code with write access, or a dependency or action pin that can be swapped.
 
 Context that limits what framekit can expose:
 
-- **No footage:** the repository contains no video, frames, thumbnails, ripping tools or downloaders, and test fixtures are synthetic. The 0.1.x line (contracts and model access) doesn't read video files at all.
+- **No footage:** the repository contains no video, frames, thumbnails, ripping tools or downloaders, and test videos are generated test patterns. Extraction reads the video files you point it at, writes analysis copies only to its work folder, and sends frames only to the models your plan names (for a `byo_media` corpus, only once the plan says it may: `governance.model_inputs`). The 0.1.x line (contracts and model access) doesn't read video files at all.
+- **Your own code runs only when you ask:** `--sources MODULE:NAME` and `--scorer MODULE:NAME` import Python code you name, by design.
 - **The only secrets it reads are provider API keys** (and optional base-URL overrides), from the environment, by the names in the provider configs: the built-in catalog's (`HIVE_API_KEY`, `DEEPSEEK_API_KEY`, `ANTHROPIC_API_KEY`), or the variable a provider registered by an application names. It has no other environment-bound settings.
 - **Known gaps**, to be closed later ([docs/adapters.md](docs/adapters.md), "Security"):
   - a provider's key is sent to that provider's base URL, and the official SDKs also send headers taken from their own environment variables (`OPENAI_CUSTOM_HEADERS`, `ANTHROPIC_CUSTOM_HEADERS`, `OPENAI_ORG_ID`, `OPENAI_PROJECT_ID`) to whatever host a provider points at, including custom ones. framekit doesn't strip them yet;

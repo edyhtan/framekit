@@ -8,12 +8,12 @@ AI building blocks for video datasets, in Python. One package with modules you c
 |---|---|---|
 | `framekit.contracts` | provider-neutral types: the conversation port, the response-store port | **v0.1.0** |
 | `framekit.models` | model access: a catalog of providers and models (extendable with your own), a router, adapters on the official `openai` and `anthropic` SDKs, a record / replay response cache | **v0.1.0** |
-| `framekit.vision` | how a model sees video: frame selection, image preparation and delivery | **partial** on `main`: schema, checks, pixel-free planning ([settings](docs/settings.md) §5.2) |
-| `framekit.extraction` | turns a video corpus into a dataset of segments, text, vectors and provenance, plus a benchmark harness and a CLI | designed ([design](docs/DESIGN.md)) |
+| `framekit.vision` | how a model sees video: frame selection, image preparation and delivery | on `main`: schema, checks, planning, pixel filters ([settings](docs/settings.md) §5.2) |
+| `framekit.extraction` | turns a video corpus into a dataset of segments, text, vectors and provenance, plus a benchmark harness and the `framekit` command | on `main` ([below](#extraction), [settings](docs/settings.md)) |
 
 Used by the video clip search agent ([short_extract](https://github.com/edyhtan/short_extract)), and built for benchmarks and experimental model training.
 
-**Contents:** [Install](#install) · [Configure](#configure) · [Quick start](#quick-start) · [Usage guide](#usage-guide) · [Models](#models) · [Your own models and providers](#your-own-models-and-providers) · [Response cache](#response-cache) · [Vision parameters](#vision-parameters) · [Extraction (preview)](#extraction-preview) · [Development](#development) · [Documents](#documents) · [Licence](#licence)
+**Contents:** [Install](#install) · [Configure](#configure) · [Quick start](#quick-start) · [Usage guide](#usage-guide) · [Models](#models) · [Your own models and providers](#your-own-models-and-providers) · [Response cache](#response-cache) · [Vision parameters](#vision-parameters) · [Extraction](#extraction) · [Development](#development) · [Documents](#documents) · [Licence](#licence)
 
 ---
 
@@ -44,7 +44,7 @@ pip install "framekit @ git+https://github.com/edyhtan/framekit@v0.1.0"
 framekit = { url = "https://github.com/edyhtan/framekit/archive/refs/tags/v0.1.0.tar.gz" }
 ```
 
-Dependencies are kept to the providers' official SDKs plus pydantic, with loose version ranges, so framekit fits next to your own stack. It never depends on LangChain, LiteLLM or any other model-access library (supply-chain policy, [DECISIONS](docs/DECISIONS.md)).
+Dependencies are kept to the providers' official SDKs, pydantic, pyarrow (datasets) and PyYAML (spec files), with loose version ranges, so framekit fits next to your own stack. Running extraction adds the `media` extra (numpy) and an ffmpeg binary: `pip install "framekit[media] @ git+..."`. It never depends on LangChain, LiteLLM or any other model-access library (supply-chain policy, [DECISIONS](docs/DECISIONS.md)).
 
 ## Configure
 
@@ -334,36 +334,101 @@ print(plan.timestamps)                                # seconds on the video's o
 
 - **Checks before any spend, all reported at once:** unknown strategies or keys, a strategy in the wrong slot, missing settings, `true` or `"4"` where a number belongs, `native_video` with anything but uniform sampling, views that overflow the frame budget. `check_against_source` and `check_against_model` add the analysis copy's and the model's limits.
 - **Read-only once checked:** parsed and resolved parameters can't be changed in place, so the digest always describes what runs.
-- **Strategies are versioned code:** `uniform`, `shot_based`, `shot_boundaries`, `audio_onsets`, `dedupe`, `sharpness`, `motion`; a changed algorithm gets a new version (`dedupe@2`), so old datasets stay reproducible. Filters that need pixels (`dedupe`, `sharpness`) are recorded now and run with the media stage (E1).
+- **Strategies are versioned code:** `uniform`, `shot_based`, `shot_boundaries`, `audio_onsets`, `dedupe`, `sharpness`, `motion`; a changed algorithm gets a new version (`dedupe@2`), so old datasets stay reproducible. Filters that need pixels (`dedupe`, `sharpness`) run in extraction's media stage (`framekit.vision.pixels`, with the media extra), after the budget; anchors are never dropped.
 - Every setting, check and default: [docs/settings.md](docs/settings.md) §5.2.
 
-## Extraction (preview)
+## Extraction
 
-Not built yet; this is where framekit is going (milestone E1). An extraction run answers six questions:
-1. What should people be able to find?
-2. Which videos?
-3. How is the video looked at?
-4. What is one data point?
-5. What is written about each data point, and by which models?
-6. What rules apply?
+Turns a video corpus into a dataset: scenes and beats on each video's timeline, signals, observable facts, lens annotations and query-like phrasings, vectors, and the provenance of every value. On `main`, after v0.1.0. It needs the media extra and an **ffmpeg** binary (on PATH, or passed with `--ffmpeg`):
 
-The result is a dataset with a manifest that records every answer.
+```bash
+pip install "framekit[media] @ git+https://github.com/edyhtan/framekit@main"
+```
+
+A run reads three files, plus the lens specs the search space names. Relative paths are read from each file's own folder. Every setting, with its default: [docs/settings.md](docs/settings.md).
+
+```yaml
+# lenses/pace/lens.yaml: what a lens writes. Labels come from fixed vocabularies, never free text.
+lens:
+  name: pace
+  version: 0.1.0
+  requires_modules: [timing]          # perception modules beyond the core record
+  fields:
+    tempo: {type: label, vocabulary: [slow, steady, fast]}
+    cues:  {type: labels, vocabulary: [pause, rush, hold], max: 2}
+  prompts:
+    interpretation: {file: interpret.md}   # or inline text; files stay inside this folder
+    phrasing_style: "short, first person"
+
+# search-space.yaml (A): what should become findable. Given input: framekit never edits it.
+search_space:
+  lenses: [{spec: lenses/pace, version: 0.1.0}]
+  resolution: {moment_length_s: {min: 3, max: 6}}
+  query_style: {examples: ["when everything happens at once"]}
+
+# corpus.yaml (V): your files, pointed to and never copied or modified.
+corpus:
+  profile: {name: my_videos, rights_mode: byo_media, entities: [Ada, Brook]}
+  units:
+    - {unit_id: v001, path: /media/v001.mkv}
+
+# plan.yaml: how A is realized. Optional, except that models are never defaulted.
+plan:
+  models:
+    L2:  {model_id: claude-haiku-4-5}     # scenes, from frames of the whole video
+    L3a: {model_id: claude-haiku-4-5}     # observable facts per scene, from frames
+    L3b: {model_id: deepseek-ai/deepseek-v4.1-flash}   # lens passes, text only
+  embedding: {text: null}                 # or models.embed_text: a model that serves embeddings
+  governance: {model_inputs: provider_transient}       # byo_media: say whether frames may go to a provider
+  budget: {max_cost_usd: 5}
+```
 
 ```bash
 framekit extract --space search-space.yaml --corpus corpus.yaml --plan plan.yaml \
-                 --out ~/framekit-data/datasets/my-dataset --dry-run
-framekit bench   --corpus corpus.yaml --plan plan.yaml \
-                 --space raw=space-raw.yaml --space llm=space-llm.yaml --gold gold/queries.yaml
+                 --out ~/framekit-data/datasets/first --dry-run      # checks + cost estimate
+framekit extract --space search-space.yaml --corpus corpus.yaml --plan plan.yaml \
+                 --out ~/framekit-data/datasets/first \
+                 --cache-dir ~/framekit-data/model-cache            # records every model reply
 ```
 
-- **[docs/settings.md](docs/settings.md):** every setting, with complete example files and their status.
-- **[docs/DESIGN.md](docs/DESIGN.md):** how extraction works, stage by stage.
+The same in Python, and reading the result:
+
+```python
+from framekit.extraction import Corpus, Dataset, ExtractionPlan, LocalRunner, SearchSpace, extract
+
+dataset = extract(
+    SearchSpace.load("search-space.yaml"),
+    Corpus.load("corpus.yaml"),
+    plan=ExtractionPlan.load("plan.yaml"),
+    out="~/framekit-data/datasets/first",
+    runner=LocalRunner(concurrency=8, rate_limits={"anthropic": 2.0}),
+)
+dataset = Dataset.open("~/framekit-data/datasets/first")   # needs only pyarrow
+dataset.scenes                       # a pyarrow Table: scene_id, unit_id, start, end, summary, ...
+dataset.rows("annotations")          # dicts: lens, field, label, value, target, run
+dataset.manifest.derivations         # what the derivation rules filled in, and from what
+```
+
+- **Checked before any spend, every problem at once:** the files' structure and values, a model for every role (vision models where frames are sent, within their image limits), the vision profiles against each video's analysis copy, signal detectors, the provider keys, and governance. `--dry-run` stops after the checks with an upper-bound cost estimate.
+- **Reruns are free where nothing changed:** every step is a task keyed by its inputs, stored in the work folder (default: `<out>.work`). Adding a lens reruns only lens passes and embeddings; `--rerun L3b` forces a stage. With `--cache-dir`, model replies are recorded and can be replayed (`--cache-mode replay`).
+- **Problems are flagged, never dropped:** an unusable reply is retried with what was wrong with it, then flagged; quality checks (times, names, vocabulary, the lens's validators, agreement between self-consistency runs) are written to the `qc` table.
+- **Datasets:** Parquet tables (`units`, `shots`, `scenes`, `beats`, `windows`, `signals`, `perception`, `frames_sent`, `annotations`, `phrasings`, `vectors`, `runs`, `qc`) plus `manifest.json`, which records the search space verbatim, the resolved plan, the models, every digest and the estimated cost. Frames are never stored: `frames_sent` holds their times and image digests.
+- **Your own models and detectors:** pass `ModelSource`s (`sources=[...]`, or `--sources my.module:SOURCES`), and register signal detectors with `register_detector` (e.g. a speech model). Plan files only name models; they never hold keys or endpoints.
+
+**Benchmarks** compare search spaces with a pinned plan (augmentation strategies), or plans with a pinned search space, on a fixed gold set. The default scorer, `baseline_retriever`, ranks scenes by embedding similarity and reports recall@k and the gold moment's rank:
+
+```bash
+framekit bench --corpus corpus.yaml --plan plan.yaml --gold gold/queries.yaml \
+               --space raw=space-raw.yaml --space llm=space-llm.yaml --out reports/aug-1
+```
+
+**Not built yet:** native video input (needs a `video_understand` port), image embeddings, a built-in speech model or audio tagger (register a detector), chunked long units (units over `long_units.enabled_over_s` are excluded with the reason), aligning a file to a reference timeline, and a distributed runner.
 
 ## Development
 
 ```bash
 uv sync                   # Python 3.12, dev tools included
-uv run pytest             # unit tests
+uv run pytest             # unit tests (the media ones need ffmpeg: on PATH, or FRAMEKIT_TEST_FFMPEG=/path)
 uv run lint-imports       # layer rules: contracts stay pure, SDKs only in adapters, no model libraries
 uv run ruff check .       # lint
 uv build                  # wheel + sdist
