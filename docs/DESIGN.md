@@ -543,6 +543,7 @@ Users' copies of a corpus differ (releases, edits, frame rates). A dedicated mod
 
 - **Video model** for L2/L3a (Gemini assumed; Claude via frames is an option; verify cost and limits). Gemini integration is **paused** (DECISIONS.md 2026-10-24): native video needs a `video_understand` port and a native adapter; text roles would work through the OpenAI-compatible adapter after small fixes.
 - **Text model** for lens passes; **embedding models** (text + SigLIP).
+- **Frames to remote models for bring-your-own corpora:** no default; each plan says (`governance.model_inputs`), and `local_only` is enforced against each role's provider address (2026-10-24).
 - **A, V and plan schemas, and the lens spec file format:** built as v1 (2026-10-24; DECISIONS), in `framekit.extraction.schemas`, revisitable. Every setting: [settings.md](settings.md); its §8 lists the open decisions they raised.
 - **Vision, after its first code** (§2.3): vision capabilities in the model catalog (callers describe a model with `ModelVisionCaps` until then); how the media stage feeds pixel-filter results back into the frame budget; planning `split_by_budget` and `per_module` views; keeping `budget.max_frames` across the spans of a unit (planning applies it per span).
 - **Baseline scorer details:** its fixed embedding model and metrics (§6.2); the gold-query set per corpus.
