@@ -12,6 +12,7 @@ dependencies = [
     "pydantic>=2.6,<3",
     "openai>=3.20,<4",
     "anthropic>=1.9,<2",
+    "pyyaml>=6,<7",
 ]
 
 [dependency-groups]
@@ -63,12 +64,20 @@ include_external_packages = true
 
 [[tool.importlinter.contracts]]
 # vision and models are independent siblings: neither may import the other.
-name = "Layers: vision | models -> contracts"
+name = "Layers: extraction -> vision | models -> contracts"
 type = "layers"
 layers = [
+    "framekit.extraction",
     "framekit.vision | framekit.models",
     "framekit.contracts",
 ]
+
+[[tool.importlinter.contracts]]
+name = "Spec files only in extraction: no yaml below it"
+type = "forbidden"
+source_modules = ["framekit.contracts", "framekit.models", "framekit.vision"]
+forbidden_modules = ["yaml"]
+allow_indirect_imports = true
 
 [[tool.importlinter.contracts]]
 name = "Contracts are pure: no provider SDK, model library or I/O framework"
@@ -88,6 +97,7 @@ source_modules = [
     "framekit.models.router",
     "framekit.models.cache",
     "framekit.vision",
+    "framekit.extraction",
 ]
 forbidden_modules = ["openai", "anthropic"]
 allow_indirect_imports = true
