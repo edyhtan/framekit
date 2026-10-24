@@ -1,5 +1,7 @@
 # framekit
 
+[![tests](https://github.com/edyhtan/framekit/actions/workflows/tests.yml/badge.svg)](https://github.com/edyhtan/framekit/actions/workflows/tests.yml) [![lint](https://github.com/edyhtan/framekit/actions/workflows/lint.yml/badge.svg)](https://github.com/edyhtan/framekit/actions/workflows/lint.yml)
+
 A general-purpose Python library of AI building blocks for video datasets. One package, with modules that can be used on their own:
 
 | Module | What it gives you |

@@ -96,6 +96,14 @@ These were decided in short_extract (dates are from its journal) and bind this e
 - **Open:** the code licence (DESIGN.md §8.3 says MIT or Apache-2.0); until it's chosen, no licence is granted.
 - **Recorded in:** README.md "Status"; ARCHITECTURE.md status, §3, §7; DESIGN.md §7; CLAUDE.md "Workflow", "Current milestone".
 
+### 21:36 — CI: separate unit-test and lint workflows
+- **Decision** (owner, now that the repository is public): CI is two workflows, each with its own status badge in the README.
+  - **`tests`:** pytest and the wheel/sdist build, on **locked** and **newest** dependency versions. The newest run is what a consumer installing framekit today gets.
+  - **`lint`:** ruff, plus the import contracts, which enforce the layer rules.
+  - Both run on pull requests and on pushes to `main`, with read-only permissions.
+- **Why:** contributors and users of a public library see at a glance whether the code passes its tests and its rules, and a lint failure is told apart from a test failure.
+- **Recorded in:** `.github/workflows/tests.yml`, `.github/workflows/lint.yml` (replacing `ci.yml`); README.md badges; CLAUDE.md "Workflow".
+
 ---
 
 ## Still open

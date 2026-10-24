@@ -1,4 +1,4 @@
-name: ci
+name: tests
 
 on:
   push:
@@ -8,15 +8,19 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  checks:
-    name: checks (${{ matrix.deps }} dependencies)
+  unit:
+    name: unit tests (${{ matrix.deps }} dependencies)
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        # locked: the versions in uv.lock; newest: the newest versions the ranges allow,
-        # as a consumer installing framekit today would get.
+        # locked: the versions in uv.lock. newest: the newest versions the dependency ranges
+        # allow, which is what a consumer installing framekit today gets.
         deps: [locked, newest]
     steps:
       - uses: actions/checkout@v4
@@ -24,11 +28,7 @@ jobs:
       - name: Install
         run: |
           if [ "${{ matrix.deps }}" = "newest" ]; then uv sync --upgrade; else uv sync --locked; fi
-      - name: Tests
+      - name: Unit tests
         run: uv run pytest -q
-      - name: Import contracts
-        run: uv run lint-imports
-      - name: Lint
-        run: uv run ruff check .
-      - name: Build
+      - name: Build wheel and sdist
         run: uv build

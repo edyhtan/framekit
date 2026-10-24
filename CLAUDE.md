@@ -48,7 +48,7 @@ Layers: **contracts** (pure: ports, schemas, lens spec format) · **model access
 ## Workflow
 - framekit has no environment-bound settings: configuration is plain data (Pydantic models) that consumers build. Only provider keys (and base-URL overrides) are read from the environment, by name from the catalog.
 - Changes go on feature branches and reach `main` through pull requests. PRs are squash-merged, so never stack PRs: each targets `main`.
-- Code checks: `uv run pytest`, `uv run lint-imports`, `uv run ruff check .` (CI runs them on locked and on newest dependencies). Keep all three passing; never weaken an import-linter contract or the vocabulary test to make code pass.
+- Code checks: `uv run pytest`, `uv run lint-imports`, `uv run ruff check .` (CI: the `tests` workflow runs pytest and the build on locked and newest dependencies; the `lint` workflow runs ruff and the import contracts). Keep all three passing; never weaken an import-linter contract or the vocabulary test to make code pass.
 
 ## Current milestone
 E0 done (v0.1.0: `contracts`, `models`). Next, E1: first dataset on 5 units with two lenses (`docs/DESIGN.md` §7); it needs the video and embedding model choices first (ask).
