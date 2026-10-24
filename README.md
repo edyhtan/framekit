@@ -437,7 +437,7 @@ uv build                  # wheel + sdist
 
 - **CI:** `tests` runs the suite and the build against both the locked and the newest dependency versions; `lint` runs ruff (including the bandit `S` rules) and the layer rules; `security` audits `uv.lock` for known vulnerabilities, checks the workflows with zizmor and runs CodeQL (also daily).
 - **Supply chain:** dependencies resolve with a 7-day release cooldown (`exclude-newer`), every action is pinned to a commit SHA, and Dependabot proposes updates weekly (ARCHITECTURE.md §2.2).
-- **Contributing:** changes reach `main` only through pull requests with passing checks. The branch is protected: no force pushes, no merges without CI.
+- **Contributing:** changes reach `main` only through pull requests with passing checks. The branch is protected: no force pushes, no merges without CI. Merged branches are deleted automatically, which retargets a PR based on one to `main`.
 - **Security:** report vulnerabilities privately, as described in [SECURITY.md](SECURITY.md).
 - **Before architectural work,** read [CLAUDE.md](CLAUDE.md) for the rules: no lens or corpus vocabulary in library code, model-agnostic ports, a decision journal entry for every design decision.
 
