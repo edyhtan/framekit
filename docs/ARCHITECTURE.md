@@ -13,8 +13,9 @@ framekit is a **general library**, not a single-purpose engine: its modules are 
 ```mermaid
 flowchart TB
     subgraph LIB["framekit (this repository)"]
-        CT["contracts<br/>ports, A / V / dataset schemas,<br/>lens spec format, ids, run records"]
+        CT["contracts<br/>ports, A / V / plan / dataset schemas,<br/>lens spec format, ids, run records"]
         MA["model access<br/>catalog, router, adapters,<br/>response cache"]
+        VI["vision<br/>frame selection, image prep,<br/>delivery (vision_params)"]
         EX["extraction<br/>stages L0–L4, runner,<br/>dataset writer and reader,<br/>benchmark harness, CLI"]
     end
     APP["short_extract<br/>search agent"]
@@ -23,11 +24,14 @@ flowchart TB
     DS[("dataset<br/>Parquet / Arrow + manifest")]
 
     EX --> MA
+    EX --> VI
     EX --> CT
     MA --> CT
+    VI --> CT
     EX -- "writes" --> DS
     APP -- "model access for its roles" --> MA
     APP -- "lens specs, schemas" --> CT
+    APP -. "query-time sampling" .-> VI
     APP -. "loads" .-> DS
     BEN --> EX
     TRN -. "reads" .-> DS
@@ -35,8 +39,9 @@ flowchart TB
 
 | Layer | Owns | Must not |
 |---|---|---|
-| **contracts** | ports (`conversation`; later `video_understand`, `vision_generate`, `embed_*`), media ports, the `ResponseStore` port, the A / V / dataset schemas, the lens spec format, ids, run records | import anything else in the library, any provider SDK, or any I/O library |
+| **contracts** | ports (`conversation`; later `video_understand`, `vision_generate`, `embed_*`), media ports, the `ResponseStore` port, the A / V / plan / dataset schemas, the lens spec format, ids, run records | import anything else in the library, any provider SDK, or any I/O library |
 | **model access** | model catalog, router, our own adapters on the official provider SDKs, the response cache wrapper and its file store | know stages, datasets or lenses |
+| **vision** | frame selection strategies (candidates, anchors, filters, budget allocation), image preparation and delivery, all driven by `vision_params` (DESIGN.md §2.3) | call a model; know stages, lenses or corpora |
 | **extraction** | stages L0–L4 + embed, the stage runner, the dataset writer and reader, the benchmark harness, the CLI | call a provider SDK directly; contain lens or corpus vocabulary |
 
 **What the library never knows:** any consumer. No sessions, no web framework, no Postgres, no task queue, no consumer's services. A consumer depends on the library; never the other way round.
@@ -66,8 +71,9 @@ src/
   framekit/
     __init__.py    public API: extract, Dataset, schemas
     py.typed
-    contracts/     ports, schemas (A, V, dataset, lens spec), ids, clock, run records, ResponseStore
+    contracts/     ports, schemas (A, V, plan, dataset, lens spec, VisionParams), ids, clock, run records, ResponseStore
     models/        catalog, router, adapters (openai_compatible, anthropic), cache/ (wrapper + file store)
+    vision/        strategies/ (candidates, anchors, filters, allocation), image prep, delivery, registry
     extraction/    stages/ (normalize, signals, segment, perceive, lens_pass, embed, qc),
                    runner/, dataset/ (writer, reader, manifest), bench/, alignment/
     cli.py         `framekit extract …`, `framekit bench …`, `framekit cache stats|wipe`
@@ -78,7 +84,7 @@ docs/
 | Install | Adds | Typical consumer |
 |---|---|---|
 | `framekit` | contracts, model access (official SDKs), the dataset reader | anything reading datasets: training experiments, the search app's loader |
-| `[media]` | ffmpeg bindings, scene detection, audio | running extraction |
+| `[media]` | ffmpeg bindings, scene detection, audio, image hashing | running extraction; `framekit.vision` |
 | `[speech]` | Whisper + VAD | the `speech` perception module |
 
 **Modules, not packages.** A new capability (say, a training-data helper or a new kind of processing) is added as a new subpackage under `src/framekit/`, with its own import contract and, if it brings heavy dependencies, its own extra. It becomes a separate package only when a consumer needs it without the rest *and* the extras can't provide that (e.g. conflicting dependency ranges).
@@ -91,17 +97,19 @@ docs/
 flowchart LR
     CLI["cli"] --> EX["extraction"]
     EX --> MA["models"]
+    EX --> VI["vision"]
     EX --> CT["contracts"]
     MA --> CT
+    VI --> CT
 ```
 
 | Contract | Rule |
 |---|---|
-| Layers | `cli` → `extraction` → `models` → `contracts` |
+| Layers | `cli` → `extraction` → `models` or `vision` → `contracts`; `models` and `vision` don't import each other |
 | Contracts are pure | `contracts` imports no provider SDK, media library, or I/O framework |
 | Provider SDKs | only inside `models` adapters |
 | Model-access libraries (LangChain, LiteLLM, …) | nowhere; adding one needs a journal decision |
-| Media libraries (ffmpeg bindings, scene detection, audio, Whisper) | only inside `extraction.stages` behind media ports |
+| Media libraries (ffmpeg bindings, scene detection, audio, Whisper, image hashing) | only inside `extraction.stages` and `vision`, behind media ports |
 | LangGraph | nowhere |
 | No consumer code | no import of any consumer package, web framework, ORM or queue library |
 
@@ -113,9 +121,11 @@ A **vocabulary test** scans library code (and prompt, JSON and text files shippe
 
 | Surface | Shape |
 |---|---|
-| **Function** | `extract(context: ExtractionContext, corpus: Corpus, *, models: ModelProfile, runner: Runner = LocalRunner(), out: Path, cache: ResponseStore | None = None) -> Dataset` |
-| **Schemas** | `ExtractionContext` (A), `Corpus` + `CorpusProfile` (V), `LensSpec`, `ModelProfile`, `DatasetManifest`: Pydantic models, versioned with the dataset schema |
+| **Function** | `extract(space: SearchSpace, corpus: Corpus, *, plan: ExtractionPlan | None = None, runner: Runner = LocalRunner(), out: Path, cache: ResponseStore | None = None) -> Dataset` (A is `SearchSpace`; `plan=None` means defaults plus derivation rules) |
+| **Benchmark** | `benchmark(variants: Mapping[str, SearchSpace] or Mapping[str, ExtractionPlan], corpus, *, plan or space, gold: GoldSet, scorer: Scorer = baseline_retriever) -> Report`; one side varies, the other is pinned (DESIGN.md §2.4, §6.2) |
+| **Schemas** | `SearchSpace` (A), `Corpus` + `CorpusProfile` (V), `ExtractionPlan` (incl. `VisionParams`, `ModelProfile`), `LensSpec`, `GoldSet`, `DatasetManifest`: Pydantic models, versioned with the dataset schema |
 | **Dataset** | `Dataset.open(path)` → typed readers per table (Arrow); `manifest` |
+| **Vision** | `select_frames(unit, span, signals, params) -> FrameSet` (timestamps + images), `prepare(frames, params)`; usable without extraction |
 | **Model access** | `ConversationRouter`, `ConversationRequest` / `ConversationResult`, `with_cache(port, store, settings)`; the same API consumers use for their own roles |
 | **CLI** | `framekit extract --context a.yaml --corpus v.yaml --out ./ds`; `framekit bench …`; `framekit cache stats|wipe` |
 
@@ -127,9 +137,10 @@ Changing a public schema or port is a **release** with a version bump; the datas
 
 ```mermaid
 flowchart LR
-    A["A: context"] --> X["extract()"]
+    A["A: search space"] --> X["extract()"]
     V["V: corpus"] --> X
-    X --> PL["plan<br/>stages × units × lenses,<br/>input hashes, cost estimate"]
+    P["plan<br/>(defaults + overrides)"] --> X
+    X --> PL["schedule<br/>stages × units × lenses,<br/>input hashes, cost estimate"]
     PL --> RU["stage runner<br/>idempotent by input hash,<br/>resumable, budget-capped"]
     RU --> ST["stages<br/>L0 → L1 → L2 → L3a →<br/>L3b → embed → L4"]
     ST -- "model ports" --> MA["model access<br/>(+ response cache)"]
@@ -140,7 +151,8 @@ flowchart LR
     CLI["CLI"] --> X
 ```
 
-- **Plan:** expands A × V into tasks and their input hashes; tasks whose run record already exists are skipped. The plan gives the cost estimate checked against the budget.
+- **Resolve:** validates A, V and the plan, fills defaults, applies the derivation rules, pins strategy versions. Fails before any spend.
+- **Schedule:** expands the resolved inputs into tasks and their input hashes; tasks whose run record already exists are skipped. The schedule gives the cost estimate checked against the budget.
 - **Runner:** executes tasks with bounded parallelism and shared per-provider rate limits. Writes the run record before scheduling dependants, so a crash resumes cleanly. `LocalRunner` first; a distributed runner later, behind the same port (DESIGN.md §5.2).
 - **Working store:** intermediate artifacts (normalized copies, chunk files, per-task outputs, run records) live in a local work directory next to the output, keyed by input hash. It's a cache: deleting it costs only recomputation.
 - **Writer:** turns task outputs into the dataset tables and the manifest.
@@ -211,6 +223,6 @@ Then extraction (E1 onward, DESIGN.md §7) is built here.
 
 - **Name clash on PyPI:** an unrelated, active package named `framekit` exists there. Installing from git is unaffected, but publishing would need another distribution name (e.g. `framekit-ml`), and a project must not install both (same import name). Decide before any publishing.
 - Publishing wheels to a package index (instead of git tags), if the repo goes public or installs from git get slow.
-- Dataset layout details, A / V schema details, lens spec file format (DESIGN.md §9).
+- Dataset layout details, A / V / plan schema details, lens spec file format, baseline scorer (DESIGN.md §9).
 - Distributed runner technology, once corpus size needs it.
 - Video, text and embedding models (DESIGN.md §9).
