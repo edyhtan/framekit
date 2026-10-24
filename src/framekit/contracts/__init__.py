@@ -7,9 +7,11 @@ from framekit.contracts.conversation import (
     ConversationPort,
     ConversationRequest,
     ConversationResult,
+    ImagePart,
     ModelCallError,
     TextDelta,
 )
+from framekit.contracts.embedding import EmbeddingPort, EmbeddingRequest, EmbeddingResult
 from framekit.contracts.response_store import ResponseStore
 
 __all__ = [
@@ -18,6 +20,10 @@ __all__ = [
     "ConversationPort",
     "ConversationRequest",
     "ConversationResult",
+    "EmbeddingPort",
+    "EmbeddingRequest",
+    "EmbeddingResult",
+    "ImagePart",
     "ModelCallError",
     "ResponseStore",
     "TextDelta",

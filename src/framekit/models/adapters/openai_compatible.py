@@ -9,23 +9,27 @@ call; the tool call's arguments are the reply's JSON. Those calls are never stre
 the JSON is only usable whole.
 """
 
+import time
 from collections.abc import AsyncIterator
 from typing import Any, ClassVar
 
 import openai
 
 from framekit.contracts.conversation import ConversationRequest, ModelCallError, TextDelta
+from framekit.contracts.embedding import EmbeddingRequest, EmbeddingResult
 from framekit.models.adapters.base import (
     ExternalAIAdapterBase,
     Reply,
     conversation,
+    image_data_url,
     merge_fields,
     reasoning_active,
     reasoning_fields,
+    sampling_fields,
     structured_mode,
     system_text,
 )
-from framekit.models.catalog import ModelSpec
+from framekit.models.catalog import ModelSpec, estimate_cost
 
 
 def _reasoning_delta(delta: Any) -> str | None:
@@ -66,7 +70,7 @@ def _response_format(request: ConversationRequest, mode: str | None) -> dict[str
 
 class OpenAICompatibleAdapter(ExternalAIAdapterBase):
     sdk: ClassVar = openai
-    adapter_version: ClassVar[str] = "0.6.0"
+    adapter_version: ClassVar[str] = "0.7.0"
     structured_modes: ClassVar[frozenset[str]] = frozenset(
         {"json_schema", "json_mode", "function_calling", "prompted"}
     )
@@ -80,7 +84,16 @@ class OpenAICompatibleAdapter(ExternalAIAdapterBase):
     ) -> dict[str, Any]:
         mode = structured_mode(spec, request, self.structured_modes)
         system = system_text(request, mode)
-        messages = conversation(request)
+        messages: list[dict[str, Any]] = list(conversation(request))
+        if request.images:  # images first, then the prompt's text, in one user message
+            messages[-1] = {
+                "role": "user",
+                "content": [
+                    *({"type": "image_url", "image_url": {"url": image_data_url(i)}}
+                      for i in request.images),
+                    {"type": "text", "text": request.prompt},
+                ],
+            }
         if system:
             messages = [{"role": "system", "content": system}, *messages]
         params = merge_fields(
@@ -93,10 +106,46 @@ class OpenAICompatibleAdapter(ExternalAIAdapterBase):
             spec.request_extras,
             reasoning_fields(spec, reasoning_active(spec, request)),
             _response_format(request, mode),
+            sampling_fields(request),
         )
         if self.config.extra_headers:
             params["extra_headers"] = dict(self.config.extra_headers)
         return params
+
+    async def embed(self, spec: ModelSpec, request: EmbeddingRequest) -> EmbeddingResult:
+        """Texts to vectors through the OpenAI-compatible `/embeddings` endpoint."""
+        started = time.perf_counter()
+        try:
+            response = await self.client.embeddings.create(
+                model=spec.model_id, input=list(request.texts)
+            )
+        except ModelCallError:
+            raise
+        except Exception as exc:
+            mapped = self.map_error(exc)
+            if mapped is None:
+                raise
+            raise mapped from exc
+        vectors = tuple(
+            tuple(float(x) for x in item.embedding)
+            for item in sorted(response.data, key=lambda item: item.index)
+        )
+        if len(vectors) != len(request.texts):
+            raise ModelCallError(
+                f"the provider returned {len(vectors)} vectors for {len(request.texts)} texts",
+                retryable=False,
+            )
+        tokens = getattr(getattr(response, "usage", None), "prompt_tokens", 0) or 0
+        return EmbeddingResult(
+            provider=self.config.name,
+            model_id=getattr(response, "model", None) or spec.model_id,
+            vectors=vectors,
+            dimension=len(vectors[0]) if vectors else 0,
+            input_tokens=tokens,
+            latency_ms=round((time.perf_counter() - started) * 1000),
+            cost_usd=estimate_cost(spec, tokens, 0),
+            adapter_version=self.adapter_version,
+        )
 
     async def call(self, spec: ModelSpec, params: dict[str, Any]) -> Reply:
         if not params["stream"]:

@@ -112,6 +112,9 @@ class ModelSpec:
     structured_method: str = "prompted"
     # Context window in tokens, from the provider's documentation; None until recorded.
     context_window: int | None = None
+    # Accepts images (`ConversationRequest.images`), per the provider's documentation.
+    # A request with images to a model without it fails before any call.
+    vision: bool = False
 
     @property
     def reasoning_mode(self) -> str:
@@ -189,6 +192,7 @@ _SPECS = (
         # Context windows for Claude: claude-api skill model table (2026). Structured output
         # stays "prompted" until probed with a key.
         context_window=200_000,
+        vision=True,  # Claude models take image input (Messages API image blocks)
     ),
     ModelSpec(
         "anthropic",
@@ -207,6 +211,7 @@ _SPECS = (
             max_tokens_cap=1024,
         ),
         context_window=1_000_000,
+        vision=True,
     ),
     ModelSpec(
         "anthropic",
@@ -225,6 +230,7 @@ _SPECS = (
             max_tokens_cap=1024,
         ),
         context_window=1_000_000,
+        vision=True,
     ),
 )
 CATALOG: dict[str, ModelSpec] = {spec.model_id: spec for spec in _SPECS}

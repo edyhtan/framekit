@@ -33,6 +33,13 @@ def request_key(
         "reasoning": request.reasoning,
         "response_schema": request.response_schema,
     }
+    # Added only when set, so the keys of requests without them stay what they were.
+    if request.images:
+        shape["images"] = [[i.media_type, i.digest] for i in request.images]
+    if request.temperature is not None:
+        shape["temperature"] = request.temperature
+    if request.seed is not None:
+        shape["seed"] = request.seed
     canonical = json.dumps(shape, sort_keys=True, separators=(",", ":"), default=str)
     digest = hashlib.sha256(canonical.encode()).hexdigest()
     return f"{KEY_PREFIX}:{namespace}:{request.cache_class or 'default'}:{digest}"

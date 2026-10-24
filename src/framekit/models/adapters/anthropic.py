@@ -4,6 +4,7 @@ Claude is called through Anthropic's own SDK, not an OpenAI-compatible shim, so 
 content blocks, thinking, effort, beta features and refusal fallbacks keep working.
 """
 
+import base64
 from typing import Any, ClassVar
 
 import anthropic
@@ -16,6 +17,7 @@ from framekit.models.adapters.base import (
     merge_fields,
     reasoning_active,
     reasoning_fields,
+    sampling_fields,
     structured_mode,
     system_text,
 )
@@ -24,7 +26,7 @@ from framekit.models.catalog import ModelSpec
 
 class AnthropicAdapter(ExternalAIAdapterBase):
     sdk: ClassVar = anthropic
-    adapter_version: ClassVar[str] = "0.5.0"
+    adapter_version: ClassVar[str] = "0.6.0"
 
     @classmethod
     def make_client(cls, api_key: str, base_url: str | None, timeout_s: float) -> Any:
@@ -38,11 +40,31 @@ class AnthropicAdapter(ExternalAIAdapterBase):
     ) -> dict[str, Any]:
         # Structured output is "prompted" here: the schema goes into the system prompt.
         system = system_text(request, structured_mode(spec, request, self.structured_modes))
+        messages: list[dict[str, Any]] = list(conversation(request))
+        if request.images:  # image blocks first, then the prompt's text (Anthropic's advice)
+            messages[-1] = {
+                "role": "user",
+                "content": [
+                    *(
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": image.media_type,
+                                "data": base64.b64encode(image.data).decode("ascii"),
+                            },
+                        }
+                        for image in request.images
+                    ),
+                    {"type": "text", "text": request.prompt},
+                ],
+            }
         return merge_fields(
-            {"model": spec.model_id, "max_tokens": max_tokens, "messages": conversation(request)},
+            {"model": spec.model_id, "max_tokens": max_tokens, "messages": messages},
             {"system": system} if system else {},
             spec.request_extras,
             reasoning_fields(spec, reasoning_active(spec, request)),
+            sampling_fields(request, seed=False),  # the Messages API has no seed
         )
 
     async def call(self, spec: ModelSpec, params: dict[str, Any]) -> Reply:
