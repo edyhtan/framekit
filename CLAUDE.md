@@ -55,4 +55,4 @@ Layers: **contracts** (pure: ports, shared types) · **model access** (catalog, 
 E0 done (v0.1.0: `contracts`, `models`). On `main` since: `vision` (schema, checks, resolution, pixel-free planning). Next, E1: first dataset on 5 units with two lenses (`docs/DESIGN.md` §7); it needs the video and embedding model choices first (ask).
 
 ## Open decisions
-See `docs/DESIGN.md` §9. Ask before picking models, changing the lens spec format (v1, 2026-10-24), picking the dataset layout, a distributed runner, or a lens's base taxonomy.
+See `docs/DESIGN.md` §9. Ask before picking models, changing the lens spec format or the dataset layout (both v1, 2026-10-24), picking a distributed runner, or a lens's base taxonomy.

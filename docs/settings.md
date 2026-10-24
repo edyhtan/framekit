@@ -503,17 +503,31 @@ The baseline scorer (`baseline_retriever`) embeds each gold query with a fixed m
 
 ## 7. Output: the dataset and its manifest
 
-| Part | Contents | |
+```text
+<dataset>/
+  manifest.json                    written last: no manifest, no finished dataset
+  .gitignore                       *
+  tables/<table>/unit-<id>.parquet one file per unit (partition_by: unit_id)
+  tables/<table>.parquet           or one per table (partition_by: none)
+```
+
+| Table | Rows | Columns |
 |---|---|---|
-| **segments** | units → shots → scenes → beats (and windows), with start and end on the unit timeline | [designed] |
-| **signals** | cuts, audio onsets and tags, speech segments, motion | [designed] |
-| **text** | perception records, annotations (per lens and version), phrasings, the unit synopsis | [designed] |
-| **vectors** | per embedding model, keyed by segment or phrasing | [designed] |
-| **provenance** | run records (model IDs, adapter versions, input hashes, status, tokens, cost), QC results, and per scene the timestamps of the frames actually sent (`frames_sent`) | [designed] |
+| `units` | one per unit in scope | `unit_id`, `status` (complete, partial, failed, excluded, skipped), `reason`, `file_name`, `source_fingerprint`, source `duration_s` / `width` / `height` / `fps` / `has_audio`, `copy_width` / `copy_height` / `copy_fps`, `metadata` (JSON), `excluded_ranges`, `synopsis` |
+| `shots` | per shot | `shot_id`, `unit_id`, `index`, `start`, `end` |
+| `scenes` | per scene | `scene_id`, `unit_id`, `index`, `start`, `end`, `summary` (L2's), `method`, `status` |
+| `beats` | per beat of a record | `beat_id`, `scene_id`, `unit_id`, `index`, `start`, `end`, `who`, `action`, `audio` |
+| `windows` | per fixed window | `window_id`, `unit_id`, `index`, `start`, `end` |
+| `signals` | per event or sample | `unit_id`, `signal` (shot_cut, audio_onset, loudness_dbfs, motion, speech, audio_tag), `t`, `end`, `value`, `label`, `text`, `detector` |
+| `perception` | per scene | `scene_id`, `unit_id`, `record_schema`, `modules`, `summary`, `record` (JSON), `status`, `run_id`, `model_id`, `prompt_version` |
+| `frames_sent` | per frame sent | `unit_id`, `scene_id`, `stage`, `image_index`, `tile_index`, `planned_s`, `frame_s`, `frame_index`, `anchor`, `width`, `height`, `image_width`, `image_height`, `format`, `image_sha256`, `profile`, `profile_digest` (never pixels) |
+| `annotations` | per label (or per non-label field) | `target_type` (scene, beat), `target_id`, `scene_id`, `unit_id`, `lens`, `lens_version`, `run_index`, `field`, `label`, `value` (JSON), `weight`, `run_id` |
+| `phrasings` | per phrasing | `phrasing_id`, `target_type`, `target_id`, `scene_id`, `unit_id`, `lens`, `lens_version`, `run_index`, `text`, `source`, `run_id` |
+| `vectors` | per embedded text | `target_type` (scene, phrasing), `target_id`, `unit_id`, `embedding_model`, `dimension`, `vector` (float32), `text_sha256`, `run_id` |
+| `runs` | per task | `run_id`, `stage`, `unit_id`, `target_id`, `input_hash`, `status`, `attempts`, `model_id`, `provider`, `adapter_version`, `started_at`, `finished_at`, `latency_ms`, tokens, `cost_usd` (estimated), `cached`, `reused`, `lens`, `run_index` |
+| `qc` | per check and target | `check`, `target_type`, `target_id`, `unit_id`, `scene_id`, `lens`, `run_index`, `status` (pass, flag, down_weight), `detail` |
 
-**The manifest** records: dataset ID; the search space verbatim with its hash; corpus digest; the resolved plan (defaults filled in, strategy versions pinned) and the derivation rules applied; lens versions; model IDs; schema version; row counts and checksums; units completed or partial; and the benchmark label when made by the harness. [designed]
-
-Layout is Parquet / Arrow tables plus the manifest; details are [open].
+**The manifest** (`DatasetManifest`; [built]: its schema, the writer and the reader; `extract()` fills it once runs are built) records: the dataset id (from the search space, corpus and plan digests, so a rerun keeps it); the search space verbatim with its digest; the corpus name, digest, rights mode and each unit's content fingerprint; the resolved plan (defaults filled in, strategy versions pinned, derived values in place) with its digest, `content_digest` (without budget, governance and layout) and `fairness_digest`; the derivation rules applied; lens versions and digests; the model of each role; the vision digest; governance; each unit's status and reason; every table file with its row count and sha256; the estimated cost (this run, total, per stage) and tasks computed or reused; the ffmpeg version and execution options; notes (repairs, dropped frames, unused settings); and the benchmark label when made by the harness. `Dataset.open(path, verify=True)` checks every file against it.
 
 ---
 
@@ -524,4 +538,4 @@ Layout is Parquet / Arrow tables plus the manifest; details are [open].
 3. **Dropped rows.** Rows are flagged, never dropped, per DESIGN.md §3 L4. Should a "drop" ever exist, meaning excluded from the main tables but kept with its reason in `qc`?
 4. **Default numbers** for every placeholder above, from benchmark sweeps (vision profiles first).
 5. **Model choices** per role (video, vision, text, embeddings) and the L1 tools.
-6. **Schema details** still open in DESIGN.md §9: the dataset layout (the lens spec file format is decided: §3.1).
+6. ~~Schema details~~: decided 2026-10-24 (v1): the lens spec file format (§3.1) and the dataset layout (§7).

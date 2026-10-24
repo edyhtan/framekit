@@ -133,7 +133,7 @@ Vectors alone can't be trained on or evaluated, because you'd lose what they enc
 | **vectors** | per embedding model, keyed by segment or phrasing; the model ID is part of the key |
 | **provenance** | model IDs, adapter versions, lens versions, input hashes, run records (status, attempts, times, tokens, cost), QC results |
 
-- **Format:** Parquet / Arrow tables plus a **manifest** (dataset ID, A and V digests, lens versions, model IDs, schema version, row counts, checksums). Layout details are open (§9).
+- **Format:** Parquet / Arrow tables plus a **manifest** (dataset ID, A and V digests, lens versions, model IDs, schema version, row counts, checksums). Layout v1: one file per table and unit (or per table), the manifest written last; every table and column in [settings.md](settings.md) §7.
 - **Versioned, never overwritten:** re-running a lens adds a new `lens_version`; changing a model adds new rows keyed by the new `model_id`. Old versions stay until retired.
 
 ```mermaid
@@ -547,7 +547,6 @@ Users' copies of a corpus differ (releases, edits, frame rates). A dedicated mod
 - **Vision, after its first code** (§2.3): vision capabilities in the model catalog (callers describe a model with `ModelVisionCaps` until then); how the media stage feeds pixel-filter results back into the frame budget; planning `split_by_budget` and `per_module` views; keeping `budget.max_frames` across the spans of a unit (planning applies it per span).
 - **Baseline scorer details:** its fixed embedding model and metrics (§6.2); the gold-query set per corpus.
 - **Default vision profiles** per stage, from a benchmark sweep (§2.3, §6.2).
-- **Dataset layout details:** table split, partitioning, manifest fields.
 - **A distribution name for PyPI,** if the library is ever published (`framekit` is taken there; [ARCHITECTURE.md](ARCHITECTURE.md) §8).
 - **Distributed runner** technology, when it's needed.
 - Per lens: see the lens appendix (e.g. base emotion taxonomy in Appendix B).
