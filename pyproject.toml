@@ -12,7 +12,10 @@ dependencies = [
     "pydantic>=2.6,<3",
     "openai>=3.20,<4",
     "anthropic>=1.9,<2",
-    "pyarrow>=17,<23",
+    # 23.0.1: the first release without PYSEC-2026-113 (CVE-2026-25087). No upper bound:
+    # pyarrow's major versions come every few months without breaking the table and Parquet
+    # calls framekit makes, and the newest-dependencies CI job would catch one that did.
+    "pyarrow>=23.0.1",
     "pyyaml>=6,<7",
 ]
 
