@@ -7,13 +7,13 @@ AI building blocks for video datasets, in Python. One package with modules you c
 | Module | What it gives you | Status |
 |---|---|---|
 | `framekit.contracts` | provider-neutral types: the conversation port, the response-store port | **v0.1.0** |
-| `framekit.models` | model access: a catalog of providers and models, a router, adapters on the official `openai` and `anthropic` SDKs, a record / replay response cache | **v0.1.0** |
+| `framekit.models` | model access: a catalog of providers and models (extendable with your own), a router, adapters on the official `openai` and `anthropic` SDKs, a record / replay response cache | **v0.1.0** |
 | `framekit.vision` | how a model sees video: frame selection, image preparation and delivery | **partial** on `main`: schema, checks, pixel-free planning ([settings](docs/settings.md) §5.2) |
 | `framekit.extraction` | turns a video corpus into a dataset of segments, text, vectors and provenance, plus a benchmark harness and a CLI | designed ([design](docs/DESIGN.md)) |
 
 Used by the video clip search agent ([short_extract](https://github.com/edyhtan/short_extract)), and built for benchmarks and experimental model training.
 
-**Contents:** [Install](#install) · [Configure](#configure) · [Quick start](#quick-start) · [Usage guide](#usage-guide) · [Models](#models) · [Response cache](#response-cache) · [Vision parameters](#vision-parameters) · [Extraction (preview)](#extraction-preview) · [Development](#development) · [Documents](#documents) · [Licence](#licence)
+**Contents:** [Install](#install) · [Configure](#configure) · [Quick start](#quick-start) · [Usage guide](#usage-guide) · [Models](#models) · [Your own models and providers](#your-own-models-and-providers) · [Response cache](#response-cache) · [Vision parameters](#vision-parameters) · [Extraction (preview)](#extraction-preview) · [Development](#development) · [Documents](#documents) · [Licence](#licence)
 
 ---
 
@@ -58,6 +58,8 @@ framekit reads **no settings from the environment** except provider keys and an 
 | `HIVE_BASE_URL` | optional Hive endpoint override (e.g. a regional one) |
 
 A missing key fails only the calls to that provider, with a non-retryable error. Keep keys in your shell or a git-ignored `.env`; never commit them.
+
+**Or pass a key explicitly**, which wins over the environment: a `ModelSource` with `credential=` (a string, a `SecretStr`, or a callable for a secret manager), [below](#your-own-models-and-providers). Applications usually load their `.env` themselves (e.g. `python-dotenv` or `pydantic-settings`): framekit never reads files on its own.
 
 ## Quick start
 
@@ -218,7 +220,40 @@ catalog_listing(default_model="claude-haiku-4-5")   # for a model picker: no pri
 CATALOG["claude-sonnet-5"].context_window             # 1_000_000
 ```
 
-Adding a model or an OpenAI-compatible provider means one catalog entry (a `ProviderConfig` plus its `ModelSpec`s), contributed here through a pull request.
+These are the built-ins. To add your own, see the next section.
+
+## Your own models and providers
+
+Add models and providers in your own code, without changing framekit. One structure, a **`ModelSource`**, says which model, where it's served, with which key, and through which adapter; pass sources to the router and refer to them by name. (On `main`, for the release after v0.1.0.)
+
+```python
+import os
+from decimal import Decimal
+
+from pydantic import SecretStr
+
+from framekit.models import ConversationRouter, ModelSettings, ModelSource, ModelSpec, ProviderConfig
+
+sources = [
+    ModelSource("claude", model="claude-haiku-4-5",                        # a built-in model,
+                credential=SecretStr(os.environ["MY_CLAUDE_KEY"])),       # with your own key
+    ModelSource("local", model=ModelSpec("box", "my-local-model", "My local model",
+                                         Decimal("0"), Decimal("0")),
+                provider=ProviderConfig("box", "openai",                  # keyless local server
+                                        base_url="http://127.0.0.1:8000/v1")),
+]
+async with ConversationRouter(ModelSettings(default_model="local"), sources=sources) as router:
+    ...  # your sources and the built-in catalog, side by side
+```
+
+- **Credentials are never recorded:** kept as a `SecretStr`, passed only to the client; results record the source's name (`result.source`), and the response cache keys a source by a public fingerprint of where it's served, so two hosts never share cached answers.
+
+- **Any OpenAI-compatible server** (a hosted provider, a self-hosted vLLM server, Ollama's `/v1` endpoint) is config only, as above. Probe it before relying on it: reasoning switches, structured output and streaming differ from server to server.
+- **Another protocol or client** needs an adapter: subclass `ExternalAIAdapterBase` from `framekit.models.adapters`, set `adapter_version`, implement `build_params` and `call`, and map your client's errors to `ModelCallError` (override `map_error`, or raise `ModelCallError` in `call`). Pass the class as the source's `adapter=`. The base does the rest: output budget, reasoning switches, timing, stop reasons, cost, provenance.
+- **Lower level:** a `ModelRegistry` (`DEFAULT_REGISTRY.extend(...)`, `ConversationRouter(..., registry=...)`) holds providers, models and adapter classes; sources are checked against it.
+- **Only point a provider at a host you trust**, over `https` unless it's on the same machine. framekit sends the provider's key to its `base_url`, and the SDKs also send some of their own environment variables there (known gaps, described in the guide).
+
+Guide, with a complete runnable adapter: **[docs/adapters.md](docs/adapters.md)**.
 
 ## Response cache
 
@@ -263,7 +298,7 @@ assert again.cached and again.text == first.text and again.cost_usd == 0
 | `record` | replay hits; on a miss, call the provider and store the reply |
 | `replay` | hits only; a miss raises `ModelCallError` (for tests that must never spend money) |
 
-- **What counts as the same request:** the cache key covers everything that shapes a reply: the resolved model, system prompt, history, message, budget, reasoning switch, schema, and whether it was streamed. Change any of them and it's a miss.
+- **What counts as the same request:** the cache key covers everything in the request that shapes a reply: the resolved model, system prompt, history, message, budget, reasoning switch, schema, and whether it was streamed. Change any of them and it's a miss. It doesn't cover the provider or its host, so registries that map one `model_id` to different hosts need separate namespaces ([docs/adapters.md](docs/adapters.md#provenance-and-the-response-cache)).
 - **Marked replays:** replays come back with `cached=True`, `cost_usd=0`, and `adapter_version` ending in `+cache`, so stored records never mistake a replay for a real call.
 - **Streams:** they replay their pieces in order; use `CacheSettings(replay_pace="original")` to keep the recorded timing.
 - **Settings:** `ttl_s` (default 7 days), `namespace` (change it to invalidate everything at once), `max_entry_bytes` (larger replies aren't stored).
@@ -347,6 +382,7 @@ uv build                  # wheel + sdist
 | [docs/DESIGN.md](docs/DESIGN.md) | what extraction does: inputs, the dataset, stages L0–L4, lens specs, runs, evaluation, roadmap, rights |
 | [docs/settings.md](docs/settings.md) | every extraction setting in one place: the six questions a run answers, commands, the search space, corpus, plan and gold-set files, the output, open decisions |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | how the code is layered, the public API, model access, CI and security checks, how consumers connect, the seeding plan |
+| [docs/adapters.md](docs/adapters.md) | your own models, providers and adapters: the model registry, the adapter template with a runnable example, errors, keyless servers, streaming, provenance, security |
 | [docs/DECISIONS.md](docs/DECISIONS.md) | why, in date order |
 | [CLAUDE.md](CLAUDE.md) | rules for contributors and coding agents |
 | [SECURITY.md](SECURITY.md) | how to report a vulnerability privately, supported versions, scope |
