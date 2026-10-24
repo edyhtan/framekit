@@ -368,7 +368,7 @@ Detectors are named, versioned code, picked in the plan; the built-ins (version 
 | module `sound` | music cues, silence, sound–action sync |
 | module `speech` | transcript segments (from L1 Whisper) |
 
-Lens specs declare which modules they need (§4). A lens needing a missing module triggers a targeted re-run of that module only. Example core record (from the example corpus, Appendix A; field names are generic, values are corpus-specific):
+Lens specs declare which modules they need (§4). A lens needing a missing module triggers a targeted re-run of that module only. The record's schema is versioned (`record_schema: 1`): `who` is a list of names, beats have `t: [start, end]`, and the `speech` module comes from L1, never from the model. Example core record (from the example corpus, Appendix A; field names are generic, values are corpus-specific):
 
 ```json
 {
@@ -378,9 +378,9 @@ Lens specs declare which modules they need (§4). A lens needing a missing modul
   "entities": ["Tom", "Jerry"],
   "props": ["mousetrap", "toothpick"],
   "beats": [
-    {"t": [152.0, 156.5], "who": "Tom", "action": "sets trap, rubs hands, grins"},
-    {"t": [156.5, 158.0], "who": "Jerry", "action": "nudges trap with a toothpick"},
-    {"t": [158.0, 160.2], "who": "Tom", "action": "trap snaps on his hand, freezes, then screams",
+    {"t": [152.0, 156.5], "who": ["Tom"], "action": "sets trap, rubs hands, grins", "audio": null},
+    {"t": [156.5, 158.0], "who": ["Jerry"], "action": "nudges trap with a toothpick", "audio": null},
+    {"t": [158.0, 160.2], "who": ["Tom"], "action": "trap snaps on his hand, freezes, then screams",
      "audio": "snap, scream"}
   ]
 }

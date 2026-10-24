@@ -328,6 +328,15 @@ These were decided in short_extract (dates are from its journal) and bind this e
 - **Why:** deterministic signals and exact frame selection are what perception is built on (DESIGN.md §2.3, §3 L1); keeping ffmpeg as a binary and numpy optional keeps the dependency footprint small.
 - **Recorded in:** `src/framekit/extraction/media/` (new: `ffmpeg.py`, `detectors.py`, `frames.py`, `__init__.py`), `src/framekit/vision/pixels.py` (new), `src/framekit/vision/__init__.py`; `tests/test_media.py`, `tests/media_helpers.py` (new); `pyproject.toml` (the media extra; numpy only in media work and the pixel filters); `.github/workflows/tests.yml` (ffmpeg); settings.md §5.2; DESIGN.md §2.3, §3 (L1), §7, §9; ARCHITECTURE.md §1, §2, §2.1, §3; README.md module table, "Vision parameters", "Development"; CLAUDE.md "Workflow"; SECURITY.md "Scope".
 
+### 15:05 — Extraction v1, part 6: what models are asked, and how replies are checked
+- **Decision** (the sixth PR of the extraction series; v1, revisitable):
+  - **framekit's own prompts** (`prompts.py`): L2 segmentation, L3a perception, and the frame around each lens's prompts in L3b. Provider-neutral text that never names a lens or corpus concept (names and hints come from the corpus profile, lens prompts from the lens spec); a change to any text is a new prompt version (`segment@1`, `perceive@1`, `lens_pass@1`), which will be part of the input hash of the stage that sends it. Images are announced with their times (storyboards tile by tile).
+  - **The perception record, schema 1:** the core record (`summary`, `setting`, `entities`, `props`, `beats` with `t: [start, end]`, `who` as a list, `action`, `audio`) plus the `camera`, `timing` and `sound` modules written by the model; `speech` comes from L1, never from the model. Checks: every time inside the scene (±0.5 s) and ordered, names from the corpus profile (or marked unknown), every module present.
+  - **Replies:** the JSON object is the whole reply, or a code fence's content, or the first object in surrounding prose, found with plain string operations (no backtracking regex).
+  - **Scene repair** (`segmenting.py`): a model's proposed scenes become a clean cover of each processable span (excluded ranges cut out): ordered and contiguous, boundaries snapped to the nearest cut within the tolerance, scenes under the minimum merged into a neighbour when the result stays within the maximum, scenes over the maximum split near even points (at a cut when one is close), every repair reported as a note. Shot groups build scenes without a model; fixed windows are arithmetic.
+- **Why:** perception records only what's observable, and every value a model returns is checked by code before anything stores it (DESIGN.md §0.3, §3).
+- **Recorded in:** `src/framekit/extraction/prompts.py`, `records.py`, `segmenting.py` (new); `tests/test_model_io.py`, `tests/test_segmenting.py` (new); `pyproject.toml` (prompt text may exceed the line length); DESIGN.md §3 (L3a).
+
 ---
 
 ## Still open
