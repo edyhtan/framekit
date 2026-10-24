@@ -225,12 +225,9 @@ flowchart LR
 vision_profiles:
   scene_overview:            # used by L2
     version: 1
-    frame_selection:
-      candidates: {strategy: uniform, fps: 1}
-      anchors: []
-      filters: [{dedupe: {method: phash, max_distance: 6}}]
-      budget: {max_frames: 600}
-    image: {max_side_px: 512, aspect: preserve, format: jpeg, quality: 80}
+    frame_selection:                      # native video: the provider samples, so only
+      candidates: {strategy: uniform, fps: 1}   # uniform fps, a clip range and a size apply
+    image: {max_side_px: 512, aspect: preserve}
     delivery: {mode: native_video}        # or images, storyboard
   scene_detail:              # used by L3a
     version: 1
@@ -272,7 +269,7 @@ stages:
 - **Reusable outside extraction:** consumers use the same profiles and `framekit.vision` at query time (e.g. the search app's grounding samples densely on a few candidate scenes), so offline and online sampling are described the same way.
 - **Defaults come from a sweep**, not a guess: the benchmark harness compares profiles on the gold set at equal cost (§6.2). The values above are placeholders.
 
-The plan's other settings (segment granularity, L1 detector settings, phrasings per scene, self-consistency runs, embedding inputs; groups in §2.4) follow the same pattern: named, resolved into the manifest, and part of the input hash of the stages they affect. Their detailed schema is open (§9).
+The plan's other settings (segment granularity, L1 detector settings, phrasings per scene, self-consistency runs, embedding inputs; groups in §2.4; every one listed in [settings.md](settings.md)) follow the same pattern: named, resolved into the manifest, and part of the input hash of the stages they affect. Their detailed schema is open (§9).
 
 ### 2.4 A, the plan, and benchmarking A
 
@@ -286,7 +283,7 @@ The plan's other settings (segment granularity, L1 detector settings, phrasings 
 | **Scope**: which parts of the corpus count | unit subset, exclusions | units processed, excluded ranges |
 | **Query style**: how searches will be phrased | example queries | phrasing prompts, embedding inputs |
 
-**The plan says how A is realized**: every setting in the groups below. It starts from documented defaults, takes explicit overrides, and applies a small set of **derivation rules** from A, e.g. "a lens requiring `sound` turns on the sound module". The rules are deterministic, versioned and recorded, so no hidden logic adapts the plan to an A.
+**The plan says how A is realized**: every setting in the groups below (the complete reference, with commands and examples, is [settings.md](settings.md)). It starts from documented defaults, takes explicit overrides, and applies a small set of **derivation rules** from A, e.g. "a lens requiring `sound` turns on the sound module". The rules are deterministic, versioned and recorded, so no hidden logic adapts the plan to an A.
 
 | Plan group | Contains |
 |---|---|
@@ -543,7 +540,7 @@ Users' copies of a corpus differ (releases, edits, frame rates). A dedicated mod
 
 - **Video model** for L2/L3a (Gemini assumed; Claude via frames is an option; verify cost and limits).
 - **Text model** for lens passes; **embedding models** (text + SigLIP).
-- **A, V and plan schemas in detail,** including the lens spec file format (YAML or JSON plus prompt files), the plan groups besides vision (§2.4), and the derivation rules from A.
+- **A, V and plan schemas in detail,** including the lens spec file format (YAML or JSON plus prompt files). The full setting list and derivation rules v1 are drafted in [settings.md](settings.md); its §8 lists the open decisions it raised (frames to cloud models for bring-your-own corpora, cache keys for repeated runs, dropped rows).
 - **Baseline scorer details:** its fixed embedding model and metrics (§6.2); the gold-query set per corpus.
 - **Default vision profiles** per stage, from a benchmark sweep (§2.3, §6.2).
 - **Dataset layout details:** table split, partitioning, manifest fields.

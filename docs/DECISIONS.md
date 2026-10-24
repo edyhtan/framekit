@@ -112,7 +112,40 @@ These were decided in short_extract (dates are from its journal) and bind this e
 - **Closes:** the open item "the code licence" in the v0.1.0 entry above.
 - **Recorded in:** `LICENSE` (new); `pyproject.toml`; README.md "Licence"; DESIGN.md §8.3.
 
+### 22:31 — Extraction settings reference (docs/settings.md)
+- **Decision** (owner): every setting that shapes an extraction run is written down in one reference, **`docs/settings.md`**, which becomes the spec for the E1 schemas. It contains:
+  - a high-level view, without the `extract(A, V)` notation: the six questions a run answers (what should be findable, which videos, how the video is looked at, what one data point is, what is written and by which models, what rules apply), plus execution;
+  - the commands (`framekit extract`, `bench` in both directions, `cache`) and the Python calls;
+  - complete example files: search space, corpus, plan by group, gold set;
+  - the output and its manifest;
+  - which groups are recorded and which are hashed.
+- **Status tags:** every setting is tagged `[built]`, `[designed]`, `[discussed]`, `[open]` or `[fixed]`. All numbers are placeholders until benchmark sweeps set them.
+- **First written here** (agreed in conversation, now `[discussed]`):
+  - derivation rules v1;
+  - views per segment;
+  - the keyframes profile, fixed time windows, and beat limits under perception;
+  - entity policy, per-stage budgets, `on_exceed`, and formatting layout outside the hash;
+  - a corpus `subset` and an alignment override;
+  - gold-set overlap matching, and a ban on gold queries in search spaces;
+  - default work/cache/output folders outside any repository, each with a `.gitignore` of `*`;
+  - always-resume runs, with `--rerun` to force a stage.
+- **Cross-checked** by three independent reviewers (docs coverage, rules, the agreed list). Their fixes are applied:
+  - models are named only under `models:`; embedding refers to roles;
+  - native video takes only uniform sampling;
+  - rows are never dropped;
+  - the plan can't widen the scope;
+  - gold moments fit the declared resolution;
+  - each self-consistency run gets its own seed.
+- **Doc fixes:**
+  - DESIGN.md §2.3's example used dedupe, a frame budget and JPEG settings with `native_video`, which breaks the section's own rule. It's corrected.
+  - ARCHITECTURE.md §3 still named the CLI flag `--context` (the old framing); it's now `--space`, with `cache_settings`, `dry_run` and the runner options added.
+- **Open** (settings.md §8):
+  - whether frames may be sent to remote models for a bring-your-own corpus (`model_inputs`);
+  - adding temperature and seed to `ConversationRequest` and the cache key, so repeated runs don't replay one answer;
+  - whether a "drop" policy should ever exist.
+- **Recorded in:** docs/settings.md (new); DESIGN.md §2.3, §2.4, §9; ARCHITECTURE.md §3; README.md "Documents"; CLAUDE.md "Project".
+
 ---
 
 ## Still open
-See DESIGN.md §9: video, text and embedding models; A / V / plan schema details and the lens spec file format; default vision profiles; baseline scorer details and gold queries; dataset layout; a distribution name if ever published to PyPI; distributed runner; per-lens taxonomies.
+See DESIGN.md §9: video, text and embedding models; A / V / plan schema details and the lens spec file format; default vision profiles; baseline scorer details and gold queries; dataset layout; a distribution name if ever published to PyPI; distributed runner; per-lens taxonomies; frames to remote models for bring-your-own corpora; temperature/seed in the cache key; a drop policy (settings.md §8).

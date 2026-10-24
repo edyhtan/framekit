@@ -8,7 +8,7 @@ Consumers: the video clip search agent ([short_extract](https://github.com/edyht
 - **Test corpus (example, swappable):** classic Tom and Jerry shorts — `docs/DESIGN.md` Appendix A.
 - **First lens (example):** emotions & dynamics — `docs/DESIGN.md` Appendix B.
 
-Functional design: `docs/DESIGN.md`. Code layout and seeding plan: `docs/ARCHITECTURE.md`. Why it looks this way: `docs/DECISIONS.md`. Read them before architectural work.
+Functional design: `docs/DESIGN.md`. Every extraction setting: `docs/settings.md` (keep it in sync when a setting changes). Code layout and seeding plan: `docs/ARCHITECTURE.md`. Why it looks this way: `docs/DECISIONS.md`. Read them before architectural work.
 
 ## Decision journal (required)
 Every design decision is recorded in `docs/DECISIONS.md`, the timeline journal, in the same change that applies it.
