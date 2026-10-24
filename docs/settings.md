@@ -2,9 +2,9 @@
 
 Every setting that shapes an extraction run, in one place: what you give, what framekit decides, what comes out. It's the spec for the schemas built in milestone E1 (`SearchSpace`, `Corpus`, `ExtractionPlan`, `GoldSet`). Why it's shaped this way: [DESIGN.md](DESIGN.md) §2.3–§2.4; decisions: [DECISIONS.md](DECISIONS.md).
 
-> **Status:** reference, mostly not built. framekit v0.1.0 implements model access (`ModelSettings`, `CacheSettings`, per-request options); `main` adds the vision parameters (`framekit.vision`, §5.2: schema, checks, resolution, pixel-free planning) and lens specs (§3.1), not released yet. Everything else below is the target.
+> **Status:** in progress on `main` (2026-10-24), after v0.1.0. Built: model access (`ModelSettings`, `CacheSettings`, per-request options), the vision parameters (§5.2: schema, checks, resolution, pixel-free planning), lens specs (§3.1), and the schemas of the search space, corpus, plan and gold set (§3–§6): every setting below is parsed and checked. What a setting does takes effect when its stage is built (milestone E1: resolution, media work, runs, benchmarks); until then, its description is the design.
 
-**Tags:** **[built]** in code (v0.1.0, or on `main` since) · **[designed]** in DESIGN.md / ARCHITECTURE.md · **[discussed]** agreed with the owner, first written down here · **[open]** value or choice not decided · **[fixed]** a rule, not a setting. **Every number is a placeholder** until a benchmark sweep sets it.
+**Tags:** **[built]** in code (v0.1.0, or on `main` since) · **[not built]** accepted or refused with a clear reason, but not implemented yet · **[designed]** in DESIGN.md / ARCHITECTURE.md · **[discussed]** agreed with the owner, first written down here · **[open]** value or choice not decided · **[fixed]** a rule, not a setting. **Every number is a placeholder** until a benchmark sweep sets it.
 
 ---
 
@@ -105,7 +105,7 @@ The default folders live outside the project on purpose: the work directory hold
 **Python** (designed for E1; the cache classes are built):
 
 ```python
-from framekit.contracts import SearchSpace, Corpus, ExtractionPlan, GoldSet
+from framekit.extraction import SearchSpace, Corpus, ExtractionPlan, GoldSet   # [built]
 from framekit.extraction import extract, benchmark, baseline_retriever, Dataset, LocalRunner
 from framekit.models.cache import FileResponseStore, CacheSettings, ClassPolicy   # [built]
 
@@ -135,25 +135,25 @@ report = benchmark(
 
 ## 3. Search space: `search-space.yaml`
 
-What should become findable. It's **given input**: written by hand or produced by an augmentation strategy, and framekit never edits it (DESIGN.md §2.4).
+What should become findable. It's **given input**: written by hand or produced by an augmentation strategy, and framekit never edits it (DESIGN.md §2.4). Its digest (`SearchSpace.digest`) covers the file as given and every lens spec it names.
 
 ```yaml
 search_space:
   version: 1
-  intent: >                                        # [designed] opaque text
+  intent: >                                        # [built] opaque text
     Moments whose emotional and interpersonal structure mirrors a real-life situation.
-  lenses:                                          # [designed] the searchable dimensions
-    - {spec: lenses/emotions_dynamics, version: 1.0.0}   # lens spec format [built]: §3.1
-    - {spec: lenses/comedy_craft, version: 0.1.0}
-  evidence:                                        # [designed] optional, taken as given;
+  lenses:                                          # [built] the searchable dimensions
+    - {spec: lenses/emotions_dynamics, version: 1.0.0}   # a folder or file, relative to this file
+    - {spec: lenses/comedy_craft, version: 0.1.0}        # the spec's version must match
+  evidence:                                        # [built] optional, taken as given;
     modules: [sound]                               #   the lenses' own needs are added in the plan
-  resolution:                                      # [designed] how fine a match can be
+  resolution:                                      # [built] how fine a match can be
     moment_length_s: {min: 3, max: 6}
-  scope:                                           # [designed] can only narrow the corpus
-    units: {include: all, exclude: []}
-    excluded_ranges: from_corpus
-  query_style:                                     # [designed] how searches will be phrased
-    examples:                                      #   must not overlap the gold queries (§6)
+  scope:                                           # [built] can only narrow the corpus
+    units: {include: all, exclude: []}             #   unknown ids are errors
+    excluded_ranges: from_corpus                   #   from_corpus | none
+  query_style:                                     # [built] how searches will be phrased
+    examples:                                      #   must not repeat a gold query (§6)
       - "my team keeps arguing about the same thing"
       - "planning something perfect that goes wrong"
 ```
@@ -205,14 +205,14 @@ lens:
 
 ## 4. Corpus: `corpus.yaml`
 
-Which videos. It points to files and never copies them (DESIGN.md §1, §8.2).
+Which videos. It points to files and never copies or modifies them (DESIGN.md §1, §8.2).
 
 ```yaml
 corpus:
-  profile:                                         # [designed] the corpus profile template
+  profile:                                         # [built] the corpus profile template
     name: tom_and_jerry
     unit_definition: "one complete theatrical short per file; never a TV episode"
-    metadata_fields:
+    metadata_fields:                               # str | int | float | bool, or allowed values
       title: str
       year: int
       era: [hanna_barbera, deitch, jones]
@@ -220,34 +220,35 @@ corpus:
       release_source: str
       source_quality: str
     entities: [Tom, Jerry, Spike, Tyke, Butch, Nibbles, Toodles]
-    perception_hints:                              # [designed] may suggest plan overrides
+    perception_hints:                              # [built] sent to L2 and L3a as context
       - "almost dialogue-free; the soundtrack carries meaning"
       - "animation smear frames inflate shot-cut counts"
-    rights_mode: byo_media                         # [designed] byo_media | hosted | embed
-  subset: [tj001, tj002, tj003, tj004, tj042]      # [discussed] units this run processes;
-                                                   #   the search space's scope narrows further
-  manifest:                                        # [designed]
+    rights_mode: byo_media                         # [built] byo_media | hosted | embed
+  subset: [tj042]                                  # [built] units this run may process (default:
+                                                   #   all); the search space's scope narrows further
+  manifest:                                        # [built]
     - unit_id: tj042
       expected_duration_s: 412.3
-      fingerprint: "chromaprint:…"
-      excluded_ranges: [[0.0, 9.5], [404.0, 412.3]]   # title cards, logos
-  units:                                           # [designed] the user's own files
-    - unit_id: tj042
-      path: D:/media/tj/042.mkv
-      release_source: "Golden Era Anthology (2025), Blu-ray"
+      fingerprint: "chromaprint:…"                 #   recorded; matching by it [not built]
+      excluded_ranges: [[0.0, 9.5], [404.0, 412.3]]   # title cards, logos: never processed
+  units:                                           # [built] the user's own files
+    - unit_id: tj042                               #   a string: quote ids that look like numbers
+      path: D:/media/tj/042.mkv                    #   relative paths: from this file's folder
+      release_source: "Golden Era Anthology (2025), Blu-ray"   # declared metadata, checked
       source_quality: good
-      # Alignment is computed by file matching (duration → Chromaprint → frame hash;
-      # audio cross-correlation, piecewise for censored releases), with a coverage report;
-      # unmatched units are excluded. An override is possible:
-      alignment_override:                          # [discussed]
+      alignment_override:                          # [not built]
         - {ref: [0.0, 412.3], offset_s: 0.0, drift: 1.0}   # t_user = t_ref * drift + offset
 ```
+
+- **Unit ids** become file names: letters, digits, `_`, `-` and `.`.
+- **The digest** covers the profile, subset, manifest and each unit's id, metadata and alignment, not the paths (they differ between machines).
+- **Matching and alignment** (DESIGN.md §8.2: Chromaprint, cross-correlation, piecewise drift) [not built]: timestamps are on each file's own timeline.
 
 ---
 
 ## 5. Plan: `plan.yaml`
 
-How the search space is realized. Optional: documented defaults, your overrides, and **derivation rules** from the search space (DESIGN.md §2.4). The groups follow the six questions.
+How the search space is realized. Optional: documented defaults, your overrides (a group given in part keeps the defaults of the rest), and **derivation rules** from the search space (DESIGN.md §2.4). The groups follow the six questions. **Models are never defaulted:** every role the run uses names its model.
 
 ### 5.1 Derivation rules
 
@@ -270,79 +271,66 @@ Rules v1 [discussed]. Each is deterministic, versioned, and recorded when applie
 ### 5.2 Observation: how the video is looked at (question 3)
 
 ```yaml
-  normalize:                                       # [designed] L0: the analysis copy
-    fps: 12                                        # [open]
-    height_px: 720                                 # [open] 480–720
-    aspect: preserve                               # [fixed] never crop or stretch
-    audio: {sample_rate_hz: 32000, channels: 1}    # [open] must be ≥ what the L1 audio and
-                                                   #   speech models need (checked at load)
-    encoding: {codec: h264, crf: 23}               # [discussed]
-    deinterlace: auto                              # [discussed]
-    color: {normalize: auto}                       # [discussed]
+  normalize:                                       # [built] L0: the analysis copy
+    fps: 12                                        #   constant frame rate
+    height_px: 720                                 #   480–720 typical; never upscaled
+    aspect: preserve                               # [fixed] never crop or stretch (square pixels)
+    audio: {sample_rate_hz: 32000, channels: 1}
+    encoding: {codec: h264, crf: 23, preset: veryfast}   # keyframes every 2 s
+    deinterlace: auto                              #   auto: only frames flagged interlaced
+    color: {normalize: auto}                       #   auto: 8-bit 4:2:0
 
-  vision_profiles:                                 # [built] DESIGN.md §2.3 (numbers [open])
-    scene_overview:                                # native video: the provider samples, so only
-      version: 1                                   #   uniform fps and a size apply (the clip
-                                                   #   range is given when the stage runs)
-      frame_selection: {candidates: {strategy: uniform, fps: 1}}
-      image: {max_side_px: 512, aspect: preserve}
-      delivery: {mode: native_video}
-    scene_detail:
+  vision_profiles:                                 # [built] DESIGN.md §2.3; these are the defaults
+    scene_overview:                                #   L2: the whole unit, as storyboards
       version: 1
-      views:                                       # [built] several looks per segment
-        mode: overview_plus_detail                 # single | split_by_budget | overview_plus_detail | per_module
-                                                   #   (split_by_budget, per_module: checked and
-                                                   #   recorded; their planning is [open])
-        overview: {fps: 1, max_frames: 6}          #   the anchors count toward these 6
-        detail: {around: [motion, audio_onsets], span_s: 3, max_views: 2, max_frames: 5}
-      frame_selection:                             # applied inside each view
-        candidates: {strategy: uniform, fps: 4}    #   dense pool; a view's own fps wins
-        anchors: [shot_boundaries]                 #   from L1
+      frame_selection:
+        candidates: {strategy: uniform, fps: 0.5}
+        budget: {max_frames_per_scene: 36, min_gap_s: 1.0}
+      image: {max_side_px: 384, format: jpeg, quality: 85}
+      delivery: {mode: storyboard, storyboard: {rows: 3, cols: 3}}
+    scene_detail:                                  #   L3a: up to 16 frames per scene
+      version: 1
+      frame_selection:
+        candidates: {strategy: uniform, fps: 4}    #   dense pool to choose from
+        anchors: [shot_boundaries]                 #   from L1; never dropped
         filters:
           - dedupe: {method: phash, max_distance: 6}
           - sharpness: {keep: best_per_window, window_s: 0.5}
         budget:
-          max_frames_per_scene: 16                 #   the views must sum to ≤ the tighter of this
-                                                   #   and max_frames (checked)
-          allocate_by: [motion, audio_onsets]      #   used when views.mode is single
+          max_frames_per_scene: 16
+          allocate_by: [motion, audio_onsets]      #   from L1
           min_gap_s: 0.25
-      image: {max_side_px: 768, aspect: preserve, format: jpeg, quality: 85}
-      delivery: {mode: images}                     # images | storyboard | native_video
-    keyframes:                                     # [built] as a profile: frames for image vectors
-      version: 1
-      frame_selection:
-        candidates: {strategy: shot_based, pick: middle}
-        filters: [{sharpness: {keep: best_per_window, window_s: 0.5}}]
-        budget: {max_frames_per_scene: 4}
-      image: {max_side_px: 384, aspect: preserve, format: jpeg, quality: 85}
-                                                   # no delivery: images (filled at resolution)
+      image: {max_side_px: 768, format: jpeg, quality: 85}
+      delivery: {mode: images}                     # images | storyboard | native_video [not built]
+    # Views (several looks per segment) are built too:
+    #   views: {mode: overview_plus_detail, overview: {fps: 1, max_frames: 6},
+    #           detail: {around: [motion, audio_onsets], span_s: 3, max_views: 2, max_frames: 5}}
+    # (split_by_budget and per_module: checked and recorded; their planning is [open]).
 
-  stages:                                          # [built] which profile each stage uses
-    L2:          {vision: scene_overview}
-    L3a:         {vision: scene_detail}
-    embed_image: {vision: keyframes}               # [discussed]
+  stages:                                          # [built] which profile each frame-sending stage uses
+    L2:  {vision: scene_overview}
+    L3a: {vision: scene_detail}
+  # Given in a plan, `vision_profiles` and `stages` each replace their default.
 
-  signals:                                         # [designed] L1, deterministic, no AI model
+  signals:                                         # [built] L1, deterministic, no AI model
     shots:
-      detector: <shot-detector>                    # [open] TransNetV2 | PySceneDetect adaptive
-      threshold: 0.5
-      min_shot_s: 0.3
+      detector: ffmpeg_scene                       #   a registered detector, `name` or `name@1`
+      threshold: 0.3                               #   ffmpeg's scene score, 0–1
+      min_shot_s: 0.3                              #   closer cuts compete: the stronger stays
     audio:
-      onsets: {method: <onset-method>, sensitivity: 0.5}               # [open] e.g. librosa
-      loudness: {window_s: 0.1}
-      tagger: {model: <audio-tagger>, labels: <label-set>, threshold: 0.3}  # [open] PANNs | BEATs
-    speech:
-      model: <speech-model>                        # [open] e.g. Whisper
-      language: auto
-      vad: {enabled: true, threshold: 0.5}         # [designed] VAD on: no hallucination over music
-    motion: {method: optical_flow, rate_hz: 1}
+      onsets: {method: spectral_flux, sensitivity: 0.5}   # 0–1: higher finds more onsets
+      loudness: {window_s: 0.1}                    #   RMS in dBFS
+      tagger: null                                 #   {model: <registered>, labels, threshold}
+    speech: null                                   #   {model: <registered>, language, vad}: no
+                                                   #   built-in speech model [open]: register one
+    motion: {method: frame_difference, rate_hz: 1} #   one value per second
 
-  long_units:                                      # [designed] future scope, DESIGN.md §5.3
+  long_units:                                      # chunked processing [not built], DESIGN.md §5.3
     chunk_s: 600
-    overlap_s: 90                                  #   1–2 min
+    overlap_s: 90
     snap_to: shot_boundaries
-    enabled_over_s: 900                            # [discussed]
-    merge: {role: L2_merge}                        # [discussed] text-only merge, see models
+    enabled_over_s: 900
+    merge: {role: L2_merge}
 ```
 
 **Strategies** [built] are referenced three ways, all meaning the same: a name (`shot_boundaries`, or `shot_boundaries@1` with its version), a single-key mapping (`{dedupe: {method: phash, max_distance: 6}}`) or inline (`{strategy: uniform, fps: 4}`). Version 1 has: candidates `uniform` (`fps`) and `shot_based` (`pick: first | middle | last`); anchors `shot_boundaries` and `audio_onsets`; filters `dedupe` (`method: phash`, `max_distance`) and `sharpness` (`keep: best_per_window`, `window_s`), which need pixels, so they're checked and recorded now and run in the media stage (E1); allocation signals `motion` and `audio_onsets` (`window_s`). A changed algorithm gets a new version, never a changed meaning.
@@ -400,12 +388,14 @@ frames.timestamps, frames.pending_filters, frames.notes
 ### 5.3 Structure: what one data point is (question 4)
 
 ```yaml
-  segmentation:                                    # [designed] L2
-    mode: scenes                                   # [discussed] scenes | fixed_windows | both
+  segmentation:                                    # [built] L2
+    mode: scenes                                   #   scenes | both (scenes + fixed windows);
+                                                   #   fixed_windows alone: refused (nothing to perceive)
+    method: model                                  #   model (the L2 role) | shot_groups (no model)
     scene_length_s: {min: 30, target: 45, max: 60}
-    snap_to: shot_boundaries                       # [designed]; audio_onsets [discussed]
-    fixed_windows: {window_s: 3, stride_s: 1}      # [discussed] used when mode has windows;
-                                                   #   pure arithmetic, no model involved
+    snap_to: shot_boundaries                       #   shot_boundaries | none
+    snap_tolerance_s: 2.0
+    fixed_windows: {window_s: null, stride_s: 1}  # null: derived; pure arithmetic, no model
 ```
 
 Excluded ranges aren't a setting here: they come from the search space's scope with no override.
@@ -413,79 +403,77 @@ Excluded ranges aren't a setting here: they come from the search space's scope w
 ### 5.4 Interpretation and models: what is written, by whom (question 5)
 
 ```yaml
-  perception:                                      # [designed] L3a (frames: stages.L3a)
-    modules: derived                               # core + evidence + lens needs (§5.1)
-    beats: {min_s: 0.5, max_s: 6}                  # [discussed] follows the resolution
+  perception:                                      # [built] L3a (frames: stages.L3a)
+    modules: derived                               # core + evidence + lens needs (§5.1); or a list to add
+    beats: {min_s: null, max_s: null}              # null: derived from the resolution
     context:
       synopsis: true
-      signals: [shots, audio, speech]
-      neighbors: 0                                 # [discussed] adjacent scene summaries
-    entities: {source: corpus_profile, unknown: mark_unknown}   # [discussed]
+      signals: [shots, audio]                      # shots | audio | motion | speech
+      neighbors: 0                                 # adjacent scenes' summaries, 0–3
+    entities: {source: corpus_profile, unknown: mark_unknown}   # or allow
     record_schema: 1
     prompt_version: 1
 
-  lens_passes:                                     # [designed] L3b, text only
+  lens_passes:                                     # [built] L3b, text only
     lenses: from_space                             # every lens and version in the search space
-    targets: [scene, beat]                         # + window when segmentation has windows
-    phrasings: {count: 8, style: from_space}       # 5–10
+    targets: [scene, beat]                         # windows aren't annotated
+    phrasings: {count: 8, style: from_space}       # from_space | from_lens; 0–20
     self_consistency:
       runs: 2
-      seeds: [7, 8]                                # [discussed] distinct runs, distinct cache keys
+      seeds: [7, 8]                                # one per run: distinct requests and cache keys
       on_disagreement: flag                        # flag | down_weight
     input: perception_records                      # [fixed] lenses read facts, never each other
 
-  embedding:                                       # [designed] (models are chosen under models:)
-    text:
+  embedding:                                       # [built]
+    text:                                          #   null: no vectors
       role: embed_text
       inputs: [scene_summary, phrasings]
-      template: "{text}"                           # [discussed]
-      dimension: <int>                             # [open] set by the model
-    image:
-      role: embed_image                            # frames: stages.embed_image
-    normalize: true                                # [discussed]
+      template: "{text}"
+      batch_size: 64
+    image: null                                    # [not built]: needs an embed_image port
+    normalize: true                                # unit length
 
-  models:                                          # [designed] model per role;
-    defaults:                                      # [built]: the router for text roles only
+  models:                                          # [built] a model per role; never defaulted
+    defaults:
       reasoning: false                             #   reasoning is billed: off unless asked
       temperature: 0.2
       structured_method: catalog                   #   the catalog's method per model
-    L2:          {model_id: <video-model>, max_tokens: 4096, seed: 7}       # [open] model choices
-    L3a:         {model_id: <vision-model>, max_tokens: 2048, seed: 7}
-    L3b:         {model_id: <text-model>, max_tokens: 1024}                 #   seeds: self_consistency
-    L2_merge:    {model_id: <text-model>, max_tokens: 2048, seed: 7}
-    embed_text:  {model_id: <text-embedding-model>}
-    embed_image: {model_id: <image-embedding-model>}                        #   e.g. SigLIP
+    L2:          {model_id: <vision-model>, max_tokens: 4096}   # needed with segmentation.method: model
+    L3a:         {model_id: <vision-model>, max_tokens: 2048}   # always needed
+    L3b:         {model_id: <text-model>, max_tokens: 1024}     # seeds: self_consistency
+    L2_merge:    {model_id: <text-model>}          # accepted, unused until long units [not built]
+    embed_text:  {model_id: <embedding-model>}     # needed with embedding.text
+    embed_image: {model_id: <image-embedding-model>}   # [not built]
 ```
 
 ### 5.5 Policy, formatting, governance: what rules apply (question 6)
 
 ```yaml
-  quality_control:                                 # [designed] L4
+  quality_control:                                 # [built] L4
     checks: [timestamps_in_scene, timestamps_ordered, entities_in_profile,
-             modules_complete, vocabulary, schema]
+             modules_complete, vocabulary, schema, validators, agreement]
     invalid_output: {max_attempts: 2, then: flag}  # flag | down_weight; rows are never dropped
-    thresholds: {agreement_min: 0.6}               # [open]
+    thresholds: {agreement_min: 0.6}               # mean Jaccard of labels across runs
     # Annotation gold sets (~10 hand-annotated scenes per corpus × lens) come from each
-    # lens spec, not from the plan.
+    # lens spec (`gold`), not from the plan; scoring them is [not built].
 
-  budget:                                          # [designed]; not in stage input hashes
-    max_cost_usd: 25
-    per_stage_usd: {L2: 5, L3a: 15, L3b: 4, embed: 1}   # [discussed]
-    on_exceed: finish_unit_then_stop               # [discussed] stop | finish_unit_then_stop;
-                                                   #   the manifest marks partial units
+  budget:                                          # [built]; not in any input hash
+    max_cost_usd: null                             # estimated USD for this run; null: no cap
+    per_stage_usd: {L2: 5, L3a: 15, L3b: 4, embed: 1}
+    on_exceed: finish_unit_then_stop               # stop | finish_unit_then_stop
 
-  formatting:                                      # [designed]
+  formatting:                                      # [built]
     schema_version: 1                              # content: hashed
     tables: [units, shots, scenes, beats, windows, signals, perception, frames_sent,
-             annotations, phrasings, vectors, runs, qc]                     # hashed
-    layout: {partition_by: unit_id, compression: zstd}   # [discussed] layout only: not hashed
+             annotations, phrasings, vectors, runs, qc]   # hashed; units, scenes, runs, qc required
+    layout: {partition_by: unit_id, compression: zstd}   # unit_id | none; zstd | snappy | none
 
-  governance:                                      # [designed] inherited from the corpus
+  governance:                                      # [built] inherited from the corpus
     rights_mode: inherited                         # [fixed] read-only; stricter only
     image_vectors: local_only                      # [fixed] for byo_media
     training_use: local_only                       # [fixed] for byo_media
-    annotation_pack: false                         # CC-BY, never frames
-    model_inputs: provider_transient               # [open] see §8, decision 1
+    annotation_pack: false                         # recorded; exporting one is [not built]
+    model_inputs: null                             # provider_transient | local_only
 ```
 
 Transport retries (`--provider-retries`), concurrency and rate limits are execution, not plan (§2).
@@ -494,14 +482,14 @@ Transport retries (`--provider-retries`), concurrency and rate limits are execut
 
 ## 6. Benchmark gold set: `gold/queries.yaml`
 
-The yardstick. It's fixed per corpus and **independent of any search space**: gold queries must never appear in a search space's `query_style.examples`, and the harness rejects overlap (exact or near-duplicate). [discussed]
+The yardstick. It's fixed per corpus and **independent of any search space**: gold queries must never appear in a search space's `query_style.examples` (`overlapping_queries` finds the same words, or at least 80% of the words in common); the benchmark harness will reject them. [built: the schema]
 
 ```yaml
 gold:
   version: 1
-  corpus: tom_and_jerry
-  match: {min_overlap: 0.5}                        # [discussed] a hit overlaps ≥ 50% of the gold moment
-  queries:                                         # [designed] DESIGN.md §6.2
+  corpus: tom_and_jerry                            # must be the corpus profile's name
+  match: {min_overlap: 0.5}                        # a hit covers ≥ 50% of the gold moment
+  queries:
     - query: "every fix I push breaks something else"
       moments: [{unit_id: tj042, start: 156.5, end: 160.2}]
     - query: "life is hard"
