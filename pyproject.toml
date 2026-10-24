@@ -4,6 +4,8 @@ version = "0.1.0"
 description = "AI building blocks for video datasets: provider-neutral contracts, model access, and (soon) frame selection and corpus extraction"
 readme = "README.md"
 requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
 # Library convention (docs/ARCHITECTURE.md §2): loose ranges, so framekit fits into
 # consumers' environments. Exact versions for development are in uv.lock.
 dependencies = [

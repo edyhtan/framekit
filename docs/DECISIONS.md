@@ -104,7 +104,15 @@ These were decided in short_extract (dates are from its journal) and bind this e
 - **Why:** contributors and users of a public library see at a glance whether the code passes its tests and its rules, and a lint failure is told apart from a test failure.
 - **Recorded in:** `.github/workflows/tests.yml`, `.github/workflows/lint.yml` (replacing `ci.yml`); README.md badges; CLAUDE.md "Workflow".
 
+### 22:07 — Code licence: MIT
+- **Decision** (owner): framekit's code is licensed under **MIT**, chosen over Apache-2.0. The copyright line reads `edyhtan`, the owner's GitHub handle.
+- **Where it's recorded:** the `LICENSE` file at the repository root, and in the package metadata (`license = "MIT"` and `license-files`), so the wheel and sdist carry it.
+- **Why:** framekit is public and meant to be reused by others (benchmarks, training experiments, collaborators). Without a licence, nobody else may legally use it. MIT is the shortest permissive licence and matches small Python libraries (pydantic and the `anthropic` SDK use it). It's compatible with every framekit dependency (pydantic MIT, `anthropic` MIT, `openai` Apache-2.0).
+- **Unchanged:** annotation packs, if ever published, stay CC-BY with no footage (DESIGN.md §8).
+- **Closes:** the open item "the code licence" in the v0.1.0 entry above.
+- **Recorded in:** `LICENSE` (new); `pyproject.toml`; README.md "Licence"; DESIGN.md §8.3.
+
 ---
 
 ## Still open
-See DESIGN.md §9: video, text and embedding models; A / V / plan schema details and the lens spec file format; default vision profiles; baseline scorer details and gold queries; dataset layout; a distribution name if ever published to PyPI; distributed runner; per-lens taxonomies; the code licence.
+See DESIGN.md §9: video, text and embedding models; A / V / plan schema details and the lens spec file format; default vision profiles; baseline scorer details and gold queries; dataset layout; a distribution name if ever published to PyPI; distributed runner; per-lens taxonomies.
