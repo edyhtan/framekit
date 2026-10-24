@@ -239,7 +239,8 @@ Rules v1 [discussed]. Each is deterministic, versioned, and recorded when applie
 
   vision_profiles:                                 # [built] DESIGN.md §2.3 (numbers [open])
     scene_overview:                                # native video: the provider samples, so only
-      version: 1                                   #   uniform fps, a clip range and a size apply
+      version: 1                                   #   uniform fps and a size apply (the clip
+                                                   #   range is given when the stage runs)
       frame_selection: {candidates: {strategy: uniform, fps: 1}}
       image: {max_side_px: 512, aspect: preserve}
       delivery: {mode: native_video}
@@ -249,7 +250,7 @@ Rules v1 [discussed]. Each is deterministic, versioned, and recorded when applie
         mode: overview_plus_detail                 # single | split_by_budget | overview_plus_detail | per_module
                                                    #   (split_by_budget, per_module: checked and
                                                    #   recorded; their planning is [open])
-        overview: {fps: 1, max_frames: 6}
+        overview: {fps: 1, max_frames: 6}          #   the anchors count toward these 6
         detail: {around: [motion, audio_onsets], span_s: 3, max_views: 2, max_frames: 5}
       frame_selection:                             # applied inside each view
         candidates: {strategy: uniform, fps: 4}    #   dense pool; a view's own fps wins
@@ -258,7 +259,8 @@ Rules v1 [discussed]. Each is deterministic, versioned, and recorded when applie
           - dedupe: {method: phash, max_distance: 6}
           - sharpness: {keep: best_per_window, window_s: 0.5}
         budget:
-          max_frames_per_scene: 16                 #   the views' caps must sum to ≤ this (checked)
+          max_frames_per_scene: 16                 #   the views must sum to ≤ the tighter of this
+                                                   #   and max_frames (checked)
           allocate_by: [motion, audio_onsets]      #   used when views.mode is single
           min_gap_s: 0.25
       image: {max_side_px: 768, aspect: preserve, format: jpeg, quality: 85}
@@ -302,10 +304,11 @@ Rules v1 [discussed]. Each is deterministic, versioned, and recorded when applie
 
 **Strategies** [built] are referenced three ways, all meaning the same: a name (`shot_boundaries`, or `shot_boundaries@1` with its version), a single-key mapping (`{dedupe: {method: phash, max_distance: 6}}`) or inline (`{strategy: uniform, fps: 4}`). Version 1 has: candidates `uniform` (`fps`) and `shot_based` (`pick: first | middle | last`); anchors `shot_boundaries` and `audio_onsets`; filters `dedupe` (`method: phash`, `max_distance`) and `sharpness` (`keep: best_per_window`, `window_s`), which need pixels, so they're checked and recorded now and run in the media stage (E1); allocation signals `motion` and `audio_onsets` (`window_s`). A changed algorithm gets a new version, never a changed meaning.
 
-**Load-time checks** [built], before any spend. One `VisionParamsError` lists every problem with its path (`vision_profiles.scene_overview.frame_selection.filters: not allowed with native_video delivery …`):
-- unknown keys anywhere; unknown strategies or versions; a strategy in the wrong slot (a filter as candidates); settings that fail the strategy's own schema. Missing settings fail: nothing is guessed;
-- `native_video` takes only uniform candidates, `image.max_side_px` and `image.aspect`: no anchors, filters, budget, views, `format` or `quality`;
-- views: `overview_plus_detail` needs `overview` and `detail` (other modes take neither); `overview.max_frames + detail.max_views × detail.max_frames` must be ≤ `budget.max_frames_per_scene` when that cap is set;
+**Load-time checks** [built], before any spend. One `VisionParamsError` lists every problem with its path (`vision_profiles.scene_overview.frame_selection.filters: not allowed with native_video delivery …`). Problems with the structure and with the rules below come together: a rule is skipped only where a setting it reads has a problem of its own, which is listed instead.
+- unknown keys anywhere; unknown strategies or versions; a strategy in the wrong slot (a filter as candidates); settings that fail the strategy's own schema. Missing settings fail: nothing is guessed (only a setting with a single possible value, such as `dedupe.method`, defaults to it);
+- values are strict: a number must be a number (`true` or `"4"` fails; a whole number is fine where a decimal is expected) and finite; a list setting must be a list;
+- `native_video` takes only uniform candidates, `image.max_side_px` and `image.aspect`: no anchors, filters, budget, views, `format` or `quality`. The clip range is given when the stage runs, not in the profile;
+- views: `overview_plus_detail` needs `overview` and `detail` (other modes take neither), and `detail` at least one `around` signal and a `span_s` of at least 1 ms; `overview.max_frames + detail.max_views × detail.max_frames` must be ≤ the tighter of `budget.max_frames_per_scene` and `budget.max_frames` when either is set;
 - `aspect` is always `preserve` [fixed]; `quality` only with jpeg or webp; a storyboard grid only with storyboard delivery; an anchor or allocation signal listed once;
 - every stage names an existing profile (unused profiles are fine).
 
@@ -322,10 +325,14 @@ Rules v1 [discussed]. Each is deterministic, versioned, and recorded when applie
 | `image.format`, `image.quality` (images, storyboard) | `jpeg`, `85` (png has no quality) |
 | `delivery.storyboard` (storyboard) | `{rows: 2, cols: 2}` |
 | an allocation signal's `window_s` | `1.0` |
+| `dedupe.method`, `sharpness.keep` | `phash`, `best_per_window` (their only values) |
 
-The resolved form is canonical (sorted keys, no unset values, anchors and allocation signals sorted, filters in their order) and has a SHA-256 digest per profile and for the whole block. A profile's digest covers its content, not its name; the same parameters give the same digest whatever the key order or spelling.
+The resolved form is canonical (sorted keys, no unset values, anchors and allocation signals sorted, filters in their order) and has a SHA-256 digest per profile and for the whole block. A profile's digest covers its content, not its name; the same parameters give the same digest whatever the key order or spelling. Parsed and resolved parameters are read-only (settings, lists and profiles included), so what was digested is what runs; `.mapping` returns a copy.
 
-**Frame planning without pixels** [built]: `plan_frames` turns a profile, a span and the L1 signals into frame timestamps on the unit timeline (milliseconds). Anchors are kept first; the rest of the cap (the tighter of `max_frames` and `max_frames_per_scene`) goes to the candidates with the most `allocate_by` signal nearby, ties to the one farthest from frames already kept; `min_gap_s` holds between kept frames. With `overview_plus_detail`, the overview spreads its frames over the span at its own fps and each detail view takes frames around one of the strongest `around` peaks. Pixel filters come back as pending, for the media stage.
+**Frame planning without pixels** [built]: `plan_frames` turns a profile, a span and the L1 signals into frame timestamps on the unit timeline, in whole milliseconds. The span's edges are rounded too, so a span must hold at least 1 ms; times in the same millisecond are one frame, 1 ms apart two. One strategy gives at most 2,000,000 candidates per span.
+- **Budget:** anchors are kept first. The rest of the cap (the tighter of `max_frames` and `max_frames_per_scene`, applied to the span; keeping `max_frames` across a unit's spans is [open]) goes to the candidates with the most `allocate_by` signal nearby. Candidates of equal weight are taken in time order, as many as `min_gap_s` allows; only when they don't all fit is a spread subset taken (each the farthest from the frames already kept, ties to the earliest). So a cap is filled as far as `min_gap_s` allows, and frames never bunch at the start. `min_gap_s` holds between kept frames, anchors excepted.
+- **Views** (`overview_plus_detail`): the anchors belong to the overview, which adds frames at its own fps up to `overview.max_frames` in all, spread over the span. Each detail view then takes frames in a window of `span_s` centred on one of the strongest `around` peaks: the middle of a run of candidates of equal weight, higher than the candidates on either side, so a peak's view is centred on its event (or on a cluster's middle). A peak closer than `span_s` to a stronger one gets no view. A peak cut by the span's edge is centred on its part inside the span, so with an allocation `window_s` over twice `span_s`, an event near the edge can fall outside its view.
+- Pixel filters come back as pending, for the media stage.
 
 In code [built] (YAML or JSON parsing is the caller's job):
 

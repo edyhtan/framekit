@@ -4,11 +4,13 @@ Built so far: the schema and its load-time checks, resolution to the canonical f
 manifest records (with digests), the strategy registry, and pixel-free frame planning.
 Filters that need pixels, image preparation and delivery run in the media stage (E1).
 
-    params = VisionParams.from_mapping(plan["vision"])   # VisionParamsError lists problems
+    params = VisionParams.from_mapping(                  # VisionParamsError lists problems
+        {"vision_profiles": plan["vision_profiles"], "stages": plan["stages"]}
+    )
     resolved = resolve(params)                           # pinned, defaults filled, digest
     problems = check_against_source(resolved, SourceLimits(fps=12, width_px=960,
                                                            height_px=720))
-    plan = plan_frames(resolved.for_stage("L3a"), (12.0, 48.5), Signals(...))
+    frames = plan_frames(resolved.for_stage("L3a"), (12.0, 48.5), Signals(...))
 
 No media library, no model call: strategies are named, versioned code; profiles only pick
 and parameterize them.

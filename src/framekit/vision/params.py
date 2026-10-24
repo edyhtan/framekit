@@ -11,25 +11,34 @@ Strategies are referenced by name, as in the YAML of docs/settings.md §5.2:
 - inline (the candidates shape): `{strategy: uniform, fps: 4}`.
 
 `VisionParams.from_mapping(data)` checks everything at load time and raises one
-`VisionParamsError` listing every problem with its path. Checks that need outside facts
-are separate functions: `check_against_source` (the analysis copy) and
-`check_against_model` (a model's vision limits), in `framekit.vision.checks`.
+`VisionParamsError` listing every problem with its path: the structure (unknown keys, types,
+ranges), each strategy (known for its slot, settings valid for it) and the rules that tie
+settings together (native video, views, png quality, ...). A rule is skipped only where a
+setting it reads has a problem of its own, which is listed instead.
+
+Values are strict: numbers must be numbers (not `true` or `"4"`) and finite; a whole number
+is fine where a decimal is expected. Parsed parameters are read-only all the way down, so
+what was checked and digested is what runs. Checks that need outside facts are separate
+functions: `check_against_source` (the analysis copy) and `check_against_model` (a model's
+vision limits), in `framekit.vision.checks`.
 """
 
-from collections.abc import Iterable, Mapping
-from typing import Annotated, Any, Literal
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from typing import Annotated, Any, Literal, NoReturn
 
 from pydantic import (
+    AfterValidator,
     BaseModel,
     BeforeValidator,
     ConfigDict,
     Field,
     StringConstraints,
     ValidationError,
+    ValidatorFunctionWrapHandler,
     field_validator,
     model_validator,
 )
-from pydantic_core import PydanticCustomError
+from pydantic_core import ErrorDetails, PydanticCustomError
 
 from framekit.vision.registry import (
     KIND_LABELS,
@@ -52,6 +61,9 @@ REF_SHAPES = (
 )
 PROBLEMS_ERROR = "vision_problems"  # our error type inside pydantic's ValidationError
 
+Loc = tuple[str | int, ...]
+Problem = tuple[Loc, str]  # (path, message)
+
 Name = Annotated[str, StringConstraints(pattern=r"^[A-Za-z][A-Za-z0-9_-]*$")]
 
 
@@ -67,20 +79,142 @@ class VisionParamsError(ValueError):
         )
 
 
+# --- read-only data ---------------------------------------------------------------------
+
+
+class FrozenDict(dict[str, Any]):
+    """A read-only, hashable dict (strategy settings, the profiles of a block). Equality and
+    JSON work as for a dict; changing it raises TypeError."""
+
+    __slots__ = ()
+
+    def _read_only(self, *args: Any, **kwargs: Any) -> NoReturn:
+        raise TypeError(f"{type(self).__name__} is read-only")
+
+    __setitem__ = __delitem__ = clear = pop = popitem = _read_only  # type: ignore[assignment]
+    setdefault = update = __ior__ = _read_only  # type: ignore[assignment]
+
+    def __hash__(self) -> int:  # type: ignore[override]
+        return hash(frozenset(self.items()))
+
+    def __reduce__(self) -> tuple[type["FrozenDict"], tuple[dict[str, Any]]]:
+        return (type(self), (dict(self),))
+
+
+def freeze(value: Any) -> Any:
+    """A read-only copy of plain data: mappings become FrozenDicts, lists become tuples."""
+    if isinstance(value, Mapping):
+        return FrozenDict({key: freeze(item) for key, item in value.items()})
+    if isinstance(value, list | tuple):
+        return tuple(freeze(item) for item in value)
+    return value
+
+
+def thaw(value: Any) -> Any:
+    """Plain, writable data again: mappings become dicts, tuples become lists."""
+    if isinstance(value, Mapping):
+        return {key: thaw(item) for key, item in value.items()}
+    if isinstance(value, list | tuple):
+        return [thaw(item) for item in value]
+    return value
+
+
 class _Model(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    # strict: no bool or str where a number is expected; allow_inf_nan: finite numbers only.
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True, allow_inf_nan=False)
+
+
+def _listed() -> Any:
+    """An optional list setting: given as a list, stored as a read-only tuple."""
+    return Field(default=(), strict=False)
+
+
+def _a_list(value: Any) -> Any:
+    if not isinstance(value, list | tuple):
+        raise ValueError("Input should be a valid list")
+    return value
+
+
+def _a_signal_list(value: Any) -> Any:
+    # Checked before the items: a length check after them would count only valid items.
+    if not _a_list(value):
+        raise ValueError("at least one signal is needed")
+    return value
+
+
+AsList = BeforeValidator(_a_list)
+
+
+# --- problems ---------------------------------------------------------------------------
+
+
+def format_path(loc: Iterable[Any]) -> str:
+    """`("a", "b", 0, "c")` → `"a.b[0].c"`."""
+    path = ""
+    for part in loc:
+        if isinstance(part, int):
+            path += f"[{part}]"
+        elif isinstance(part, str) and part.startswith("["):
+            path += part
+        else:
+            path += f".{part}" if path else str(part)
+    return path
+
+
+def _format(problem: Problem) -> str:
+    loc, message = problem
+    return f"{format_path(loc) or '(root)'}: {message}"
+
+
+def _message(err: ErrorDetails) -> str:
+    return err["msg"].removeprefix("Value error, ")
+
+
+def _expand(errors: Iterable[ErrorDetails]) -> list[Problem]:
+    """One problem per pydantic error; ours carry their own list, relative to where they
+    were raised."""
+    problems: list[Problem] = []
+    for err in errors:
+        loc = tuple(err["loc"])
+        if err["type"] == PROBLEMS_ERROR:
+            ctx = err.get("ctx") or {}
+            problems += [((*loc, *sub), message) for sub, message in ctx["problems"]]
+        else:
+            problems.append((loc, _message(err)))
+    return problems
+
+
+def problems_from_validation(exc: ValidationError) -> list[str]:
+    """One line per problem, `path: message`, from a pydantic ValidationError."""
+    return [_format(problem) for problem in _expand(exc.errors(include_url=False))]
+
+
+def _fail(problems: Sequence[Problem]) -> NoReturn:
+    raise PydanticCustomError(
+        PROBLEMS_ERROR,
+        "{summary}",
+        {"summary": "; ".join(map(_format, problems)), "problems": list(problems)},
+    )
+
+
+def _raise_problems(problems: Sequence[Problem]) -> None:
+    if problems:
+        _fail(problems)
 
 
 # --- strategy references ----------------------------------------------------------------
 
 
 class StrategyRef(_Model):
-    """A strategy picked for a slot, with its settings as given. `version` None means the
-    newest registered version; resolution pins it."""
+    """A strategy picked for a slot, with its settings: checked against the strategy once
+    the reference sits in a profile (defaults are filled at resolution). `version` None
+    means the newest registered version; resolution pins it."""
 
     name: str = Field(pattern=r"^[a-z][a-z0-9_]*$")
     version: int | None = Field(default=None, ge=1)
-    params: dict[str, Any] = {}
+    params: Annotated[dict[str, Any], BeforeValidator(thaw), AfterValidator(freeze)] = (
+        FrozenDict()
+    )
 
     @property
     def key(self) -> str:
@@ -88,11 +222,11 @@ class StrategyRef(_Model):
 
     def to_mapping(self) -> str | dict[str, Any]:
         """The compact YAML shape: a bare name, or `{name: {settings}}`."""
-        return {self.key: dict(self.params)} if self.params else self.key
+        return {self.key: thaw(self.params)} if self.params else self.key
 
     def to_inline(self) -> dict[str, Any]:
         """The inline YAML shape used for candidates: `{strategy: name, settings...}`."""
-        return {RESERVED_SETTING: self.key, **self.params}
+        return {RESERVED_SETTING: self.key, **thaw(self.params)}
 
 
 def parse_strategy_ref(value: Any) -> Any:
@@ -118,7 +252,48 @@ def parse_strategy_ref(value: Any) -> Any:
     raise ValueError(REF_SHAPES)
 
 
-Ref = Annotated[StrategyRef, BeforeValidator(parse_strategy_ref)]
+def _ref_name(value: Any) -> str | None:
+    """The strategy a reference names, in any shape, or None if it doesn't parse."""
+    try:
+        parsed = parse_strategy_ref(value)
+    except ValueError:
+        return None
+    return parsed.name if isinstance(parsed, StrategyRef) else parsed["name"]
+
+
+def _in_slot(
+    kind: StrategyKind, *, inline: bool = False
+) -> Callable[[StrategyRef], StrategyRef]:
+    """The check for one slot: the strategy exists for this kind and its settings pass its
+    schema. The reference keeps the checked settings as given (resolution fills defaults).
+    Settings paths follow the YAML shape: `candidates.fps` inline, `filters[0].dedupe.x`."""
+
+    def check(ref: StrategyRef) -> StrategyRef:
+        try:
+            strategy = get_strategy(kind, ref.name, ref.version)
+        except UnknownStrategyError as exc:
+            _fail([((), str(exc))])
+        try:
+            settings = strategy.params.model_validate(thaw(ref.params))
+        except ValidationError as exc:
+            where: Loc = () if inline else (ref.key,)
+            _fail(
+                [
+                    ((*where, *err["loc"]), f"{_message(err)} ({strategy.key})")
+                    for err in exc.errors(include_url=False)
+                ]
+            )
+        checked = settings.model_dump(mode="json", exclude_unset=True)
+        return ref.model_copy(update={"params": freeze(checked)})
+
+    return check
+
+
+_parse = BeforeValidator(parse_strategy_ref)
+CandidatesRef = Annotated[StrategyRef, _parse, AfterValidator(_in_slot("candidates", inline=True))]
+AnchorRef = Annotated[StrategyRef, _parse, AfterValidator(_in_slot("anchor"))]
+FilterRef = Annotated[StrategyRef, _parse, AfterValidator(_in_slot("filter"))]
+SignalRef = Annotated[StrategyRef, _parse, AfterValidator(_in_slot("allocation"))]
 
 
 # --- the profile ------------------------------------------------------------------------
@@ -129,7 +304,7 @@ class Budget(_Model):
 
     max_frames: int | None = Field(default=None, ge=1, le=100_000)  # per unit
     max_frames_per_scene: int | None = Field(default=None, ge=1, le=10_000)
-    allocate_by: list[Ref] = []  # allocation signals; used when views.mode is single
+    allocate_by: Annotated[tuple[SignalRef, ...], AsList] = _listed()  # views.mode single
     min_gap_s: float | None = Field(default=None, ge=0, le=3600)
 
     def is_empty(self) -> bool:
@@ -148,9 +323,9 @@ class Budget(_Model):
 
 
 class FrameSelection(_Model):
-    candidates: Ref  # where frames may come from
-    anchors: list[Ref] = []  # frames that are always kept
-    filters: list[Ref] = []  # in order
+    candidates: CandidatesRef  # where frames may come from
+    anchors: Annotated[tuple[AnchorRef, ...], AsList] = _listed()  # always kept
+    filters: Annotated[tuple[FilterRef, ...], AsList] = _listed()  # in order
     budget: Budget = Budget()
 
 
@@ -186,12 +361,13 @@ class Delivery(_Model):
 
 class OverviewView(_Model):
     fps: float | None = Field(default=None, gt=0, le=1000)  # None: the profile's candidates
-    max_frames: int = Field(ge=1, le=10_000)
+    max_frames: int = Field(ge=1, le=10_000)  # the anchors count toward it
 
 
 class DetailView(_Model):
-    around: list[Ref] = Field(min_length=1)  # allocation signals whose peaks get a view
-    span_s: float = Field(gt=0, le=3600)
+    # the allocation signals whose peaks get a view
+    around: Annotated[tuple[SignalRef, ...], BeforeValidator(_a_signal_list)] = Field(strict=False)
+    span_s: float = Field(ge=0.001, le=3600)  # at least a millisecond, the planning grid
     max_views: int = Field(ge=1, le=100)
     max_frames: int = Field(ge=1, le=10_000)  # per detail view
 
@@ -209,16 +385,26 @@ class VisionProfile(_Model):
     delivery: Delivery = Delivery()
     views: Views | None = None
 
-    @model_validator(mode="after")
-    def _check(self) -> "VisionProfile":
-        _raise_problems(profile_problems(self))
-        return self
+    @model_validator(mode="wrap")
+    @classmethod
+    def _check(cls, data: Any, handler: ValidatorFunctionWrapHandler) -> "VisionProfile":
+        """Every problem at once: when the structure fails, the rules that tie settings
+        together still run on the settings that parsed."""
+        parts = list(cls.model_fields)
+        try:
+            profile = handler(data)
+        except ValidationError as exc:
+            errors = exc.errors(include_url=False)
+            rules = _profile_problems(_Settings(data, [err["loc"] for err in errors]))
+            _fail(_by_part(_expand(errors) + rules, parts))
+        _raise_problems(_by_part(_profile_problems(_Settings(profile)), parts))
+        return profile
 
     @classmethod
     def from_mapping(cls, data: Mapping[str, Any]) -> "VisionProfile":
         """One profile from plain data; raises VisionParamsError listing every problem."""
         try:
-            return cls.model_validate(data)
+            return cls.model_validate(thaw(data))
         except ValidationError as exc:
             raise VisionParamsError(problems_from_validation(exc)) from None
 
@@ -234,14 +420,22 @@ class StageVision(_Model):
 class VisionParams(_Model):
     """The plan's vision block: named profiles and the profile each stage uses."""
 
-    vision_profiles: dict[Name, VisionProfile] = {}
-    stages: dict[Name, StageVision] = {}
+    vision_profiles: Annotated[dict[Name, VisionProfile], AfterValidator(FrozenDict)] = (
+        FrozenDict()
+    )
+    stages: Annotated[dict[Name, StageVision], AfterValidator(FrozenDict)] = FrozenDict()
 
-    @model_validator(mode="after")
-    def _check(self) -> "VisionParams":
-        stages = {stage: entry.vision for stage, entry in self.stages.items()}
-        _raise_problems(stage_problems(stages, self.vision_profiles))
-        return self
+    @model_validator(mode="wrap")
+    @classmethod
+    def _check(cls, data: Any, handler: ValidatorFunctionWrapHandler) -> "VisionParams":
+        try:
+            params = handler(data)
+        except ValidationError as exc:
+            errors = exc.errors(include_url=False)
+            stages = _stage_problems(_Settings(data, [err["loc"] for err in errors]))
+            _fail(_expand(errors) + stages)
+        _raise_problems(_stage_problems(_Settings(params)))
+        return params
 
     @classmethod
     def from_mapping(cls, data: Mapping[str, Any]) -> "VisionParams":
@@ -249,15 +443,9 @@ class VisionParams(_Model):
         `stages`; YAML or JSON parsing is the caller's job). Raises one VisionParamsError
         listing every problem with its path."""
         try:
-            return cls.model_validate(data)
+            return cls.model_validate(thaw(data))
         except ValidationError as exc:
-            problems = problems_from_validation(exc)
-        # The model checks stage references only once every profile is valid; check them
-        # on the raw data too, so one error lists everything.
-        for problem in _raw_stage_problems(data):
-            if problem not in problems:
-                problems.append(problem)
-        raise VisionParamsError(problems)
+            raise VisionParamsError(problems_from_validation(exc)) from None
 
     def to_mapping(self) -> dict[str, Any]:
         return _clean(
@@ -276,160 +464,187 @@ class VisionParams(_Model):
         return self.vision_profiles[self.stages[stage].vision]
 
 
-# --- load-time checks -------------------------------------------------------------------
+# --- rules that tie settings together ---------------------------------------------------
 
 
-def profile_problems(profile: VisionProfile) -> list[str]:
-    """Every problem in one structurally valid profile, with paths relative to it."""
-    fs = profile.frame_selection
-    problems = _ref_problems("frame_selection.candidates", "candidates", fs.candidates)
-    problems += _refs_problems("frame_selection.anchors", "anchor", fs.anchors, unique=True)
-    problems += _refs_problems("frame_selection.filters", "filter", fs.filters, unique=False)
-    problems += _refs_problems(
-        "frame_selection.budget.allocate_by", "allocation", fs.budget.allocate_by, unique=True
-    )
-    if profile.views is not None and profile.views.detail is not None:
-        problems += _refs_problems(
-            "views.detail.around", "allocation", profile.views.detail.around, unique=True
+class _Unknown:
+    def __repr__(self) -> str:
+        return "UNKNOWN"
+
+
+UNKNOWN: Any = _Unknown()  # a setting that has a problem of its own
+
+
+def _is_set(value: Any) -> bool:
+    """Whether a setting is given: not None, not empty; a mapping or a model only if one of
+    its own settings is given."""
+    if value is None:
+        return False
+    if isinstance(value, BaseModel):
+        return any(_is_set(getattr(value, name)) for name in type(value).model_fields)
+    if isinstance(value, Mapping):
+        return any(_is_set(item) for item in value.values())
+    if isinstance(value, list | tuple):
+        return len(value) > 0
+    return True
+
+
+class _Settings:
+    """Settings as the rules read them: the parsed model or, when parsing failed, the raw
+    data, where a value with a problem of its own (at it, inside it, or in what holds it)
+    reads as UNKNOWN."""
+
+    def __init__(self, data: Any, bad: Iterable[Sequence[str | int]] = ()):
+        self._data = data
+        self._bad = [tuple(loc) for loc in bad]
+
+    def raw(self, *path: str | int) -> Any:
+        node = self._data
+        for key in path:
+            if isinstance(node, BaseModel):
+                fields = type(node).model_fields
+                node = getattr(node, key) if isinstance(key, str) and key in fields else None
+            elif isinstance(node, Mapping):
+                node = node.get(key)
+            else:
+                return None
+            if node is None:
+                return None
+        return node
+
+    def clean(self, *path: str | int, inside: bool = True) -> bool:
+        """No problem at `path` or in what holds it (nor inside it, unless `inside` is
+        False)."""
+        return not any(
+            path[: len(loc)] == loc or (inside and loc[: len(path)] == path) for loc in self._bad
         )
-    if profile.image.format == "png" and profile.image.quality is not None:
-        problems.append("image.quality: png is lossless; quality applies to jpeg and webp")
-    if profile.delivery.storyboard is not None and profile.delivery.mode != "storyboard":
-        problems.append("delivery.storyboard: a grid applies only to mode storyboard")
-    if profile.delivery.mode == "native_video":
-        problems += _native_video_problems(profile)
-    elif profile.views is not None:
-        problems += _views_problems(profile, profile.views)
-    return problems
+
+    def get(self, *path: str, default: Any = None) -> Any:
+        """The setting at `path`: `default` when unset, UNKNOWN when it has a problem."""
+        if not self.clean(*path):
+            return UNKNOWN
+        value = self.raw(*path)
+        return default if value is None else value
+
+    def is_set(self, *path: str) -> bool:
+        return _is_set(self.raw(*path))
+
+    def ref_name(self, *path: str) -> str | None:
+        """The strategy named at `path`, if the reference parses (its settings may not)."""
+        return _ref_name(self.raw(*path))
+
+    def ref_names(self, *path: str) -> list[tuple[int, str]]:
+        """(index, strategy name) of each listed reference that parses."""
+        items = self.raw(*path)
+        if not isinstance(items, list | tuple) or not self.clean(*path, inside=False):
+            return []
+        names = ((index, _ref_name(item)) for index, item in enumerate(items))
+        return [(index, name) for index, name in names if name is not None]
 
 
-def _ref_problems(
-    path: str, kind: StrategyKind, ref: StrategyRef, settings_path: str | None = None
-) -> list[str]:
-    try:
-        strategy = get_strategy(kind, ref.name, ref.version)
-    except UnknownStrategyError as exc:
-        return [f"{path}: {exc}"]
-    try:
-        strategy.params.model_validate(ref.params)
-    except ValidationError as exc:
-        base = settings_path or path
-        return [
-            f"{format_path((base, *err['loc']))}: {err['msg']} ({strategy.key})"
-            for err in exc.errors(include_url=False)
-        ]
-    return []
+def _by_part(problems: list[Problem], parts: list[str]) -> list[Problem]:
+    """Problems grouped by the part they're in, in schema order (stable within a part)."""
+
+    def rank(problem: Problem) -> int:
+        part = problem[0][0] if problem[0] else None
+        return parts.index(part) if isinstance(part, str) and part in parts else len(parts)
+
+    return sorted(problems, key=rank)
 
 
-def _refs_problems(
-    path: str, kind: StrategyKind, refs: list[StrategyRef], *, unique: bool
-) -> list[str]:
-    problems: list[str] = []
-    seen: set[str] = set()
-    for index, ref in enumerate(refs):
-        item = f"{path}[{index}]"
-        problems += _ref_problems(item, kind, ref, settings_path=f"{item}.{ref.key}")
-        if unique and ref.name in seen:
-            problems.append(f"{item}: {KIND_LABELS[kind]} {ref.name!r} is listed twice")
-        seen.add(ref.name)
-    return problems
+LISTED_ONCE: tuple[tuple[tuple[str, ...], StrategyKind], ...] = (
+    (("frame_selection", "anchors"), "anchor"),
+    (("frame_selection", "budget", "allocate_by"), "allocation"),
+    (("views", "detail", "around"), "allocation"),
+)
+NOT_WITH_NATIVE_VIDEO: tuple[tuple[str, ...], ...] = (
+    ("frame_selection", "anchors"),
+    ("frame_selection", "filters"),
+    ("frame_selection", "budget"),
+    ("image", "format"),
+    ("image", "quality"),
+    ("views",),
+)
 
 
-def _native_video_problems(profile: VisionProfile) -> list[str]:
-    fs, image = profile.frame_selection, profile.image
-    problems = []
-    if fs.candidates.name != NATIVE_VIDEO_CANDIDATES:
-        problems.append(f"frame_selection.candidates: {fs.candidates.name!r} {NATIVE_VIDEO_RULE}")
-    for part, present in (
-        ("frame_selection.anchors", bool(fs.anchors)),
-        ("frame_selection.filters", bool(fs.filters)),
-        ("frame_selection.budget", not fs.budget.is_empty()),
-        ("image.format", image.format is not None),
-        ("image.quality", image.quality is not None),
-        ("views", profile.views is not None),
-    ):
-        if present:
-            problems.append(f"{part}: {NATIVE_VIDEO_RULE}")
-    return problems
-
-
-def _views_problems(profile: VisionProfile, views: Views) -> list[str]:
-    problems = []
-    if views.mode == "overview_plus_detail":
-        for part in ("overview", "detail"):
-            if getattr(views, part) is None:
-                problems.append(f"views.{part}: required for mode overview_plus_detail")
-    else:
-        for part in ("overview", "detail"):
-            if getattr(views, part) is not None:
-                problems.append(f"views.{part}: applies only to mode overview_plus_detail")
-    cap = profile.frame_selection.budget.max_frames_per_scene
-    if views.overview is not None and views.detail is not None and cap is not None:
-        overview, detail = views.overview.max_frames, views.detail
-        total = overview + detail.max_views * detail.max_frames
-        if total > cap:
+def _profile_problems(s: _Settings) -> list[Problem]:
+    """The rules that tie a profile's settings together, with paths relative to it."""
+    problems: list[Problem] = []
+    for path, kind in LISTED_ONCE:
+        seen: set[str] = set()
+        for index, name in s.ref_names(*path):
+            if name in seen:
+                problems.append(((*path, index), f"{KIND_LABELS[kind]} {name!r} is listed twice"))
+            seen.add(name)
+    if s.get("image", "format") == "png" and s.is_set("image", "quality"):
+        problems.append((("image", "quality"), "png is lossless; quality applies to jpeg and webp"))
+    mode = s.get("delivery", "mode", default="images")
+    if mode not in (UNKNOWN, "storyboard") and s.is_set("delivery", "storyboard"):
+        problems.append((("delivery", "storyboard"), "a grid applies only to mode storyboard"))
+    if mode == "native_video":
+        candidates = s.ref_name("frame_selection", "candidates")
+        if candidates is not None and candidates != NATIVE_VIDEO_CANDIDATES:
             problems.append(
-                f"views: overview ({overview}) + detail ({detail.max_views} x "
-                f"{detail.max_frames}) = {total} frames, more than "
-                f"frame_selection.budget.max_frames_per_scene ({cap})"
+                (("frame_selection", "candidates"), f"{candidates!r} {NATIVE_VIDEO_RULE}")
+            )
+        problems += [(path, NATIVE_VIDEO_RULE) for path in NOT_WITH_NATIVE_VIDEO if s.is_set(*path)]
+    elif mode is not UNKNOWN and s.is_set("views"):
+        problems += _views_problems(s)
+    return problems
+
+
+def _views_problems(s: _Settings) -> list[Problem]:
+    problems: list[Problem] = []
+    mode = s.get("views", "mode")
+    for part in ("overview", "detail"):
+        present = s.is_set("views", part)
+        if mode == "overview_plus_detail" and not present:
+            problems.append((("views", part), "required for mode overview_plus_detail"))
+        elif mode not in (UNKNOWN, "overview_plus_detail") and present:
+            problems.append((("views", part), "applies only to mode overview_plus_detail"))
+    overview = s.get("views", "overview", "max_frames")
+    views = s.get("views", "detail", "max_views")
+    frames = s.get("views", "detail", "max_frames")
+    caps = {
+        name: s.get("frame_selection", "budget", name)
+        for name in ("max_frames_per_scene", "max_frames")
+    }
+    if any(n is UNKNOWN for n in (overview, views, frames, *caps.values())):
+        return problems
+    given = {name: cap for name, cap in caps.items() if cap is not None}
+    if given and None not in (overview, views, frames):
+        name = min(given, key=given.__getitem__)  # the tighter cap (per scene on a tie)
+        total = overview + views * frames
+        if total > given[name]:
+            problems.append(
+                (
+                    ("views",),
+                    f"overview ({overview}) + detail ({views} x {frames}) = {total} frames, "
+                    f"more than frame_selection.budget.{name} ({given[name]})",
+                )
             )
     return problems
 
 
-def stage_problems(stages: Mapping[str, str], profiles: Iterable[str]) -> list[str]:
-    names = sorted(profiles)
-    return [
-        f"stages.{stage}.vision: no vision profile named {name!r} "
-        f"(profiles: {', '.join(names) or 'none'})"
-        for stage, name in stages.items()
-        if name not in names
-    ]
-
-
-def _raw_stage_problems(data: Any) -> list[str]:
-    if not isinstance(data, Mapping):
+def _stage_problems(s: _Settings) -> list[Problem]:
+    """Stages that name a missing profile. A profile with problems of its own exists."""
+    profiles, stages = s.raw("vision_profiles"), s.raw("stages")
+    profiles = {} if profiles is None else profiles
+    if not isinstance(profiles, Mapping) or not s.clean("vision_profiles", inside=False):
         return []
-    profiles, stages = data.get("vision_profiles", {}), data.get("stages", {})
-    if not isinstance(profiles, Mapping) or not isinstance(stages, Mapping):
+    if not isinstance(stages, Mapping) or not s.clean("stages", inside=False):
         return []
-    refs = {
-        stage: entry["vision"]
-        for stage, entry in stages.items()
-        if isinstance(entry, Mapping) and isinstance(entry.get("vision"), str)
-    }
-    return stage_problems(refs, [name for name in profiles if isinstance(name, str)])
-
-
-def _raise_problems(problems: list[str]) -> None:
-    if problems:
-        raise PydanticCustomError(
-            PROBLEMS_ERROR, "{summary}", {"summary": "; ".join(problems), "problems": problems}
-        )
-
-
-def format_path(loc: Iterable[Any]) -> str:
-    """`("a", "b", 0, "c")` → `"a.b[0].c"`."""
-    path = ""
-    for part in loc:
-        if isinstance(part, int):
-            path += f"[{part}]"
-        elif isinstance(part, str) and part.startswith("["):
-            path += part
-        else:
-            path += f".{part}" if path else str(part)
-    return path
-
-
-def problems_from_validation(exc: ValidationError) -> list[str]:
-    """One line per problem, `path: message`, from a pydantic ValidationError."""
-    problems: list[str] = []
-    for err in exc.errors(include_url=False):
-        base = format_path(err["loc"])
-        if err["type"] == PROBLEMS_ERROR:
-            problems += [f"{base}.{p}" if base else p for p in err["ctx"]["problems"]]
-        else:
-            message = err["msg"].removeprefix("Value error, ")
-            problems.append(f"{base or '(root)'}: {message}")
+    names = sorted(name for name in profiles if isinstance(name, str))
+    problems: list[Problem] = []
+    for stage in stages:
+        name = s.get("stages", stage, "vision")
+        if isinstance(name, str) and name not in names:
+            problems.append(
+                (
+                    ("stages", stage, "vision"),
+                    f"no vision profile named {name!r} (profiles: {', '.join(names) or 'none'})",
+                )
+            )
     return problems
 
 
@@ -464,7 +679,7 @@ def profile_mapping(profile: VisionProfile) -> dict[str, Any]:
 
 
 def _clean(value: Any) -> Any:
-    """Drops None and empty collections, recursively; keeps list order."""
+    """Plain data without None or empty collections, recursively; lists keep their order."""
     if isinstance(value, Mapping):
         out = {}
         for key, item in value.items():

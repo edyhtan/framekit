@@ -15,14 +15,19 @@ from framekit.vision.registry import Strategy, register_strategy
 from framekit.vision.signals import Signals, Span
 
 # shot_based "last": this far before the cut, which falls inside the shot's last frame
-# whatever the frame rate.
+# whatever the frame rate. Planning works in whole milliseconds and only merges times in
+# the same millisecond, so this frame and an anchor on the cut stay two frames.
 LAST_FRAME_OFFSET_S = 0.001
+# Candidates one strategy may produce for one span; past this, plan shorter spans (1 h at
+# 500 fps is 1.8 million).
+MAX_CANDIDATES = 2_000_000
 
 
 class StrategyParams(BaseModel):
-    """Base for strategy settings: frozen, and unknown keys fail."""
+    """Base for strategy settings: frozen, unknown keys fail, numbers are strict (no bool or
+    str) and finite."""
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True, allow_inf_nan=False)
 
 
 class NoParams(StrategyParams):
@@ -40,6 +45,11 @@ def uniform(params: UniformParams, span: Span, signals: Signals) -> list[float]:
     """Every 1/fps seconds from the span's start, end excluded."""
     start, end = span
     count = int((end - start) * params.fps) + 2  # the planner drops anything at or past end
+    if count > MAX_CANDIDATES:
+        raise ValueError(
+            f"uniform at {params.fps:g} fps over {end - start:g} s is {count:,} candidates, "
+            f"more than {MAX_CANDIDATES:,}: plan shorter spans"
+        )
     return [start + k / params.fps for k in range(count)]
 
 
@@ -100,9 +110,14 @@ class SignalWindowParams(StrategyParams):
 
 
 def motion_weights(params: SignalWindowParams, signals: Signals, times: Sequence[float]):
-    """Mean motion of the samples within window_s / 2 of each time (0 when none)."""
+    """Mean motion of the samples within window_s / 2 of each time (0 when none), relative
+    to the strongest sample: the planner normalizes every signal anyway, and the sums stay
+    finite whatever the scale."""
+    top = max((v for _, v in signals.motion), default=0.0)
+    if top <= 0:
+        return [0.0] * len(times)
     sample_times = [t for t, _ in signals.motion]
-    values = [v for _, v in signals.motion]
+    values = [v / top for _, v in signals.motion]
     half = params.window_s / 2
     weights = []
     for t in times:

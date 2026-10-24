@@ -13,6 +13,7 @@ capabilities yet, so callers describe a model with `ModelVisionCaps`.
 import math
 from collections.abc import Iterator
 from dataclasses import dataclass
+from numbers import Integral, Real
 
 from framekit.vision.params import VisionParams, VisionProfile
 from framekit.vision.resolve import (
@@ -21,6 +22,16 @@ from framekit.vision.resolve import (
     resolve,
     resolve_profile,
 )
+
+
+def _whole(owner: str, field: str, value: object, *, optional: bool = False) -> None:
+    """A count or a size: a whole number >= 1 (None too, when optional)."""
+    if optional and value is None:
+        return
+    if isinstance(value, bool) or not isinstance(value, Integral):
+        raise TypeError(f"{owner}.{field} must be a whole number, got {value!r}")
+    if value < 1:
+        raise ValueError(f"{owner}.{field} must be >= 1, got {value!r}")
 
 
 @dataclass(frozen=True)
@@ -32,8 +43,12 @@ class SourceLimits:
     height_px: int
 
     def __post_init__(self) -> None:
-        if not (self.fps > 0 and self.width_px > 0 and self.height_px > 0):
-            raise ValueError("SourceLimits: fps, width_px and height_px must be > 0")
+        if isinstance(self.fps, bool) or not isinstance(self.fps, Real):
+            raise TypeError(f"SourceLimits.fps must be a number, got {self.fps!r}")
+        if not (math.isfinite(self.fps) and self.fps > 0):
+            raise ValueError(f"SourceLimits.fps must be finite and > 0, got {self.fps!r}")
+        _whole("SourceLimits", "width_px", self.width_px)
+        _whole("SourceLimits", "height_px", self.height_px)
 
     @property
     def long_side_px(self) -> int:
@@ -48,8 +63,20 @@ class ModelVisionCaps:
     max_images: int | None = None  # per request
     max_image_side_px: int | None = None
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.native_video, bool):
+            raise TypeError(
+                f"ModelVisionCaps.native_video must be True or False, got {self.native_video!r}"
+            )
+        _whole("ModelVisionCaps", "max_images", self.max_images, optional=True)
+        _whole("ModelVisionCaps", "max_image_side_px", self.max_image_side_px, optional=True)
+
 
 Profiles = VisionParams | ResolvedVisionParams | VisionProfile | ResolvedProfile
+ONE_PROFILE = (
+    "takes one profile, a VisionProfile or a ResolvedProfile (for a whole block, check the "
+    "profile of each stage: resolve(params).for_stage(stage))"
+)
 
 
 def _profiles(params: Profiles) -> Iterator[tuple[str, VisionProfile]]:
@@ -61,12 +88,19 @@ def _profiles(params: Profiles) -> Iterator[tuple[str, VisionProfile]]:
     if isinstance(params, ResolvedVisionParams):
         for name, resolved in params.profiles.items():
             yield f"vision_profiles.{name}.", resolved.profile
-    else:
+    elif isinstance(params, ResolvedProfile):
         yield (f"vision_profiles.{params.name}." if params.name else ""), params.profile
+    else:
+        raise TypeError(
+            "expected VisionParams, ResolvedVisionParams, VisionProfile or ResolvedProfile, "
+            f"got {type(params).__name__}"
+        )
 
 
 def check_against_source(params: Profiles, source: SourceLimits) -> list[str]:
     """Problems if any profile asks for more fps or pixels than the analysis copy has."""
+    if not isinstance(source, SourceLimits):
+        raise TypeError(f"check_against_source needs SourceLimits, got {type(source).__name__}")
     problems = []
     for prefix, profile in _profiles(params):
         fps = profile.frame_selection.candidates.params.get("fps")
@@ -116,6 +150,10 @@ def check_against_model(
     without it, more images than it accepts (from the profile's own frame cap), or images
     larger than it accepts. A storyboard tile is one frame of `image.max_side_px`, so a grid
     image's long side is that times the larger grid dimension."""
+    if not isinstance(profile, VisionProfile | ResolvedProfile):
+        raise TypeError(f"check_against_model {ONE_PROFILE}, got {type(profile).__name__}")
+    if not isinstance(caps, ModelVisionCaps):
+        raise TypeError(f"check_against_model needs ModelVisionCaps, got {type(caps).__name__}")
     ((prefix, profile),) = _profiles(profile)
     problems = []
     delivery = profile.delivery

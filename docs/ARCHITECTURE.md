@@ -13,7 +13,7 @@ framekit is a **general library**, not a single-purpose engine: its modules are 
 ```mermaid
 flowchart TB
     subgraph LIB["framekit (this repository)"]
-        CT["contracts<br/>ports, A / V / plan / dataset schemas,<br/>lens spec format, ids, run records"]
+        CT["contracts<br/>ports, ids, run records,<br/>pure shared types"]
         MA["model access<br/>catalog, router, adapters,<br/>response cache"]
         VI["vision<br/>frame selection, image prep,<br/>delivery (vision_params)"]
         EX["extraction<br/>stages L0–L4, runner,<br/>dataset writer and reader,<br/>benchmark harness, CLI"]
@@ -39,7 +39,7 @@ flowchart TB
 
 | Layer | Owns | Must not |
 |---|---|---|
-| **contracts** | ports (`conversation`; later `video_understand`, `vision_generate`, `embed_*`), media ports, the `ResponseStore` port, the A / V / plan / dataset schemas, the lens spec format, ids, run records | import anything else in the library, any provider SDK, or any I/O library |
+| **contracts** | ports (`conversation`; later `video_understand`, `vision_generate`, `embed_*`), media ports, the `ResponseStore` port, ids, run records, and the pure shared types they use. Not the Pydantic schemas (A, V, plan, dataset manifest, lens spec): contracts stays free of Pydantic, and the plan embeds `VisionParams` from `vision`, so those need a module above `vision` and `models`; which one is open (§8) | import anything else in the library, Pydantic, any provider SDK, or any I/O library |
 | **model access** | model catalog, router, our own adapters on the official provider SDKs, the response cache wrapper and its file store | know stages, datasets or lenses |
 | **vision** | the `vision_params` schema (`VisionParams`, Pydantic, so it can't live in the pure `contracts`) and its checks; the strategy registry and frame selection strategies (candidates, anchors, filters, budget allocation); resolution and digests; frame planning; later image preparation and delivery (DESIGN.md §2.3) | call a model or import `models`; know stages, lenses or corpora |
 | **extraction** | stages L0–L4 + embed, the stage runner, the dataset writer and reader, the benchmark harness, the CLI | call a provider SDK directly; contain lens or corpus vocabulary |
@@ -71,11 +71,13 @@ src/
   framekit/
     __init__.py    public API: extract, Dataset, schemas
     py.typed
-    contracts/     ports, schemas (A, V, plan, dataset, lens spec), ids, clock, run records, ResponseStore
+    contracts/     ports, ids, clock, run records, ResponseStore (pure: no Pydantic; the Pydantic
+                   A / V / plan / dataset / lens spec schemas go above vision and models, §8)
     models/        catalog, router, adapters (openai_compatible, anthropic), cache/ (wrapper + file store)
     vision/        params (VisionParams schema + load-time checks), registry, builtin (v1 strategies),
-                   resolve (canonical form, digests), checks (source, model), planning (pixel-free);
-                   later: pixel filters, image prep, delivery (with the media stage)
+                   resolve (canonical form, digests), checks (source, model), signals (L1 signals
+                   for planning), planning (pixel-free); later: pixel filters, image prep, delivery
+                   (with the media stage)
     extraction/    stages/ (normalize, signals, segment, perceive, lens_pass, embed, qc),
                    runner/, dataset/ (writer, reader, manifest), bench/, alignment/
     cli.py         `framekit extract …`, `framekit bench …`, `framekit cache stats|wipe`
@@ -108,7 +110,7 @@ flowchart LR
 | Contract | Rule |
 |---|---|
 | Layers | `cli` → `extraction` → `models` or `vision` → `contracts`; `models` and `vision` don't import each other (enforced: `framekit.vision \| framekit.models` above `framekit.contracts`, independent siblings) |
-| Contracts are pure | `contracts` imports no provider SDK, media library, or I/O framework |
+| Contracts are pure | `contracts` imports no Pydantic, provider SDK, media library, or I/O framework |
 | Provider SDKs | only inside `models` adapters (`vision` is checked too) |
 | Model-access libraries (LangChain, LiteLLM, …) | nowhere; adding one needs a journal decision |
 | Media libraries (ffmpeg bindings, scene detection, audio, Whisper, image hashing) | only inside `extraction.stages` and `vision`, behind media ports |
@@ -156,9 +158,9 @@ How to report a vulnerability: [SECURITY.md](../SECURITY.md).
 |---|---|
 | **Function** | `extract(space: SearchSpace, corpus: Corpus, *, plan: ExtractionPlan | None = None, runner: Runner = LocalRunner(), out: Path, cache: ResponseStore | None = None) -> Dataset` (A is `SearchSpace`; `plan=None` means defaults plus derivation rules). Also `cache_settings: CacheSettings` (a store alone can't say record or replay) and `dry_run`; runner options (`concurrency`, `rate_limits`, `provider_retries`, `work_dir`) sit on the runner. Full reference: [settings.md](settings.md) §2 |
 | **Benchmark** | `benchmark(variants: Mapping[str, SearchSpace] or Mapping[str, ExtractionPlan], corpus, *, plan or space, gold: GoldSet, scorer: Scorer = baseline_retriever) -> Report`; one side varies, the other is pinned (DESIGN.md §2.4, §6.2) |
-| **Schemas** | `SearchSpace` (A), `Corpus` + `CorpusProfile` (V), `ExtractionPlan` (incl. `VisionParams` from `framekit.vision`, `ModelProfile`), `LensSpec`, `GoldSet`, `DatasetManifest`: Pydantic models, versioned with the dataset schema |
+| **Schemas** | `SearchSpace` (A), `Corpus` + `CorpusProfile` (V), `ExtractionPlan` (incl. `VisionParams` from `framekit.vision`, `ModelProfile`), `LensSpec`, `GoldSet`, `DatasetManifest`: Pydantic models, versioned with the dataset schema. They can't live in `contracts` (pure, and below `vision`); which module above `vision` and `models` holds them is open (§8) |
 | **Dataset** | `Dataset.open(path)` → typed readers per table (Arrow); `manifest` |
-| **Vision** (`framekit.vision`, built: schema, checks, planning) | `VisionParams.from_mapping(data) -> VisionParams` and `VisionProfile.from_mapping(data)` (raise one `VisionParamsError` with `.problems`); `.to_mapping()`; `params.profile_for(stage)`. `resolve(params) -> ResolvedVisionParams` (`.digest`, `.mapping`, `.to_mapping()`, `.for_stage(stage) -> ResolvedProfile` with its own `.digest`); `resolve_profile(profile)`. `check_against_source(params, SourceLimits(fps, width_px, height_px)) -> list[str]`; `check_against_model(profile, ModelVisionCaps(native_video, max_images, max_image_side_px)) -> list[str]`. `plan_frames(profile, span, signals=Signals(shot_boundaries, audio_onsets, motion)) -> FramePlan(timestamps, pending_filters, notes, views)`. Registry: `get_strategy(kind, name, version=None)`, `strategies(kind=None)`, `register_strategy(Strategy(...))`. Later, with the media stage: frame extraction, pixel filters, image preparation and delivery. Usable without extraction (e.g. query-time sampling) |
+| **Vision** (`framekit.vision`, built: schema, checks, planning) | `VisionParams.from_mapping(data) -> VisionParams` and `VisionProfile.from_mapping(data)` (raise one `VisionParamsError` with `.problems`, every problem at once); `.to_mapping()`; `params.profile_for(stage)`. Parsed parameters are frozen and read-only all the way down (settings are a read-only dict, lists are tuples) and hashable. `resolve(params) -> ResolvedVisionParams` (`.digest`, `.canonical_json()`, `.mapping` and `.to_mapping()` as fresh copies, `.for_stage(stage) -> ResolvedProfile` with its own `.digest`); `resolve_profile(profile)`. `check_against_source(params, SourceLimits(fps, width_px, height_px)) -> list[str]`; `check_against_model(profile, ModelVisionCaps(native_video, max_images, max_image_side_px)) -> list[str]` (one profile; a wrong argument type raises `TypeError`). `plan_frames(profile, span, signals=Signals(shot_boundaries, audio_onsets, motion)) -> FramePlan(timestamps, pending_filters, notes, views)`, with `span = (start_s, end_s)`. Registry: `get_strategy(kind, name, version=None)`, `strategies(kind=None)`, `register_strategy(Strategy(...))`. Later, with the media stage: frame extraction, pixel filters, image preparation and delivery. Usable without extraction (e.g. query-time sampling) |
 | **Model access** | `ConversationRouter(ModelSettings)`, `ConversationRequest` / `ConversationResult`, `with_cache(factory, settings=CacheSettings, store=ResponseStore)`, `FileResponseStore`; the same API consumers use for their own roles. Settings are plain data: framekit reads no configuration from the environment, only provider keys (and optional base-URL overrides) named in the catalog |
 | **CLI** | `framekit extract --space search-space.yaml --corpus corpus.yaml [--plan plan.yaml] --out …`; `framekit bench …` (search spaces or plans as variants); `framekit cache stats|wipe`. Every flag: [settings.md](settings.md) §2 |
 
@@ -258,5 +260,6 @@ Then extraction (E1 onward, DESIGN.md §7) is built here.
 - **Name clash on PyPI:** an unrelated, active package named `framekit` exists there. Installing from git is unaffected, but publishing would need another distribution name (e.g. `framekit-ml`), and a project must not install both (same import name). Decide before any publishing.
 - Publishing wheels to a package index (instead of git tags), if the repo goes public or installs from git get slow.
 - Dataset layout details, A / V / plan schema details, lens spec file format, baseline scorer (DESIGN.md §9).
+- **Where the Pydantic schemas live** (A, V, plan, dataset manifest, lens spec). Not in `contracts`: the "Contracts are pure" import contract forbids Pydantic there, and `ExtractionPlan` embeds `VisionParams`, which the layers contract keeps above `contracts`. So they need a module that may import `vision` and `models`: `extraction`, or a schema module of their own between those and `extraction`. Decide before E1 builds them.
 - Distributed runner technology, once corpus size needs it.
 - Video, text and embedding models (DESIGN.md §9).

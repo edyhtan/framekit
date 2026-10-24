@@ -5,17 +5,41 @@ signals they read; `Signals` only carries them.
 """
 
 import math
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from numbers import Real
 
 Span = tuple[float, float]  # (start_s, end_s) on the unit timeline, end excluded
 
 
-def _times(name: str, values: Iterable[float]) -> tuple[float, ...]:
-    out = tuple(sorted(float(t) for t in values))
-    if any(not math.isfinite(t) or t < 0 for t in out):
-        raise ValueError(f"{name}: times must be finite and >= 0")
-    return out
+def _items(field: str, values: object) -> list[object]:
+    if isinstance(values, str | bytes) or not isinstance(values, Iterable):
+        raise TypeError(f"{field}: expected a list, got {values!r}")
+    return list(values)
+
+
+def _number(field: str, value: object) -> float:
+    if isinstance(value, bool) or not isinstance(value, Real):
+        raise TypeError(f"{field}: expected a number, got {value!r}")
+    number = float(value)
+    if not math.isfinite(number) or number < 0:
+        raise ValueError(f"{field}: must be finite and >= 0, got {value!r}")
+    return number
+
+
+def _times(field: str, values: object) -> tuple[float, ...]:
+    """Sorted, each time once: two events at the same time are one event."""
+    return tuple(sorted({_number(field, t) for t in _items(field, values)}))
+
+
+def _samples(values: object) -> tuple[tuple[float, float], ...]:
+    samples = []
+    for sample in _items("motion", values):
+        pair = [] if isinstance(sample, str | bytes) else _items("motion", sample)
+        if len(pair) != 2:
+            raise TypeError(f"motion: each sample is (time_s, value), got {sample!r}")
+        samples.append((_number("motion time", pair[0]), _number("motion value", pair[1])))
+    return tuple(sorted(samples))
 
 
 @dataclass(frozen=True)
@@ -28,18 +52,16 @@ class Signals:
     - `motion`: `(time_s, value)` samples of motion strength, value >= 0 (any scale: the
       planner normalizes each signal before combining them).
 
-    Lists are accepted and stored as sorted tuples.
+    Any list (or other iterable) is accepted and stored as a sorted tuple; a time listed
+    twice counts once. Wrong types raise TypeError, negative or non-finite numbers
+    ValueError, naming the field.
     """
 
-    shot_boundaries: tuple[float, ...] = ()
-    audio_onsets: tuple[float, ...] = ()
-    motion: tuple[tuple[float, float], ...] = ()
+    shot_boundaries: Sequence[float] = ()  # stored as a sorted tuple
+    audio_onsets: Sequence[float] = ()
+    motion: Sequence[tuple[float, float]] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "shot_boundaries", _times("shot_boundaries", self.shot_boundaries))
         object.__setattr__(self, "audio_onsets", _times("audio_onsets", self.audio_onsets))
-        samples = tuple(sorted((float(t), float(v)) for t, v in self.motion))
-        for t, v in samples:
-            if not (math.isfinite(t) and math.isfinite(v)) or t < 0 or v < 0:
-                raise ValueError("motion: samples must be finite (time_s >= 0, value >= 0)")
-        object.__setattr__(self, "motion", samples)
+        object.__setattr__(self, "motion", _samples(self.motion))

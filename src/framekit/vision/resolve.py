@@ -10,19 +10,23 @@ and allocation signals are sets (sorted), filters keep their order. The same par
 give the same digest whatever the key order or spelling of the input (`fps: 1` and
 `fps: 1.0`, `uniform` and `uniform@1` once version 1 is the newest). A profile's digest
 covers its content, not its name, so renaming a profile doesn't rerun a stage.
+
+Resolved parameters are read-only: the profiles, their settings, and the canonical text the
+digest was computed from. `.mapping` returns a fresh copy of that text as plain data.
 """
 
 import hashlib
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Final
 
 from framekit.vision.params import (
     Budget,
     Delivery,
     DetailView,
     FrameSelection,
+    FrozenDict,
     ImagePrep,
     StoryboardGrid,
     StrategyRef,
@@ -30,39 +34,52 @@ from framekit.vision.params import (
     VisionParams,
     VisionProfile,
     profile_mapping,
+    thaw,
 )
 from framekit.vision.registry import StrategyKind, get_strategy
 
 # Image encoding when a profile leaves it unset (not for native_video, where the provider
 # decodes the clip). Placeholders like every default until a benchmark sweep sets them.
-DEFAULT_FORMAT = "jpeg"
-DEFAULT_QUALITY = 85  # jpeg and webp
+DEFAULT_FORMAT: Final = "jpeg"
+DEFAULT_QUALITY: Final = 85  # jpeg and webp
 
 
 @dataclass(frozen=True)
 class ResolvedProfile:
     name: str
     profile: VisionProfile  # every strategy pinned, every default filled
-    mapping: dict[str, Any]  # canonical
-    digest: str  # sha256 of the canonical JSON
+    canonical: str  # the canonical JSON
+    digest: str  # its sha256
+
+    @property
+    def mapping(self) -> dict[str, Any]:
+        """The canonical form as plain data (a fresh copy)."""
+        result: dict[str, Any] = json.loads(self.canonical)
+        return result
 
     def canonical_json(self) -> str:
-        return canonical_json(self.mapping)
+        return self.canonical
 
 
 @dataclass(frozen=True)
 class ResolvedVisionParams:
     params: VisionParams  # resolved: every profile pinned and filled
-    profiles: dict[str, ResolvedProfile]
-    stages: dict[str, str]  # stage → profile name
-    mapping: dict[str, Any]  # canonical, for the manifest
-    digest: str  # sha256 of the whole block's canonical JSON
+    profiles: Mapping[str, ResolvedProfile]  # read-only
+    stages: Mapping[str, str]  # stage → profile name, read-only
+    canonical: str  # the canonical JSON of the whole block, for the manifest
+    digest: str  # its sha256
+
+    @property
+    def mapping(self) -> dict[str, Any]:
+        """The canonical form as plain data (a fresh copy)."""
+        result: dict[str, Any] = json.loads(self.canonical)
+        return result
 
     def to_mapping(self) -> dict[str, Any]:
-        return json.loads(self.canonical_json())  # a deep copy
+        return self.mapping
 
     def canonical_json(self) -> str:
-        return canonical_json(self.mapping)
+        return self.canonical
 
     def for_stage(self, stage: str) -> ResolvedProfile:
         if stage not in self.stages:
@@ -76,21 +93,22 @@ def canonical_json(value: Any) -> str:
     )
 
 
-def digest(value: Any) -> str:
-    return hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()
+def digest(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def pin(ref: StrategyRef, kind: StrategyKind) -> StrategyRef:
     """The reference with its version pinned and its settings validated, defaults filled."""
     strategy = get_strategy(kind, ref.name, ref.version)
-    settings = strategy.params.model_validate(ref.params).model_dump(
+    settings = strategy.params.model_validate(thaw(ref.params)).model_dump(
         mode="json", exclude_none=True
     )
     return StrategyRef(name=strategy.name, version=strategy.version, params=settings)
 
 
-def _pin_set(refs: list[StrategyRef], kind: StrategyKind) -> list[StrategyRef]:
-    return sorted((pin(ref, kind) for ref in refs), key=lambda ref: (ref.name, ref.version))
+def _pin_set(refs: tuple[StrategyRef, ...], kind: StrategyKind) -> tuple[StrategyRef, ...]:
+    """Anchors and signals are sets: pinned and sorted, so their order doesn't matter."""
+    return tuple(sorted((pin(ref, kind) for ref in refs), key=lambda ref: (ref.name, ref.version)))
 
 
 def resolve_profile(profile: VisionProfile, name: str = "") -> ResolvedProfile:
@@ -98,7 +116,7 @@ def resolve_profile(profile: VisionProfile, name: str = "") -> ResolvedProfile:
     frame_selection = FrameSelection(
         candidates=pin(fs.candidates, "candidates"),
         anchors=_pin_set(fs.anchors, "anchor"),
-        filters=[pin(ref, "filter") for ref in fs.filters],
+        filters=tuple(pin(ref, "filter") for ref in fs.filters),
         budget=Budget(
             max_frames=fs.budget.max_frames,
             max_frames_per_scene=fs.budget.max_frames_per_scene,
@@ -137,8 +155,8 @@ def resolve_profile(profile: VisionProfile, name: str = "") -> ResolvedProfile:
         delivery=delivery,
         views=views,
     )
-    mapping = _sorted(profile_mapping(resolved))
-    return ResolvedProfile(name=name, profile=resolved, mapping=mapping, digest=digest(mapping))
+    text = canonical_json(_sorted(profile_mapping(resolved)))
+    return ResolvedProfile(name=name, profile=resolved, canonical=text, digest=digest(text))
 
 
 def resolve(params: VisionParams | Mapping[str, Any]) -> ResolvedVisionParams:
@@ -150,11 +168,13 @@ def resolve(params: VisionParams | Mapping[str, Any]) -> ResolvedVisionParams:
         for name, profile in sorted(params.vision_profiles.items())
     }
     stages = {stage: entry.vision for stage, entry in sorted(params.stages.items())}
-    mapping = _sorted(
-        {
-            "vision_profiles": {name: p.mapping for name, p in profiles.items()},
-            "stages": {stage: {"vision": name} for stage, name in stages.items()},
-        }
+    text = canonical_json(
+        _sorted(
+            {
+                "vision_profiles": {name: p.mapping for name, p in profiles.items()},
+                "stages": {stage: {"vision": name} for stage, name in stages.items()},
+            }
+        )
     )
     resolved_params = VisionParams(
         vision_profiles={name: p.profile for name, p in profiles.items()},
@@ -162,10 +182,10 @@ def resolve(params: VisionParams | Mapping[str, Any]) -> ResolvedVisionParams:
     )
     return ResolvedVisionParams(
         params=resolved_params,
-        profiles=profiles,
-        stages=stages,
-        mapping=mapping,
-        digest=digest(mapping),
+        profiles=FrozenDict(profiles),
+        stages=FrozenDict(stages),
+        canonical=text,
+        digest=digest(text),
     )
 
 

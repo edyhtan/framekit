@@ -297,7 +297,8 @@ plan = plan_frames(resolved.for_stage("L3a"), (12.0, 48.5),
 print(plan.timestamps)                                # seconds on the video's own timeline
 ```
 
-- **Checks before any spend:** unknown strategies or keys, a strategy in the wrong slot, missing settings, `native_video` with anything but uniform sampling, views that overflow the frame budget. `check_against_source` and `check_against_model` add the analysis copy's and the model's limits.
+- **Checks before any spend, all reported at once:** unknown strategies or keys, a strategy in the wrong slot, missing settings, `true` or `"4"` where a number belongs, `native_video` with anything but uniform sampling, views that overflow the frame budget. `check_against_source` and `check_against_model` add the analysis copy's and the model's limits.
+- **Read-only once checked:** parsed and resolved parameters can't be changed in place, so the digest always describes what runs.
 - **Strategies are versioned code:** `uniform`, `shot_based`, `shot_boundaries`, `audio_onsets`, `dedupe`, `sharpness`, `motion`; a changed algorithm gets a new version (`dedupe@2`), so old datasets stay reproducible. Filters that need pixels (`dedupe`, `sharpness`) are recorded now and run with the media stage (E1).
 - Every setting, check and default: [docs/settings.md](docs/settings.md) §5.2.
 

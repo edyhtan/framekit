@@ -59,6 +59,27 @@ def test_shot_based_picks_one_frame_per_shot_inside_the_span(pick, expected):
     assert plan_frames(keyframe, (10.0, 30.0), signals).timestamps == expected
 
 
+def test_frames_one_millisecond_apart_stay_apart():
+    thousand = load(frame_selection=selection({"strategy": "uniform", "fps": 1000}))
+
+    assert len(plan_frames(thousand, (0.0, 1.0)).timestamps) == 1000
+
+
+def test_the_last_frame_of_a_shot_and_its_cut_are_two_frames():
+    last_and_cut = load(frame_selection=selection(
+        {"strategy": "shot_based", "pick": "last"}, anchors=["shot_boundaries"]))
+
+    plan = plan_frames(last_and_cut, (0.0, 10.0), Signals(shot_boundaries=[2.0, 5.0, 8.0]))
+
+    assert plan.timestamps == (1.999, 2.0, 4.999, 5.0, 7.999, 8.0, 9.999)
+
+
+def test_the_span_is_rounded_to_milliseconds_like_the_timestamps():
+    plan = plan_frames(load(frame_selection=selection(UNIFORM_4)), (0.0005, 1.0))
+
+    assert plan.timestamps == (0.001, 0.251, 0.501, 0.751)  # never before the span's start
+
+
 # --- anchors and the budget -----------------------------------------------------------------
 
 
@@ -110,6 +131,25 @@ def test_without_signals_the_budget_spreads_frames_across_the_span():
     plan = plan_frames(capped, (0.0, 10.0))
 
     assert plan.timestamps == (0.0, 4.75, 9.75)  # earliest, then farthest from those kept
+
+
+def test_without_a_cap_min_gap_keeps_the_most_frames_at_a_regular_spacing():
+    gapped = load(frame_selection=selection(UNIFORM_4, budget={"min_gap_s": 0.3}))
+
+    plan = plan_frames(gapped, (0.0, 10.0))
+
+    assert plan.timestamps == tuple(k / 2 for k in range(20))
+
+
+def test_a_cap_is_filled_whenever_min_gap_leaves_enough_frames():
+    capped = load(frame_selection=selection(
+        UNIFORM_4, budget={"min_gap_s": 0.5, "max_frames_per_scene": 18}))
+
+    plan = plan_frames(capped, (0.0, 10.0))
+
+    assert len(plan.timestamps) == 18
+    gaps = [b - a for a, b in zip(plan.timestamps, plan.timestamps[1:], strict=False)]
+    assert min(gaps) >= 0.5 - 1e-9
 
 
 def test_min_gap_holds_between_kept_frames_including_anchors():
@@ -178,6 +218,7 @@ def test_pixel_filters_are_returned_pending_in_order():
     assert plan.notes[0].startswith("pixel filters pending (dedupe@1, sharpness@1)")
 
 
+@pytest.mark.usefixtures("isolated_registry")
 def test_pixel_free_filters_run_until_the_first_pixel_filter():
     def drop_whole_seconds(params, times, signals):
         return [t for t in times if t != int(t)]
@@ -258,15 +299,81 @@ def test_without_detail_signal_peaks_there_are_no_detail_views():
     )
 
 
-def test_anchors_count_toward_the_scene_cap_in_views():
+def test_in_views_the_anchors_count_toward_the_overview():
     signals = Signals(shot_boundaries=[5.0, 10.0, 20.0], audio_onsets=PEAKS.audio_onsets,
                       motion=PEAKS.motion)
 
     plan = plan_frames(detail_profile(anchors=["shot_boundaries"]), (0.0, 45.0), signals)
 
+    overview, *details = plan.views
+    assert len(overview.timestamps) == 6 and {5.0, 10.0, 20.0} <= set(overview.timestamps)
+    assert [len(d.timestamps) for d in details] == [5, 5]  # the details lose nothing
     assert len(plan.timestamps) == 16
-    assert {5.0, 10.0, 20.0} <= set(plan.views[0].timestamps)
-    assert any("scene cap of 16 frames" in note for note in plan.notes)
+    assert plan.notes == ()
+
+
+def test_anchors_beyond_the_overview_leave_the_details_less_room():
+    cuts = [2.0, 4.0, 6.0, 8.0, 10.0, 12.0, 20.0, 25.0]  # 8 anchors; the overview has 6 frames
+    signals = Signals(shot_boundaries=cuts, audio_onsets=PEAKS.audio_onsets, motion=PEAKS.motion)
+
+    plan = plan_frames(detail_profile(anchors=["shot_boundaries"]), (0.0, 45.0), signals)
+
+    overview, *details = plan.views
+    assert overview.timestamps == tuple(cuts)
+    assert [len(d.timestamps) for d in details] == [5, 3]
+    assert len(plan.timestamps) == 16
+    assert plan.notes == (
+        "the overview holds 8 anchors, more than its 6 frames: anchors are always kept",
+        "scene cap of 16 frames: the detail view at 15.25 s got 3 of 5 frames",
+    )
+
+
+def one_view(around, span_s, max_views=1):
+    return load(
+        frame_selection=selection(UNIFORM_4),
+        views={"mode": "overview_plus_detail", "overview": {"max_frames": 2},
+               "detail": {"around": around, "span_s": span_s, "max_views": max_views,
+                          "max_frames": 4}},
+    )
+
+
+def detail_windows(plan):
+    return [(v.start_s, v.end_s) for v in plan.views if v.kind == "detail"]
+
+
+@pytest.mark.parametrize(("window_s", "span_s"), [(1, 3), (4, 2), (10, 2)])
+def test_a_detail_view_is_centred_on_its_peak(window_s, span_s):
+    # window_s > span_s too: every candidate within window_s / 2 of the onset ties
+    view = one_view([{"audio_onsets": {"window_s": window_s}}], span_s)
+
+    plan = plan_frames(view, (0.0, 60.0), Signals(audio_onsets=[20.0]))
+
+    assert detail_windows(plan) == [(20.0 - span_s / 2, 20.0 + span_s / 2)]
+
+
+def test_a_detail_view_is_centred_on_a_motion_spike():
+    view = one_view([{"motion": {"window_s": 8}}], 2)
+
+    plan = plan_frames(view, (0.0, 60.0), Signals(motion=[(20.0, 9.0)]))
+
+    assert detail_windows(plan) == [(19.0, 21.0)]
+
+
+def test_one_broad_peak_gets_one_detail_view():
+    view = one_view([{"audio_onsets": {"window_s": 10}}], 2, max_views=2)
+
+    plan = plan_frames(view, (0.0, 60.0), Signals(audio_onsets=[20.0]))
+
+    assert detail_windows(plan) == [(19.0, 21.0)]
+
+
+def test_a_second_detail_view_goes_to_another_peak_not_down_the_slope():
+    shape = {30: 3.0, 31: 4.0, 32: 5.0, 33: 5.0, 34: 5.0, 35: 4.0, 36: 3.0, 10: 2.0}
+    hill = Signals(motion=[(float(t), shape.get(t, 0.5)) for t in range(45)])
+
+    plan = plan_frames(one_view(["motion"], 3, max_views=2), (0.0, 45.0), hill)
+
+    assert detail_windows(plan) == [(31.5, 34.5), (8.5, 11.5)]
 
 
 def test_view_modes_not_planned_yet_say_so():
@@ -316,9 +423,11 @@ def test_planning_is_deterministic():
     assert plan_frames(detail, (0.0, 45.0), as_lists) == first
 
 
-@pytest.mark.parametrize("span", [(5.0, 5.0), (6.0, 5.0), (-1.0, 3.0), (0.0, float("nan"))])
+@pytest.mark.parametrize(
+    "span", [(5.0, 5.0), (6.0, 5.0), (-1.0, 3.0), (0.0, float("nan")), (1.0, 1.0004), (1.0,)]
+)
 def test_an_empty_or_negative_span_fails(span):
-    with pytest.raises(ValueError, match="span must be"):
+    with pytest.raises(ValueError, match="span must"):
         plan_frames(load(), span)
 
 
@@ -327,3 +436,34 @@ def test_signals_must_be_finite_and_non_negative():
         Signals(audio_onsets=[-1.0])
     with pytest.raises(ValueError, match="motion"):
         Signals(motion=[(1.0, -0.5)])
+
+
+def test_signals_name_the_field_that_has_the_wrong_type():
+    with pytest.raises(TypeError, match="shot_boundaries: expected a list"):
+        Signals(shot_boundaries="123")
+    with pytest.raises(TypeError, match=r"motion: each sample is \(time_s, value\)"):
+        Signals(motion=[(1.0,)])
+    with pytest.raises(TypeError, match="audio_onsets: expected a number"):
+        Signals(audio_onsets=[True])
+
+
+def test_a_time_listed_twice_counts_once():
+    signals = Signals(shot_boundaries=[1, 2, 5, 5, 9])
+    middles = load(frame_selection=selection({"strategy": "shot_based", "pick": "middle"}))
+
+    assert signals.shot_boundaries == (1.0, 2.0, 5.0, 9.0)
+    assert plan_frames(middles, (0.0, 10.0), signals).timestamps == (0.5, 1.5, 3.5, 7.0, 9.5)
+
+
+def test_motion_on_any_scale_plans():
+    allocated = load(frame_selection=selection(UNIFORM_4, budget={
+        "max_frames_per_scene": 3, "allocate_by": ["motion"]}))
+
+    plan = plan_frames(allocated, (0.0, 3.0), Signals(motion=[(1.0, 1e308), (2.0, 1e308)]))
+
+    assert plan.timestamps == (0.5, 1.5, 2.5)
+
+
+def test_a_span_with_too_many_candidates_fails_clearly():
+    with pytest.raises(ValueError, match="more than 2,000,000: plan shorter spans"):
+        plan_frames(load(frame_selection=selection(UNIFORM_4)), (0.0, 1e6))
