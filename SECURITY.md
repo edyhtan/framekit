@@ -25,6 +25,7 @@ In scope: the library code in this repository (`framekit.contracts`, `framekit.m
 
 - a way for a provider key to leak, for instance into logs, error messages or response-cache files;
 - unsafe handling of model responses or cache records (code execution, path traversal, deserialization);
+- a way for an input file (a lens spec, so far) to make framekit run code or read a file it shouldn't, or send one to a model provider. Spec files are read with YAML's safe loader, and a lens's prompt files must stay inside its folder;
 - a workflow that could run untrusted code with write access, or a dependency or action pin that can be swapped.
 
 Context that limits what framekit can expose:

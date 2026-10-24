@@ -34,10 +34,10 @@ flowchart TB
         VP["vision profiles<br/>stage → frame selection, image, delivery"]
     end
     subgraph ENG["framekit (lens-free, corpus-free)"]
-        EX["extraction<br/>stages L0–L4, runner, dataset writer, benchmarks, CLI"]
+        EX["extraction<br/>schemas, stages L0–L4, runner, dataset writer, benchmarks, CLI"]
         MA["model access<br/>catalog, router, adapters, response cache"]
         VI["vision<br/>frame selection strategies, image prep, delivery"]
-        CT["contracts<br/>ports, pure shared types<br/>(where the Pydantic schemas live: §9)"]
+        CT["contracts<br/>ports, pure shared types"]
     end
     LS --> EX
     CP --> EX
@@ -426,7 +426,7 @@ A lens is **data**: a spec file plus prompt files, versioned. framekit validates
 **Rules**
 - Vocabularies are fixed and validated. Never write free-text labels into annotations.
 - A lens pass reads perception records only (and, when re-running, its own earlier annotations). Lenses never read each other's output; cross-lens composition is a consumer's job.
-- File format (YAML or JSON plus prompt files) is open (§9).
+- File format (decided 2026-10-24, v1): YAML or JSON (a file, or a folder holding `lens.yaml`), prompts inline or as `{file: path}` inside the spec's folder. Fields are typed (`label`, `labels`, `integer`, `number`, `boolean`, `object`, `list`, `map` keyed by the corpus profile's entities or a vocabulary); there is no free-text type. framekit compiles the fields into the JSON Schema it asks the model for and checks every reply against them ([settings.md](settings.md) §3.1).
 - Candidate lenses: emotions & dynamics (Appendix B), comedy craft, cinematography, narrative function, sound design, content safety.
 
 ---
@@ -494,7 +494,7 @@ flowchart LR
 - **Done (2026-10-23):** the conversation port, `ResponseStore`, catalog, router, both adapters and the response cache with a file store; history kept via `git filter-repo`; CI on locked and newest dependencies. ids and run records follow with E1, where extraction first needs them.
 
 **E1: first dataset (5 units of the test corpus)**
-- A, V and dataset schemas; lens spec format and loader.
+- Lens spec format and loader **built (2026-10-24)**; A, V and dataset schemas next.
 - Vision parameters (§2.3): schema, checks, resolution and pixel-free planning **done (2026-10-24)**; frame extraction, pixel filters, image preparation and delivery come with the media stage.
 - L0–L3a end to end with the corpus profile and modular perception.
 - Emotions & dynamics lens (Appendix B) with a ~10-scene gold set, plus a **minimal second lens** (e.g. comedy craft, ~10 labels) on the same scenes, purely to prove framekit has no lens leakage.
@@ -543,8 +543,7 @@ Users' copies of a corpus differ (releases, edits, frame rates). A dedicated mod
 
 - **Video model** for L2/L3a (Gemini assumed; Claude via frames is an option; verify cost and limits). Gemini integration is **paused** (DECISIONS.md 2026-10-24): native video needs a `video_understand` port and a native adapter; text roles would work through the OpenAI-compatible adapter after small fixes.
 - **Text model** for lens passes; **embedding models** (text + SigLIP).
-- **A, V and plan schemas in detail,** including the lens spec file format (YAML or JSON plus prompt files). The full setting list and derivation rules v1 are drafted in [settings.md](settings.md); its §8 lists the open decisions it raised (frames to cloud models for bring-your-own corpora, cache keys for repeated runs, dropped rows).
-- **Where the Pydantic schemas live** (A, V, plan, dataset manifest, lens spec): not in `contracts`, which stays pure (no Pydantic), and `ExtractionPlan` embeds `VisionParams` from `framekit.vision`, so they need a module above `vision` and `models` (e.g. `extraction`, or a schema module of its own). Decide before E1 ([ARCHITECTURE.md](ARCHITECTURE.md) §8).
+- **A, V and plan schemas in detail.** The full setting list and derivation rules v1 are drafted in [settings.md](settings.md); its §8 lists the open decisions it raised. Decided 2026-10-24: the schemas live in `framekit.extraction.schemas`, and the lens spec file format (v1, §4).
 - **Vision, after its first code** (§2.3): vision capabilities in the model catalog (callers describe a model with `ModelVisionCaps` until then); how the media stage feeds pixel-filter results back into the frame budget; planning `split_by_budget` and `per_module` views; keeping `budget.max_frames` across the spans of a unit (planning applies it per span).
 - **Baseline scorer details:** its fixed embedding model and metrics (§6.2); the gold-query set per corpus.
 - **Default vision profiles** per stage, from a benchmark sweep (§2.3, §6.2).
