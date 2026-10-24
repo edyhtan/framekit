@@ -541,7 +541,7 @@ Users' copies of a corpus differ (releases, edits, frame rates). A dedicated mod
 
 ## 9. Open decisions
 
-- **Video model** for L2/L3a (Gemini assumed; Claude via frames is an option; verify cost and limits).
+- **Video model** for L2/L3a (Gemini assumed; Claude via frames is an option; verify cost and limits). Gemini integration is **paused** (DECISIONS.md 2026-10-24): native video needs a `video_understand` port and a native adapter; text roles would work through the OpenAI-compatible adapter after small fixes.
 - **Text model** for lens passes; **embedding models** (text + SigLIP).
 - **A, V and plan schemas in detail,** including the lens spec file format (YAML or JSON plus prompt files). The full setting list and derivation rules v1 are drafted in [settings.md](settings.md); its §8 lists the open decisions it raised (frames to cloud models for bring-your-own corpora, cache keys for repeated runs, dropped rows).
 - **Where the Pydantic schemas live** (A, V, plan, dataset manifest, lens spec): not in `contracts`, which stays pure (no Pydantic), and `ExtractionPlan` embeds `VisionParams` from `framekit.vision`, so they need a module above `vision` and `models` (e.g. `extraction`, or a schema module of its own). Decide before E1 ([ARCHITECTURE.md](ARCHITECTURE.md) §8).

@@ -227,6 +227,18 @@ These were decided in short_extract (dates are from its journal) and bind this e
 - **Open:** where the Pydantic schemas live (decide before E1); keeping `budget.max_frames` across the spans of a unit (planning applies it per span).
 - **Recorded in:** `src/framekit/vision/` (params, resolve, planning, builtin, signals, checks, the package docstring); `tests/conftest.py` (new), `tests/test_vision_params.py`, `tests/test_vision_planning.py`; DESIGN.md §0.1, §2.3, §9; settings.md §5.2; ARCHITECTURE.md §1, §2, §2.1, §3, §8; README.md "Vision parameters".
 
+### 04:15 — Gemini integration paused (context gathered)
+- **Context gathered** (desk research and a code reading, 2026-10-24; no live probe, since no Gemini key was available):
+  - **Text roles:** Google's OpenAI-compatible endpoint (`https://generativelanguage.googleapis.com/v1beta/openai/`, labelled beta) can serve the text-only `conversation` port through the existing OpenAI-compatible adapter, with one provider entry and no new dependency. Three fixes are needed first:
+    - current Gemini 3.x and 4 models can't switch thinking off, which conflicts with "reasoning off unless asked" and its test;
+    - `completion_tokens` reportedly leaves out thinking tokens, so cost would be undercounted unless they're inferred from `total_tokens`;
+    - a blocked prompt can return no message.
+  - **Images:** the endpoint accepts base64 images, but the port can't carry images yet.
+  - **Native video:** impossible through the compatible endpoint, which has no video input and no fps, clip-range or resolution settings. It needs a `video_understand` port plus a native adapter, either on the official `google-genai` SDK as an optional extra (about 16 more packages, including a second HTTP stack) or on REST over httpx2. For a `byo_media` corpus it must also send `store=false`, use a paid-tier key, and put media identity in the cache key.
+  - **Owner choices left open:** whether "always reasons" models are allowed; Interactions API vs generateContent (only the latter has 50%-off batch and explicit caching); and whether Gemini is the video model at all, which should wait for a timestamp-precision test on a gold set.
+- **Decision** (owner): Gemini integration is paused. Nothing for it is built: no provider entry, no adapter, no dependency.
+- **Recorded in:** DESIGN.md §9 ("Video model").
+
 ---
 
 ## Still open
