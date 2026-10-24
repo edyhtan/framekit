@@ -1,7 +1,7 @@
 """Cache keys and stored entries.
 
-The key hashes everything that shapes a reply: the resolved model, the adapter family,
-the system prompt, the history, the message, the budget, the reasoning switch and the
+The key hashes everything that shapes a reply: the resolved model, the system
+prompt, the history, the message, the budget, the reasoning switch and the
 response schema. Any change to a prompt, the code's request or a setting is a miss, so a
 stale reply is never reused.
 """
@@ -26,7 +26,6 @@ def request_key(
     shape = {
         "method": method,
         "model_id": model_id,
-        "family": request.family,
         "system": request.system,
         "history": [[m.role, m.content] for m in request.history],
         "prompt": request.prompt,

@@ -134,16 +134,6 @@ def test_key_changes_with_everything_that_shapes_a_reply():
             "m",
             "v1",
         ),
-        request_key(
-            req(
-                system="s",
-                history=base.history,
-                response_schema=base.response_schema,
-                family="langchain",
-            ),
-            "m",
-            "v1",
-        ),
         request_key(base, "other-model", "v1"),
         request_key(base, "m", "v2"),
         request_key(base, "m", "v1", method="stream"),

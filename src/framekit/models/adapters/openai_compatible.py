@@ -3,6 +3,10 @@
 Serves every OpenAI-compatible provider (Hive, DeepSeek's own API, …); providers differ
 only in their `ProviderConfig`. Streaming is used where the provider documents it
 (Hive: server-sent events, usage always in the final chunk).
+
+Structured output by `function_calling` sends the schema as the one tool the model must
+call; the tool call's arguments are the reply's JSON. Those calls are never streamed:
+the JSON is only usable whole.
 """
 
 from collections.abc import AsyncIterator
@@ -34,7 +38,19 @@ def _reasoning_tokens(usage: Any) -> int | None:
     return getattr(details, "reasoning_tokens", None) if details else None
 
 
+# The single tool a `function_calling` request forces the model to call.
+TOOL_NAME = "response"
+
+
 def _response_format(request: ConversationRequest, mode: str | None) -> dict[str, Any]:
+    if mode == "function_calling":
+        schema = dict(request.response_schema or {})
+        return {
+            "tools": [
+                {"type": "function", "function": {"name": TOOL_NAME, "parameters": schema}}
+            ],
+            "tool_choice": {"type": "function", "function": {"name": TOOL_NAME}},
+        }
     if mode == "json_schema":
         schema = dict(request.response_schema or {})
         return {
@@ -50,8 +66,10 @@ def _response_format(request: ConversationRequest, mode: str | None) -> dict[str
 
 class OpenAICompatibleAdapter(ExternalAIAdapterBase):
     sdk: ClassVar = openai
-    adapter_version: ClassVar[str] = "0.5.0"
-    structured_modes: ClassVar[frozenset[str]] = frozenset({"json_schema", "json_mode", "prompted"})
+    adapter_version: ClassVar[str] = "0.6.0"
+    structured_modes: ClassVar[frozenset[str]] = frozenset(
+        {"json_schema", "json_mode", "function_calling", "prompted"}
+    )
 
     @classmethod
     def make_client(cls, api_key: str, base_url: str | None, timeout_s: float) -> Any:
@@ -70,7 +88,7 @@ class OpenAICompatibleAdapter(ExternalAIAdapterBase):
                 "model": spec.model_id,
                 "max_tokens": max_tokens,
                 "messages": messages,
-                "stream": self.config.stream,
+                "stream": self.config.stream and mode != "function_calling",
             },
             spec.request_extras,
             reasoning_fields(spec, reasoning_active(spec, request)),
@@ -81,7 +99,7 @@ class OpenAICompatibleAdapter(ExternalAIAdapterBase):
         return params
 
     async def call(self, spec: ModelSpec, params: dict[str, Any]) -> Reply:
-        if not self.config.stream:
+        if not params["stream"]:
             return _read(await self._client.chat.completions.create(**params))
         reply: Reply | None = None
         async for piece in self.iterate(spec, params):
@@ -93,7 +111,7 @@ class OpenAICompatibleAdapter(ExternalAIAdapterBase):
     async def iterate(
         self, spec: ModelSpec, params: dict[str, Any]
     ) -> AsyncIterator[TextDelta | Reply]:
-        if not self.config.stream:
+        if not params["stream"]:
             async for piece in super().iterate(spec, params):
                 yield piece
             return
@@ -135,11 +153,22 @@ class OpenAICompatibleAdapter(ExternalAIAdapterBase):
         return deltas
 
 
+def _tool_arguments(message: Any) -> str | None:
+    """The JSON arguments of the forced tool call, if the reply made one."""
+    for call in getattr(message, "tool_calls", None) or []:
+        if call.function and call.function.name == TOOL_NAME:
+            return call.function.arguments or ""
+    return None
+
+
 def _read(completion: Any) -> Reply:
     choice = completion.choices[0] if completion.choices else None
     usage = completion.usage
+    text = (choice.message.content or "") if choice else ""
+    if choice and (arguments := _tool_arguments(choice.message)) is not None:
+        text = arguments  # the caller validates this JSON against its schema
     return Reply(
-        text=(choice.message.content or "") if choice else "",
+        text=text,
         reasoning=(_reasoning_delta(choice.message) or "") if choice else "",
         reasoning_tokens=_reasoning_tokens(usage),
         model_id=completion.model,

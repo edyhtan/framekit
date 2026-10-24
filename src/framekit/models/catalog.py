@@ -101,8 +101,6 @@ class ModelSpec:
     structured_method: str = "prompted"
     # Context window in tokens, from the provider's documentation; None until recorded.
     context_window: int | None = None
-    # Which LangChain chat-model wrapper serves this model in the LangChain family.
-    langchain_class: str | None = None
 
     @property
     def reasoning_mode(self) -> str:
@@ -125,12 +123,9 @@ _SPECS = (
         reasoning=ReasoningControl(
             off={"extra_body": {"reasoning_effort": "none"}}, allowance=768, max_tokens_cap=1024
         ),
-        # Probes 2026-09-30. LangChain family (ChatDeepSeek wrapper): reasoning switches,
-        # streamed reasoning, system prompt, truncation and 401 mapping verified; schema via
-        # tool calling returned valid JSON. Hive rejects a native json_schema
-        # response_format (400), so the method is function_calling: the LangChain family
-        # uses a tool call, and the SDK family (no tool path) falls back to "prompted",
-        # which also returned valid JSON. json_mode works in both.
+        # Probes 2026-09-30: schema via a forced tool call returned valid JSON; Hive
+        # rejects a native json_schema response_format (400), so the method is
+        # function_calling (sent non-streamed). json_mode and "prompted" also work.
         structured_method="function_calling",
     ),
     ModelSpec(

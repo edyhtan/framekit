@@ -30,9 +30,6 @@ class ConversationRequest:
     # Structured output: a JSON Schema (plain data). The reply text is then JSON meant to
     # match it; callers always validate it themselves, whatever the adapter enforced.
     response_schema: Mapping[str, Any] | None = None
-    # Which adapter family serves the call (e.g. "langchain"); None: the default family.
-    # A plain string, so no library type crosses the port.
-    family: str | None = None
     # What kind of request this is (e.g. "search.interpret", "ai_test"), for the model
     # response cache's per-class policy. None: the "default" class.
     cache_class: str | None = None

@@ -281,11 +281,52 @@ async def test_hive_output_hitting_the_limit_is_length():
 SCHEMA = {"type": "object", "properties": {"answer": {"type": "integer"}}}
 
 
-async def test_sdk_family_sends_system_first_and_falls_back_to_prompted_schema():
+def tool_completion(arguments='{"answer": 3}', name="response"):
+    """A non-streamed reply whose answer is a forced tool call, as Hive returns it."""
+    call = SimpleNamespace(function=SimpleNamespace(name=name, arguments=arguments))
+    message = SimpleNamespace(content=None, tool_calls=[call], model_extra={})
+    return SimpleNamespace(
+        id="cmpl_tool",
+        model=HIVE_MODEL,
+        choices=[SimpleNamespace(message=message, finish_reason="tool_calls")],
+        usage=SimpleNamespace(prompt_tokens=40, completion_tokens=17),
+        _request_id="req_tool",
+    )
+
+
+async def test_function_calling_forces_one_tool_and_reads_its_arguments():
+    # Hive's models use function_calling (a native json_schema response_format gets a 400).
+    client = openai_client(tool_completion())
+    adapter = OpenAICompatibleAdapter(HIVE, client, TextModelSettings())
+    request = ConversationRequest("hi", 32, system="Be brief.", response_schema=SCHEMA)
+    result = await adapter.generate(CATALOG[HIVE_MODEL], request)
+
+    [params] = client.chat.completions.calls
+    assert params["tools"] == [
+        {"type": "function", "function": {"name": "response", "parameters": SCHEMA}}
+    ]
+    assert params["tool_choice"] == {"type": "function", "function": {"name": "response"}}
+    assert params["stream"] is False  # Hive streams, but tool-call JSON is only usable whole
+    system = params["messages"][0]
+    assert system == {"role": "system", "content": "Be brief."}  # schema is in the tool only
+    assert "response_format" not in params
+    assert result.text == '{"answer": 3}' and result.structured_mode == "function_calling"
+    assert result.stop_reason == "tool_use" and result.output_tokens == 17
+
+
+async def test_function_calling_without_a_tool_call_keeps_the_text_for_validation():
+    reply = completion(model=HIVE_MODEL)  # the model answered in prose instead
+    client = openai_client(reply)
+    adapter = OpenAICompatibleAdapter(HIVE, client, TextModelSettings())
+    request = ConversationRequest("hi", 32, response_schema=SCHEMA)
+    result = await adapter.generate(CATALOG[HIVE_MODEL], request)
+    assert result.text == "Hi! It finds clips."  # the caller's validation rejects it
+
+
+async def test_prompted_schema_goes_into_the_system_prompt():
     client = openai_client(completion())
     adapter = OpenAICompatibleAdapter(DEEPSEEK, client, TextModelSettings())
-    # Hive's models use function_calling, which the SDK family has no path for: prompted.
-    spec = replace(CATALOG["deepseek-flash"], structured_method="function_calling")
+    spec = replace(CATALOG["deepseek-flash"], structured_method="prompted")
     request = ConversationRequest("hi", 32, system="Be brief.", response_schema=SCHEMA)
     result = await adapter.generate(spec, request)
 
@@ -293,10 +334,10 @@ async def test_sdk_family_sends_system_first_and_falls_back_to_prompted_schema()
     system = params["messages"][0]
     assert system["role"] == "system" and system["content"].startswith("Be brief.")
     assert '"answer"' in system["content"] and "response_format" not in params
-    assert result.structured_mode == "prompted"
+    assert "tools" not in params and result.structured_mode == "prompted"
 
 
-async def test_sdk_family_json_mode_sets_response_format_and_keeps_schema_in_prompt():
+async def test_json_mode_sets_response_format_and_keeps_schema_in_prompt():
     client = openai_client(completion())
     adapter = OpenAICompatibleAdapter(DEEPSEEK, client, TextModelSettings())
     spec = replace(CATALOG["deepseek-flash"], structured_method="json_mode")
@@ -307,7 +348,7 @@ async def test_sdk_family_json_mode_sets_response_format_and_keeps_schema_in_pro
     assert result.structured_mode == "json_mode"
 
 
-async def test_sdk_family_anthropic_system_prompt_and_prompted_schema():
+async def test_anthropic_system_prompt_and_prompted_schema():
     client = anthropic_client(claude_message())
     adapter = AnthropicAdapter(ANTHROPIC, client, TextModelSettings())
     request = ConversationRequest("hi", 32, system="Be brief.", response_schema=SCHEMA)
@@ -413,7 +454,7 @@ class RecordingAdapter:
 
 async def test_router_sends_each_model_to_its_provider():
     adapters = {name: RecordingAdapter(name) for name in PROVIDERS}
-    router = ConversationRouter(TextModelSettings(), lambda name, _s, _f: adapters[name])
+    router = ConversationRouter(TextModelSettings(), lambda name, _s: adapters[name])
     assert (await router.generate(req())).provider == "hive"  # default model
     assert (await router.generate(req(model_id="deepseek-flash"))).provider == "deepseek"
     assert (await router.generate(req(model_id="claude-sonnet-5"))).provider == "anthropic"
@@ -423,7 +464,7 @@ async def test_router_sends_each_model_to_its_provider():
 async def test_router_missing_key_only_affects_that_provider():
     claude = RecordingAdapter("anthropic")
 
-    def factory(name, _settings, _family):
+    def factory(name, _settings):
         if name == "hive":
             raise ModelCallError("HIVE_API_KEY is not set", retryable=False)
         return claude
@@ -435,7 +476,7 @@ async def test_router_missing_key_only_affects_that_provider():
 
 
 async def test_router_rejects_unknown_model():
-    router = ConversationRouter(TextModelSettings(), lambda name, _s, _f: RecordingAdapter(name))
+    router = ConversationRouter(TextModelSettings(), lambda name, _s: RecordingAdapter(name))
     with pytest.raises(ModelCallError) as info:
         await router.generate(req(model_id="nope"))
     assert info.value.retryable is False
@@ -446,7 +487,7 @@ async def test_router_rejects_unknown_model():
 
 async def test_router_closes_every_adapter_it_opened_and_is_idempotent():
     adapters = {"hive": RecordingAdapter("hive"), "anthropic": RecordingAdapter("anthropic")}
-    async with ConversationRouter(TextModelSettings(), lambda n, _s, _f: adapters[n]) as router:
+    async with ConversationRouter(TextModelSettings(), lambda n, _s: adapters[n]) as router:
         await router.generate(req())
         await router.generate(req(model_id="claude-haiku-4-5"))
     assert adapters["hive"].closed == 1 and adapters["anthropic"].closed == 1
@@ -457,7 +498,7 @@ async def test_router_closes_every_adapter_it_opened_and_is_idempotent():
 async def test_router_close_failure_does_not_stop_other_closes():
     bad, good = RecordingAdapter("hive", fail_close=True), RecordingAdapter("anthropic")
     router = ConversationRouter(
-        TextModelSettings(), lambda n, _s, _f: {"hive": bad, "anthropic": good}[n]
+        TextModelSettings(), lambda n, _s: {"hive": bad, "anthropic": good}[n]
     )
     await router.generate(req())
     await router.generate(req(model_id="claude-haiku-4-5"))
