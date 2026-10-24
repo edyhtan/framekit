@@ -1,0 +1,26 @@
+# Dependabot version updates (docs/ARCHITECTURE.md §2.2, DECISIONS 2026-10-23).
+# cooldown: a release must be 7 days old before Dependabot proposes it, matching the
+# exclude-newer cooldown in pyproject.toml. Dependabot's cooldown doesn't delay security
+# updates, but exclude-newer still applies: a fix younger than 7 days needs a narrow
+# exclude-newer-package exception (with a removal date) before it can be locked.
+version: 2
+updates:
+  - package-ecosystem: uv
+    directory: "/"
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      python-minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      actions-minor-and-patch:
+        update-types: [minor, patch]

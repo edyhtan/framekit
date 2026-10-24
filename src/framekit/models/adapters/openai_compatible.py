@@ -14,7 +14,7 @@ from typing import Any, ClassVar
 
 import openai
 
-from framekit.contracts.conversation import ConversationRequest, TextDelta
+from framekit.contracts.conversation import ConversationRequest, ModelCallError, TextDelta
 from framekit.models.adapters.base import (
     ExternalAIAdapterBase,
     Reply,
@@ -105,7 +105,8 @@ class OpenAICompatibleAdapter(ExternalAIAdapterBase):
         async for piece in self.iterate(spec, params):
             if isinstance(piece, Reply):
                 reply = piece
-        assert reply is not None
+        if reply is None:  # a protocol bug, not a provider error (same check as `stream`)
+            raise ModelCallError("the adapter produced no final reply", retryable=False)
         return reply
 
     async def iterate(
