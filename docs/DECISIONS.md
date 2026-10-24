@@ -168,7 +168,78 @@ These were decided in short_extract (dates are from its journal) and bind this e
 - **Open:** behavioural malware detection for new dependency releases (e.g. Socket, GuardDog), which doesn't wait for an advisory: the main remaining gap.
 - **Recorded in:** `.github/workflows/security.yml` (new), `tests.yml`, `lint.yml`; `.github/dependabot.yml` (new); `SECURITY.md` (new); `pyproject.toml` (`[tool.uv]`, ruff); `uv.lock`; ARCHITECTURE.md §2 (lockfile row), §2.2 (new); README.md badges, "Development", "Documents"; CLAUDE.md "Workflow".
 
+## 2026-10-24
+
+### 03:16 — `framekit.vision`, first code: vision parameters as checked, resolved data
+- **Decision** (owner: "create vision param now", taking up the proposed first step): `framekit.vision` gets its first code, covering everything that needs no pixels and no model choice.
+  - **Schema:** `VisionParams`, `VisionProfile` and their parts. They're Pydantic models: frozen, and unknown keys are rejected. `from_mapping` / `to_mapping` use the shape of settings.md §5.2. YAML or JSON parsing stays with the caller, so there's no new dependency.
+  - **Where it lives:** `framekit.vision.params`, not `contracts`. The "Contracts are pure" import contract forbids Pydantic there, and contracts are never weakened.
+  - **Import contracts:** the layers contract becomes `framekit.vision | framekit.models` above `framekit.contracts`: independent siblings, checked in both directions. It replaces "models → contracts" and keeps all of it. The provider-SDK contract now covers `vision` too.
+  - **Strategy registry:** strategies are named, versioned code. Each has a kind (`candidates`, `anchor`, `filter`, `allocation`), a settings schema and a `needs_pixels` flag.
+    - Kinds are separate namespaces: the `audio_onsets` anchor and the `audio_onsets` allocation signal are two strategies.
+    - Registering an existing kind + name + version raises.
+    - A reference without a version resolves to the newest version, and the resolved form records it.
+    - Version 1 registers candidates `uniform` and `shot_based`; anchors `shot_boundaries` and `audio_onsets`; filters `dedupe` and `sharpness`; allocation signals `motion` and `audio_onsets`. The two filters need pixels: they're checked and recorded now, and run in the media stage.
+  - **References** come in three shapes, all with the same meaning: a name (`name@N` adds a version), `{name: {settings}}`, or inline `{strategy: name, settings…}` (the candidates shape in the docs).
+  - **Load-time checks** raise one `VisionParamsError` that lists every problem with its path:
+    - unknown or misplaced strategies, and settings that fail a strategy's schema;
+    - native video with anything but uniform candidates, `max_side_px` and `aspect`;
+    - views that don't fit `max_frames_per_scene`;
+    - any `aspect` other than `preserve`, and a quality setting for png;
+    - stages that name a missing profile.
+  - **Checks that need outside facts are separate functions:** `check_against_source` (the analysis copy's fps and long side) and `check_against_model`. A model's limits are described by `ModelVisionCaps`, a dataclass in `framekit.vision`, because the model catalog doesn't declare vision capabilities yet.
+  - **Resolution:**
+    - versions are pinned and defaults filled in: delivery `images`; `jpeg` at quality `85` for images and storyboards; a 2×2 storyboard grid; allocation `window_s` 1.0. All are placeholders;
+    - the form is canonical JSON: sorted keys, no unset values, anchors and allocation signals sorted as sets, filters kept in order;
+    - SHA-256 digests are computed per profile (content only, not the name) and for the whole block.
+  - **Pixel-free planning** (`plan_frames`):
+    - anchors are kept first;
+    - the rest of the cap (the tighter of `max_frames` and `max_frames_per_scene`) goes to the candidates with the highest normalized allocation weight;
+    - `min_gap_s` holds between kept frames;
+    - `overview_plus_detail` views are planned;
+    - native video gives nominal uniform timestamps, with a note;
+    - pixel filters come back as pending;
+    - `split_by_budget` and `per_module` views are checked and recorded but not planned: planning them raises an explicit error, never a silent fallback.
+- **Choices made while building** (each is easy to revisit):
+  - **Budget ties go to the candidate farthest from the frames already kept, then to the earliest,** rather than simply the earliest. With no signal, earliest-first would spend the whole budget at the start of a scene; spreading keeps coverage and is still deterministic.
+  - **`candidates` is required for native video too,** so the fps the provider samples at is always recorded.
+  - **Numeric strategy settings have no defaults** (`fps`, `pick`, a filter's `max_distance` or `window_s`): a missing setting fails instead of being guessed. Settings with a single possible value (`method: phash`, `keep: best_per_window`) and allocation windows do have defaults.
+  - **A storyboard tile is one frame of `max_side_px`.** The grid image's long side is that times the larger grid dimension, and that's what the model check compares with the model's limit.
+  - **In views, anchors count toward the scene cap** and belong to the overview.
+  - **`shot_based` `last` is 1 ms before the cut,** which falls inside the shot's last frame at any frame rate.
+- **Why:** this is the first step that doesn't depend on the open choices (the video model, and default values from a sweep). With the schema, checks and digests in place, the E1 plan, manifest and stage input hashes can build on them, and query-time consumers can already plan frames.
+- **Open:** default values (from a benchmark sweep); vision capabilities in the model catalog; how the media stage feeds pixel-filter results back into the budget; planning for `split_by_budget` and `per_module` views.
+- **Recorded in:** `src/framekit/vision/` (new); `tests/test_vision_params.py`, `tests/test_vision_planning.py`, `tests/vision_examples.py` (new); `pyproject.toml` (import contracts); `src/framekit/__init__.py`; DESIGN.md §2.3, §7 (E1); settings.md status, tags, §5.2; ARCHITECTURE.md status, §1, §2, §2.1, §3; README.md module table, "Vision parameters" (new); CLAUDE.md "Project", "Architecture rule", "Current milestone".
+
+### 04:10 — Vision parameters: fixes after review, before merge
+- **Decision** (fixes to the 03:16 code from independent reviews; each is easy to revisit):
+  - **One error lists every problem, for real.** Each strategy reference is checked where it sits (known for its slot, settings valid), next to the structural checks. The rules that tie settings together (native video, views, png quality, storyboard grid, listed once) run on whatever parsed. A rule is skipped only where a setting it reads has a problem of its own, which is listed instead. Problems are grouped by part, in schema order.
+  - **Strict values:** a number must be a number (YAML `yes` or `"4"` fails) and finite; a whole number is fine where a decimal is expected; list settings must be lists. A reference keeps its checked settings, not the raw input. `views.detail.around` needs at least one signal; `views.detail.span_s` is at least 1 ms.
+  - **Read-only all the way down:** strategy settings are a read-only, hashable dict and lists are tuples, so parsed profiles are hashable; `vision_profiles`, `stages` and the resolved `profiles` are read-only too. A resolved profile keeps the canonical JSON its digest was computed from, and `.mapping` returns a copy, so the digest always describes what runs.
+  - **The same frame is the same millisecond.** This supersedes the 1 ms merge of 03:16: uniform candidates stay distinct up to 1000 fps, and `shot_based` `last` (1 ms before a cut) and an anchor on the cut are two frames. Timestamps and the span's edges are rounded to the nearest millisecond, halves up; a span must hold at least 1 ms.
+  - **Budget fill.** This supersedes 03:16's "ties go to the candidate farthest from the frames already kept": highest weight first; candidates of equal weight in time order, as many as `min_gap_s` allows, at a regular spacing; a spread subset (farthest from the frames kept, ties to the earliest) only when the slots left can't take them all. A cap is now filled whenever `min_gap_s` allows it. Planning is O(n log n): an uncapped hour at 30 fps plans in 0.3 s here, 2.4 s before.
+  - **Views.** This refines 03:16's "anchors count toward the scene cap and belong to the overview": the anchors count toward `overview.max_frames`, so the detail views keep their frames unless the anchors alone outnumber the overview's. The load-time check compares the views with the tighter of `max_frames_per_scene` and `max_frames`, as planning does.
+  - **Detail views are centred on their peak:** the middle of a run of candidates of equal weight, higher than the candidates on either side. Windowed signals make such a plateau around each event, so the middle is the event, or a cluster's middle. Before, ties went to the earliest candidate: a view sat up to half an allocation window early and could miss its event. A second view goes to another peak, not down the slope of the first. A peak cut by the span's edge is centred on its part inside the span: with an allocation `window_s` over twice `span_s`, an event near the edge can fall outside its view (documented).
+  - **Inputs:** in `Signals`, a time listed twice counts once (no zero-length shot), and wrong types raise `TypeError` naming the field; motion works on any scale (weights relative to the strongest sample). `SourceLimits` and `ModelVisionCaps` check their values, and the outside checks reject wrong argument types with `TypeError`. One strategy gives at most 2,000,000 candidates per span.
+  - **Docs:** ARCHITECTURE.md still put the Pydantic A / V / plan / dataset schemas in `contracts`, where the import contracts forbid them (no Pydantic, and the plan embeds `VisionParams`). Their place is now marked open. DESIGN.md §2.3 says `dedupe@1`, not `phash@1`. The clip range of native video is given when a stage runs, not in a profile.
+  - **Tests:** a fixture isolates the strategy registry, so the suite passes in any order and twice in one process. A golden digest pins the documented example's canonical form; changing it changes every recorded digest and needs an entry here.
+- **Why:** the reviews found that a structural error hid every other problem in its profile; that "frozen" stopped at the top level, so a resolved profile could change under its digest; that the 1 ms rule dropped real frames; that the farthest-first fill kept fewer frames than `min_gap_s` allows; that detail views sat beside their peaks; and that ARCHITECTURE.md placed the plan schema where the import contracts forbid it.
+- **Open:** where the Pydantic schemas live (decide before E1); keeping `budget.max_frames` across the spans of a unit (planning applies it per span).
+- **Recorded in:** `src/framekit/vision/` (params, resolve, planning, builtin, signals, checks, the package docstring); `tests/conftest.py` (new), `tests/test_vision_params.py`, `tests/test_vision_planning.py`; DESIGN.md §0.1, §2.3, §9; settings.md §5.2; ARCHITECTURE.md §1, §2, §2.1, §3, §8; README.md "Vision parameters".
+
+### 04:15 — Gemini integration paused (context gathered)
+- **Context gathered** (desk research and a code reading, 2026-10-24; no live probe, since no Gemini key was available):
+  - **Text roles:** Google's OpenAI-compatible endpoint (`https://generativelanguage.googleapis.com/v1beta/openai/`, labelled beta) can serve the text-only `conversation` port through the existing OpenAI-compatible adapter, with one provider entry and no new dependency. Three fixes are needed first:
+    - current Gemini 3.x and 4 models can't switch thinking off, which conflicts with "reasoning off unless asked" and its test;
+    - `completion_tokens` reportedly leaves out thinking tokens, so cost would be undercounted unless they're inferred from `total_tokens`;
+    - a blocked prompt can return no message.
+  - **Images:** the endpoint accepts base64 images, but the port can't carry images yet.
+  - **Native video:** impossible through the compatible endpoint, which has no video input and no fps, clip-range or resolution settings. It needs a `video_understand` port plus a native adapter, either on the official `google-genai` SDK as an optional extra (about 16 more packages, including a second HTTP stack) or on REST over httpx2. For a `byo_media` corpus it must also send `store=false`, use a paid-tier key, and put media identity in the cache key.
+  - **Owner choices left open:** whether "always reasons" models are allowed; Interactions API vs generateContent (only the latter has 50%-off batch and explicit caching); and whether Gemini is the video model at all, which should wait for a timestamp-precision test on a gold set.
+- **Decision** (owner): Gemini integration is paused. Nothing for it is built: no provider entry, no adapter, no dependency.
+- **Recorded in:** DESIGN.md §9 ("Video model").
+
 ---
 
 ## Still open
-See DESIGN.md §9: video, text and embedding models; A / V / plan schema details and the lens spec file format; default vision profiles; baseline scorer details and gold queries; dataset layout; a distribution name if ever published to PyPI; distributed runner; per-lens taxonomies; frames to remote models for bring-your-own corpora; temperature/seed in the cache key; a drop policy (settings.md §8).
+See DESIGN.md §9: video, text and embedding models; A / V / plan schema details and the lens spec file format; default vision profiles; baseline scorer details and gold queries; dataset layout; a distribution name if ever published to PyPI; distributed runner; per-lens taxonomies; frames to remote models for bring-your-own corpora; temperature/seed in the cache key; a drop policy (settings.md §8); where the Pydantic A / V / plan / dataset schemas live; vision capabilities in the model catalog, pixel-filter results feeding back into the frame budget, planning for `split_by_budget` and `per_module` views, and keeping `max_frames` across the spans of a unit (2026-10-24).

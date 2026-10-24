@@ -37,7 +37,7 @@ flowchart TB
         EX["extraction<br/>stages L0–L4, runner, dataset writer, benchmarks, CLI"]
         MA["model access<br/>catalog, router, adapters, response cache"]
         VI["vision<br/>frame selection strategies, image prep, delivery"]
-        CT["contracts<br/>ports, A / V / dataset schemas, lens spec format"]
+        CT["contracts<br/>ports, pure shared types<br/>(where the Pydantic schemas live: §9)"]
     end
     LS --> EX
     CP --> EX
@@ -226,8 +226,8 @@ vision_profiles:
   scene_overview:            # used by L2
     version: 1
     frame_selection:                      # native video: the provider samples, so only
-      candidates: {strategy: uniform, fps: 1}   # uniform fps, a clip range and a size apply
-    image: {max_side_px: 512, aspect: preserve}
+      candidates: {strategy: uniform, fps: 1}   # uniform fps and a size apply (the clip
+    image: {max_side_px: 512, aspect: preserve} # range is given when the stage runs)
     delivery: {mode: native_video}        # or images, storyboard
   scene_detail:              # used by L3a
     version: 1
@@ -256,10 +256,10 @@ stages:
 | `frame_selection.filters` | removing redundant or bad frames, in order | `dedupe` (perceptual hash), `sharpness` (drop blur and animation smear frames) |
 | `frame_selection.budget` | how many frames survive and where they go | a cap per scene or unit; allocation by motion or audio peaks; a minimum gap |
 | `image` | how each frame is prepared | longest side in pixels, encoding and quality; `aspect: preserve` only (never crop or stretch) |
-| `delivery` | how frames reach the model | `images` (a list), `storyboard` (frames tiled into grids: fewer images, less detail), `native_video` (the provider samples: only uniform fps, a clip range and a resolution apply) |
+| `delivery` | how frames reach the model | `images` (a list), `storyboard` (frames tiled into grids: fewer images, less detail), `native_video` (the provider samples: only uniform fps and a resolution apply; the clip range is given when the stage runs) |
 
 **Rules**
-- **Strategies are code, settings are data.** `uniform`, `shot_based`, `phash`, `sharpness`, `motion` allocation and so on are named, versioned components in `framekit.vision`. A vision profile only picks and parameterizes them, so trying a new combination needs no code. A strategy whose algorithm changes gets a new version; a name never changes meaning, so `phash@1` datasets stay reproducible.
+- **Strategies are code, settings are data.** `uniform`, `shot_based`, `dedupe` (perceptual hash), `sharpness`, `motion` allocation and so on are named, versioned components in `framekit.vision`. A vision profile only picks and parameterizes them, so trying a new combination needs no code. A strategy whose algorithm changes gets a new version; a name never changes meaning, so `dedupe@1` datasets stay reproducible.
 - **Capabilities are checked, never guessed.** `native_video` with a non-uniform selection, or more images than a model accepts, is rejected at load time with the reason (§0.2). Nothing is silently resampled.
 - **Validated before any spend:** unknown strategies, missing settings, or settings beyond the analysis copy (more fps or pixels than L0 produced) fail at load time.
 - **Resolved and recorded:** the manifest stores every vision profile fully resolved (defaults filled in) with each strategy's version.
@@ -268,6 +268,8 @@ stages:
 - **Corpus-neutral, with hints:** profiles carry no corpus vocabulary. A corpus profile's perception hints may suggest overrides (e.g. animation: dedupe aggressively, expect smear frames); the overrides land in the plan and the manifest like any other setting.
 - **Reusable outside extraction:** consumers use the same profiles and `framekit.vision` at query time (e.g. the search app's grounding samples densely on a few candidate scenes), so offline and online sampling are described the same way.
 - **Defaults come from a sweep**, not a guess: the benchmark harness compares profiles on the gold set at equal cost (§6.2). The values above are placeholders.
+
+**Built so far** (`framekit.vision`, 2026-10-24): the schema (`VisionParams`, `VisionProfile`; strict values, read-only once parsed), the strategy registry with the version-1 strategies named above, every load-time check (one error lists every problem), the checks against the analysis copy and against a model's limits, resolution to the canonical recorded form with SHA-256 digests (per profile and for the whole block), and **pixel-free planning**: frame timestamps from candidates, anchors, the budget, allocation signals and overview-plus-detail views, using L1 signals only. Filters that need pixels (`dedupe`, `sharpness`) are checked and recorded now; they run in the media stage, with image preparation and delivery (E1). The schema lives in `framekit.vision`, not in `contracts`, because contracts stay free of Pydantic ([ARCHITECTURE.md](ARCHITECTURE.md) §2.1). Signatures: ARCHITECTURE.md §3; every setting, check and filled-in default: [settings.md](settings.md) §5.2.
 
 The plan's other settings (segment granularity, L1 detector settings, phrasings per scene, self-consistency runs, embedding inputs; groups in §2.4; every one listed in [settings.md](settings.md)) follow the same pattern: named, resolved into the manifest, and part of the input hash of the stages they affect. Their detailed schema is open (§9).
 
@@ -493,6 +495,7 @@ flowchart LR
 
 **E1: first dataset (5 units of the test corpus)**
 - A, V and dataset schemas; lens spec format and loader.
+- Vision parameters (§2.3): schema, checks, resolution and pixel-free planning **done (2026-10-24)**; frame extraction, pixel filters, image preparation and delivery come with the media stage.
 - L0–L3a end to end with the corpus profile and modular perception.
 - Emotions & dynamics lens (Appendix B) with a ~10-scene gold set, plus a **minimal second lens** (e.g. comedy craft, ~10 labels) on the same scenes, purely to prove framekit has no lens leakage.
 - Dataset writer and reader v1; CLI `extract`.
@@ -538,9 +541,11 @@ Users' copies of a corpus differ (releases, edits, frame rates). A dedicated mod
 
 ## 9. Open decisions
 
-- **Video model** for L2/L3a (Gemini assumed; Claude via frames is an option; verify cost and limits).
+- **Video model** for L2/L3a (Gemini assumed; Claude via frames is an option; verify cost and limits). Gemini integration is **paused** (DECISIONS.md 2026-10-24): native video needs a `video_understand` port and a native adapter; text roles would work through the OpenAI-compatible adapter after small fixes.
 - **Text model** for lens passes; **embedding models** (text + SigLIP).
 - **A, V and plan schemas in detail,** including the lens spec file format (YAML or JSON plus prompt files). The full setting list and derivation rules v1 are drafted in [settings.md](settings.md); its §8 lists the open decisions it raised (frames to cloud models for bring-your-own corpora, cache keys for repeated runs, dropped rows).
+- **Where the Pydantic schemas live** (A, V, plan, dataset manifest, lens spec): not in `contracts`, which stays pure (no Pydantic), and `ExtractionPlan` embeds `VisionParams` from `framekit.vision`, so they need a module above `vision` and `models` (e.g. `extraction`, or a schema module of its own). Decide before E1 ([ARCHITECTURE.md](ARCHITECTURE.md) §8).
+- **Vision, after its first code** (§2.3): vision capabilities in the model catalog (callers describe a model with `ModelVisionCaps` until then); how the media stage feeds pixel-filter results back into the frame budget; planning `split_by_budget` and `per_module` views; keeping `budget.max_frames` across the spans of a unit (planning applies it per span).
 - **Baseline scorer details:** its fixed embedding model and metrics (§6.2); the gold-query set per corpus.
 - **Default vision profiles** per stage, from a benchmark sweep (§2.3, §6.2).
 - **Dataset layout details:** table split, partitioning, manifest fields.

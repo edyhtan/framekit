@@ -1,7 +1,7 @@
 # CLAUDE.md
 
 ## Project
-framekit: a non-commercial, general-purpose Python library of AI building blocks for video datasets. One package with modules: `contracts` (ports, schemas), `models` (model access: catalog, router, adapters, response cache) and `extraction`. New capabilities become new modules, not new packages, unless there's a concrete reason to split. The extraction module's main function is `extract(A, V) → dataset`: **A** is the given description of the search space (intent, lens specs, target moment length, scope, example queries), **V** is a video corpus (corpus profile + unit references), and an optional **plan** says how A is realized (vision, segmentation, models, quality rules, budget, formatting). The dataset holds segments, text, vectors and provenance (Parquet / Arrow + manifest).
+framekit: a non-commercial, general-purpose Python library of AI building blocks for video datasets. One package with modules: `contracts` (ports, schemas), `models` (model access: catalog, router, adapters, response cache), `vision` (`vision_params`: schema, checks, frame planning) and `extraction`. New capabilities become new modules, not new packages, unless there's a concrete reason to split. The extraction module's main function is `extract(A, V) → dataset`: **A** is the given description of the search space (intent, lens specs, target moment length, scope, example queries), **V** is a video corpus (corpus profile + unit references), and an optional **plan** says how A is realized (vision, segmentation, models, quality rules, budget, formatting). The dataset holds segments, text, vectors and provenance (Parquet / Arrow + manifest).
 
 Consumers: the video clip search agent ([short_extract](https://github.com/edyhtan/short_extract)), benchmarks, and experimental model training. The library never depends on a consumer.
 
@@ -21,7 +21,7 @@ Every design decision is recorded in `docs/DECISIONS.md`, the timeline journal, 
 Always use rendered diagrams, never ASCII art: Mermaid code blocks (`flowchart` for pipelines and data flow, `erDiagram` for data, `stateDiagram-v2`, `sequenceDiagram`, `gantt`). Plain-text folder trees may stay in normal code blocks.
 
 ## Architecture rule (most important)
-Layers: **contracts** (pure: ports, schemas, lens spec format) · **model access** (catalog, router, adapters, response cache) · **extraction** (stages, runner, dataset, benchmarks, CLI). See `docs/ARCHITECTURE.md` §1–§2.
+Layers: **contracts** (pure: ports, schemas, lens spec format) · **model access** (catalog, router, adapters, response cache) and **vision** (the `vision_params` schema, strategies, frame planning), independent siblings that never import each other · **extraction** (stages, runner, dataset, benchmarks, CLI). See `docs/ARCHITECTURE.md` §1–§2.
 - Library code and the dataset schema never reference lens concepts (emotion, dynamic, situation, gag, …) or corpus concepts (short, era, Tom, …). They enter only as data: lens specs in A, the corpus profile in V, overrides in the plan.
 - No lens-specific columns: lens output lives in `annotations` / `phrasings`, validated against the lens spec.
 - If a feature seems to need a lens- or corpus-specific branch, extend the lens spec format or the corpus profile instead, and discuss first.
@@ -52,7 +52,7 @@ Layers: **contracts** (pure: ports, schemas, lens spec format) · **model access
 - Supply chain (`docs/ARCHITECTURE.md` §2.2): pin every GitHub Action to a full commit SHA with a `# vX.Y.Z` comment, set `persist-credentials: false` on checkout, give every workflow and job least-privilege `permissions:`, and pin tool versions (uv, zizmor). Dependencies resolve with a 7-day release cooldown (`exclude-newer`); a newer security fix gets a narrow `exclude-newer-package` exception with a comment and a removal date. Fix ruff `S` findings, or keep one with an inline `# noqa: Sxxx` and the reason. No secrets in CI.
 
 ## Current milestone
-E0 done (v0.1.0: `contracts`, `models`). Next, E1: first dataset on 5 units with two lenses (`docs/DESIGN.md` §7); it needs the video and embedding model choices first (ask).
+E0 done (v0.1.0: `contracts`, `models`). On `main` since: `vision` (schema, checks, resolution, pixel-free planning). Next, E1: first dataset on 5 units with two lenses (`docs/DESIGN.md` §7); it needs the video and embedding model choices first (ask).
 
 ## Open decisions
 See `docs/DESIGN.md` §9. Ask before picking models, the lens spec file format, the dataset layout, a distributed runner, or a lens's base taxonomy.

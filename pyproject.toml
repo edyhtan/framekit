@@ -62,10 +62,11 @@ root_package = "framekit"
 include_external_packages = true
 
 [[tool.importlinter.contracts]]
-name = "Layers: models -> contracts"
+# vision and models are independent siblings: neither may import the other.
+name = "Layers: vision | models -> contracts"
 type = "layers"
 layers = [
-    "framekit.models",
+    "framekit.vision | framekit.models",
     "framekit.contracts",
 ]
 
@@ -84,6 +85,7 @@ source_modules = [
     "framekit.models.catalog",
     "framekit.models.router",
     "framekit.models.cache",
+    "framekit.vision",
 ]
 forbidden_modules = ["openai", "anthropic"]
 allow_indirect_imports = true
