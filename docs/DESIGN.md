@@ -271,7 +271,7 @@ stages:
 
 **Built so far** (`framekit.vision`, 2026-10-24): the schema (`VisionParams`, `VisionProfile`; strict values, read-only once parsed), the strategy registry with the version-1 strategies named above, every load-time check (one error lists every problem), the checks against the analysis copy and against a model's limits, resolution to the canonical recorded form with SHA-256 digests (per profile and for the whole block), and **pixel-free planning**: frame timestamps from candidates, anchors, the budget, allocation signals and overview-plus-detail views, using L1 signals only. Filters that need pixels (`dedupe`, `sharpness`) are checked and recorded now; they run in the media stage, with image preparation and delivery (E1). The schema lives in `framekit.vision`, not in `contracts`, because contracts stay free of Pydantic ([ARCHITECTURE.md](ARCHITECTURE.md) §2.1). Signatures: ARCHITECTURE.md §3; every setting, check and filled-in default: [settings.md](settings.md) §5.2.
 
-The plan's other settings (segment granularity, L1 detector settings, phrasings per scene, self-consistency runs, embedding inputs; groups in §2.4; every one listed in [settings.md](settings.md)) follow the same pattern: named, resolved into the manifest, and part of the input hash of the stages they affect. Their detailed schema is open (§9).
+The plan's other settings (segment granularity, L1 detector settings, phrasings per scene, self-consistency runs, embedding inputs; groups in §2.4; every one listed in [settings.md](settings.md)) follow the same pattern: named, resolved into the manifest, and part of the input hash of the stages they affect. Their schema is built (`ExtractionPlan`, 2026-10-24).
 
 ### 2.4 A, the plan, and benchmarking A
 
@@ -494,7 +494,7 @@ flowchart LR
 - **Done (2026-10-23):** the conversation port, `ResponseStore`, catalog, router, both adapters and the response cache with a file store; history kept via `git filter-repo`; CI on locked and newest dependencies. ids and run records follow with E1, where extraction first needs them.
 
 **E1: first dataset (5 units of the test corpus)**
-- Lens spec format and loader **built (2026-10-24)**; A, V and dataset schemas next.
+- Lens spec format and loader, and the A and V schemas (search space, corpus, plan, gold set): **built (2026-10-24)**; the dataset schema next.
 - Vision parameters (§2.3): schema, checks, resolution and pixel-free planning **done (2026-10-24)**; frame extraction, pixel filters, image preparation and delivery come with the media stage.
 - L0–L3a end to end with the corpus profile and modular perception.
 - Emotions & dynamics lens (Appendix B) with a ~10-scene gold set, plus a **minimal second lens** (e.g. comedy craft, ~10 labels) on the same scenes, purely to prove framekit has no lens leakage.
@@ -543,7 +543,7 @@ Users' copies of a corpus differ (releases, edits, frame rates). A dedicated mod
 
 - **Video model** for L2/L3a (Gemini assumed; Claude via frames is an option; verify cost and limits). Gemini integration is **paused** (DECISIONS.md 2026-10-24): native video needs a `video_understand` port and a native adapter; text roles would work through the OpenAI-compatible adapter after small fixes.
 - **Text model** for lens passes; **embedding models** (text + SigLIP).
-- **A, V and plan schemas in detail.** The full setting list and derivation rules v1 are drafted in [settings.md](settings.md); its §8 lists the open decisions it raised. Decided 2026-10-24: the schemas live in `framekit.extraction.schemas`, and the lens spec file format (v1, §4).
+- **A, V and plan schemas, and the lens spec file format:** built as v1 (2026-10-24; DECISIONS), in `framekit.extraction.schemas`, revisitable. Every setting: [settings.md](settings.md); its §8 lists the open decisions they raised.
 - **Vision, after its first code** (§2.3): vision capabilities in the model catalog (callers describe a model with `ModelVisionCaps` until then); how the media stage feeds pixel-filter results back into the frame budget; planning `split_by_budget` and `per_module` views; keeping `budget.max_frames` across the spans of a unit (planning applies it per span).
 - **Baseline scorer details:** its fixed embedding model and metrics (§6.2); the gold-query set per corpus.
 - **Default vision profiles** per stage, from a benchmark sweep (§2.3, §6.2).

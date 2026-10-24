@@ -9,7 +9,7 @@ AI building blocks for video datasets, in Python. One package with modules you c
 | `framekit.contracts` | provider-neutral types: the conversation port, the response-store port | **v0.1.0** |
 | `framekit.models` | model access: a catalog of providers and models (extendable with your own), a router, adapters on the official `openai` and `anthropic` SDKs, a record / replay response cache | **v0.1.0** |
 | `framekit.vision` | how a model sees video: frame selection, image preparation and delivery | **partial** on `main`: schema, checks, pixel-free planning ([settings](docs/settings.md) §5.2) |
-| `framekit.extraction` | turns a video corpus into a dataset of segments, text, vectors and provenance, plus a benchmark harness and a CLI | in progress on `main`: lens specs ([settings](docs/settings.md) §3.1); the rest designed ([design](docs/DESIGN.md)) |
+| `framekit.extraction` | turns a video corpus into a dataset of segments, text, vectors and provenance, plus a benchmark harness and a CLI | in progress on `main`: lens specs and the run inputs ([settings](docs/settings.md) §3–§6); the rest designed ([design](docs/DESIGN.md)) |
 
 Used by the video clip search agent ([short_extract](https://github.com/edyhtan/short_extract)), and built for benchmarks and experimental model training.
 
@@ -340,7 +340,7 @@ print(plan.timestamps)                                # seconds on the video's o
 
 ## Extraction (preview)
 
-Being built (milestone E1). **Lens specs** are in: `LensSpec.load("lenses/my_lens")` reads a spec (YAML or JSON), checks it, compiles its fields into the JSON Schema a lens pass sends, and checks replies against it ([settings](docs/settings.md) §3.1). The rest is where framekit is going. An extraction run answers six questions:
+Being built (milestone E1). **Lens specs** are in: `LensSpec.load("lenses/my_lens")` reads a spec (YAML or JSON), checks it, compiles its fields into the JSON Schema a lens pass sends, and checks replies against it ([settings](docs/settings.md) §3.1). **The run inputs** are in too: `SearchSpace.load`, `Corpus.load`, `ExtractionPlan.load` and `GoldSet.load` read and check the files of [settings](docs/settings.md) §3–§6, every problem in one error. The rest is where framekit is going. An extraction run answers six questions:
 1. What should people be able to find?
 2. Which videos?
 3. How is the video looked at?

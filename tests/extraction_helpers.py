@@ -41,3 +41,42 @@ def write_yaml(path: Path, data: Any) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
     return path
+
+
+def base_plan() -> dict[str, Any]:
+    """A small, fast plan on the scripted models."""
+    return {
+        "version": 1,
+        "normalize": {"fps": 8, "height_px": 240},
+        "vision_profiles": {
+            "overview": {
+                "version": 1,
+                "frame_selection": {
+                    "candidates": {"strategy": "uniform", "fps": 0.5},
+                    "budget": {"max_frames_per_scene": 9},
+                },
+                "image": {"max_side_px": 160},
+                "delivery": {"mode": "storyboard", "storyboard": {"rows": 3, "cols": 3}},
+            },
+            "detail": {
+                "version": 1,
+                "frame_selection": {
+                    "candidates": {"strategy": "uniform", "fps": 2},
+                    "anchors": ["shot_boundaries"],
+                    "filters": [{"dedupe": {"max_distance": 4}}, {"sharpness": {"window_s": 1.0}}],
+                    "budget": {"max_frames_per_scene": 4, "allocate_by": ["motion"]},
+                },
+                "image": {"max_side_px": 200, "format": "jpeg", "quality": 80},
+            },
+        },
+        "stages": {"L2": {"vision": "overview"}, "L3a": {"vision": "detail"}},
+        "segmentation": {"scene_length_s": {"min": 4, "target": 8, "max": 12}},
+        "lens_passes": {"phrasings": {"count": 3}},
+        "models": {
+            "L2": {"model_id": "seer", "max_tokens": 1024},
+            "L3a": {"model_id": "seer", "max_tokens": 1024},
+            "L3b": {"model_id": "writer", "max_tokens": 512},
+            "embed_text": {"model_id": "vectors"},
+        },
+        "governance": {"model_inputs": "local_only"},
+    }
