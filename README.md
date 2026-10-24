@@ -239,8 +239,8 @@ async with ConversationRouter(ModelSettings(default_model="my-local-model"), reg
 ```
 
 - **Any OpenAI-compatible server** (a hosted provider, a self-hosted vLLM server, Ollama's `/v1` endpoint) is config only, as above. Probe it before relying on it: reasoning switches, structured output and streaming differ from server to server.
-- **Another protocol or client** needs an adapter: subclass `ExternalAIAdapterBase` from `framekit.models.adapters`, set `adapter_version`, implement `build_params` and `call`. The base does the rest: output budget, reasoning switches, timing, error mapping, stop reasons, cost, provenance.
-- **Only point a provider at a host you trust.** framekit sends the provider's key to its `base_url`, and the SDKs also send some of their own environment variables there (a known gap, described in the guide).
+- **Another protocol or client** needs an adapter: subclass `ExternalAIAdapterBase` from `framekit.models.adapters`, set `adapter_version`, implement `build_params` and `call`, and map your client's errors to `ModelCallError` (override `map_error`, or raise `ModelCallError` in `call`). The base does the rest: output budget, reasoning switches, timing, stop reasons, cost, provenance.
+- **Only point a provider at a host you trust**, over `https` unless it's on the same machine. framekit sends the provider's key to its `base_url`, and the SDKs also send some of their own environment variables there (known gaps, described in the guide).
 
 Guide, with a complete runnable adapter: **[docs/adapters.md](docs/adapters.md)**.
 
@@ -287,7 +287,7 @@ assert again.cached and again.text == first.text and again.cost_usd == 0
 | `record` | replay hits; on a miss, call the provider and store the reply |
 | `replay` | hits only; a miss raises `ModelCallError` (for tests that must never spend money) |
 
-- **What counts as the same request:** the cache key covers everything that shapes a reply: the resolved model, system prompt, history, message, budget, reasoning switch, schema, and whether it was streamed. Change any of them and it's a miss.
+- **What counts as the same request:** the cache key covers everything in the request that shapes a reply: the resolved model, system prompt, history, message, budget, reasoning switch, schema, and whether it was streamed. Change any of them and it's a miss. It doesn't cover the provider or its host, so registries that map one `model_id` to different hosts need separate namespaces ([docs/adapters.md](docs/adapters.md#provenance-and-the-response-cache)).
 - **Marked replays:** replays come back with `cached=True`, `cost_usd=0`, and `adapter_version` ending in `+cache`, so stored records never mistake a replay for a real call.
 - **Streams:** they replay their pieces in order; use `CacheSettings(replay_pace="original")` to keep the recorded timing.
 - **Settings:** `ttl_s` (default 7 days), `namespace` (change it to invalidate everything at once), `max_entry_bytes` (larger replies aren't stored).

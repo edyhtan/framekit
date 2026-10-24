@@ -5,6 +5,7 @@ No real API calls: the custom adapter talks to a fake gateway client, and the re
 clients are only constructed, never used.
 """
 
+import pickle
 from dataclasses import replace
 from decimal import Decimal
 from typing import Any, ClassVar
@@ -16,6 +17,7 @@ from test_cache import MemoryStore
 
 import framekit.models.adapters as template
 import framekit.models.registry as registry_module
+import framekit.models.router as router_module
 from framekit.contracts import (
     ConversationRequest,
     ConversationResult,
@@ -224,11 +226,15 @@ class RaisingAdapter(ExternalAIAdapterBase):
         raise self.client
 
 
+async def drain(stream):
+    return [piece async for piece in stream]
+
+
 async def generate_and_stream_errors(adapter):
     errors = []
     for run in (
         lambda: adapter.generate(SPEC, req()),
-        lambda: anext(adapter.stream(SPEC, req())),
+        lambda: drain(adapter.stream(SPEC, req())),
     ):
         try:
             await run()
@@ -242,6 +248,59 @@ async def test_model_call_error_from_call_passes_through_unchanged():
     adapter = RaisingAdapter(GATEWAY, error, SETTINGS)
     assert await generate_and_stream_errors(adapter) == [error, error]  # the same object
     assert error.__cause__ is None
+
+
+class CatchAllAdapter(RaisingAdapter):
+    """Maps every exception it's given, without `super().map_error`."""
+
+    def map_error(self, exc):
+        return ModelCallError(f"gateway failed: {exc}", retryable=True)
+
+
+class CatchAllStreamingAdapter(CatchAllAdapter):
+    async def iterate(self, spec, params):
+        yield TextDelta("text", "partial")
+        raise self.client
+
+
+@pytest.mark.parametrize("adapter_class", [CatchAllAdapter, CatchAllStreamingAdapter])
+async def test_a_model_call_error_passes_through_even_a_catch_all_map_error(adapter_class):
+    error = ModelCallError("request rejected: bad schema", retryable=False)
+    adapter = adapter_class(GATEWAY, error, SETTINGS)
+    assert await generate_and_stream_errors(adapter) == [error, error]  # the same object
+    assert error.retryable is False and error.__cause__ is None  # not made retryable
+
+    other = OSError("connection reset")  # anything else still goes through the override
+    adapter = adapter_class(GATEWAY, other, SETTINGS)
+    for mapped in await generate_and_stream_errors(adapter):
+        assert isinstance(mapped, ModelCallError) and mapped.retryable is True
+        assert mapped.__cause__ is other
+
+
+@pytest.mark.parametrize("returned", ["boom", False, RuntimeError("not a ModelCallError")])
+async def test_map_error_returning_anything_else_is_a_type_error(returned):
+    class WrongReturn(RaisingAdapter):
+        def map_error(self, exc):
+            return returned
+
+    original = ValueError("the real error")
+    errors = await generate_and_stream_errors(WrongReturn(GATEWAY, original, SETTINGS))
+    assert len(errors) == 2
+    for error in errors:
+        assert isinstance(error, TypeError)
+        assert "WrongReturn.map_error must return a ModelCallError or None" in str(error)
+        assert error.__cause__ is original  # the real error isn't lost
+
+
+async def test_map_error_returning_the_exception_itself_lets_it_propagate():
+    class PassThrough(RaisingAdapter):
+        def map_error(self, exc):
+            return exc
+
+    original = ValueError("the real error")
+    adapter = PassThrough(GATEWAY, original, SETTINGS)
+    assert await generate_and_stream_errors(adapter) == [original, original]
+    assert original.__cause__ is None  # never chained to itself
 
 
 async def test_without_an_sdk_other_errors_surface_as_they_are():
@@ -342,6 +401,129 @@ def test_an_adapter_without_make_client_is_built_directly():
     assert RaisingAdapter(GATEWAY, "a client", ModelSettings()).client == "a client"
 
 
+def test_an_empty_key_variable_is_named_as_the_problem():
+    # A registry refuses key_env="" (test_validation_checks_names_and_fields); an adapter
+    # built from such a config directly says what's wrong instead of naming no variable.
+    with pytest.raises(ModelCallError) as info:
+        GatewayAdapter.from_environment(replace(GATEWAY, key_env=""), ModelSettings())
+    assert info.value.retryable is False
+    assert "provider 'my-gateway' has an empty key_env" in str(info.value)
+
+
+async def test_a_subclass_may_assign_self_client():
+    class Assigning(GatewayAdapter):
+        def __init__(self, config, client, settings):
+            super().__init__(config, client, settings)
+            self.client = FakeGatewayClient("replacement", None, 1.0)
+
+    adapter = Assigning(GATEWAY, FakeGatewayClient("original", None, 1.0), SETTINGS)
+    assert adapter.client.api_key == "replacement"
+    await adapter.generate(SPEC, req())
+    await adapter.aclose()
+    original, replacement = FakeGatewayClient.built
+    assert replacement.payloads and replacement.closed  # used and closed: the same client
+    assert not original.payloads and not original.closed
+
+
+class AcloseOnlyClient:
+    """Shaped like an `httpx.AsyncClient`: `aclose()`, no `close()`."""
+
+    def __init__(self):
+        self.calls = []
+
+    async def aclose(self):
+        self.calls.append("aclose")
+
+
+class SyncCloseClient:
+    """Shaped like a `requests.Session`: a synchronous `close()`."""
+
+    def __init__(self):
+        self.calls = []
+
+    def close(self):
+        self.calls.append("close")
+
+
+class BothCloseClient(AcloseOnlyClient, SyncCloseClient):
+    pass
+
+
+@pytest.mark.parametrize(
+    ("client_class", "expected"),
+    [
+        (AcloseOnlyClient, ["aclose"]),
+        (SyncCloseClient, ["close"]),
+        (BothCloseClient, ["aclose"]),  # aclose() is preferred
+    ],
+)
+async def test_the_default_aclose_closes_common_client_shapes(client_class, expected, caplog):
+    clients = []
+
+    class Adapter(GatewayAdapter):
+        @classmethod
+        def make_client(cls, api_key, base_url, timeout_s):
+            clients.append(client_class())
+            return clients[-1]
+
+        async def call(self, spec, params):
+            return Reply(text="ok", stop_reason="stop")
+
+    registry = DEFAULT_REGISTRY.extend(
+        providers=[GATEWAY], models=[SPEC], adapters={"gateway": Adapter}
+    )
+    async with ConversationRouter(SETTINGS, registry=registry) as port:
+        await port.generate(req())
+    [client] = clients
+    assert client.calls == expected
+    assert "closing a model adapter failed" not in caplog.text
+    await RaisingAdapter(GATEWAY, object(), SETTINGS).aclose()  # neither: left as it is
+
+
+class NoVersionAdapter(GatewayAdapter):
+    adapter_version = ""  # empty: nothing to record in the results
+
+
+class AbstractAdapter(ExternalAIAdapterBase):
+    """Forgot `call`. Records the clients `make_client` builds."""
+
+    adapter_version: ClassVar[str] = "abstract-1"
+    clients: ClassVar[list[FakeGatewayClient]] = []
+
+    @classmethod
+    def make_client(cls, api_key, base_url, timeout_s):
+        client = FakeGatewayClient(api_key, base_url, timeout_s)
+        cls.clients.append(client)
+        return client
+
+    def build_params(self, spec, request, max_tokens):
+        return {}
+
+
+def test_an_adapter_that_cannot_work_fails_before_any_call_or_client():
+    class Unversioned(ExternalAIAdapterBase):  # forgot adapter_version
+        def build_params(self, spec, request, max_tokens):
+            return {}
+
+        async def call(self, spec, params):
+            raise AssertionError("never called")
+
+    # Built directly (e.g. in an adapter_factory): refused when the adapter is built, not
+    # when the first reply is read, after the call is paid for.
+    with pytest.raises(TypeError, match="Unversioned must set adapter_version"):
+        Unversioned(GATEWAY, None, SETTINGS)
+    with pytest.raises(TypeError, match="NoVersionAdapter must set adapter_version"):
+        NoVersionAdapter(GATEWAY, None, SETTINGS)
+
+    # From the environment: refused before make_client builds a client nobody would close.
+    AbstractAdapter.clients.clear()
+    with pytest.raises(TypeError, match="AbstractAdapter doesn't implement call"):
+        AbstractAdapter.from_environment(GATEWAY, SETTINGS)
+    with pytest.raises(TypeError, match="NoVersionAdapter must set adapter_version"):
+        NoVersionAdapter.from_environment(GATEWAY, SETTINGS)
+    assert AbstractAdapter.clients == [] and FakeGatewayClient.built == []
+
+
 # --- the registry ------------------------------------------------------------------------
 
 
@@ -390,6 +572,104 @@ def test_validation_catches_wrong_types():
         ModelRegistry(providers=[{"name": "x", "protocol": "openai"}])
     with pytest.raises(ValueError, match="a list of ModelSpecs, not a single one"):
         DEFAULT_REGISTRY.extend(providers=[GATEWAY], models=SPEC)
+
+
+def test_validation_reports_wrong_argument_shapes_as_problems():
+    with pytest.raises(ValueError) as info:
+        ModelRegistry(providers=None, models="inhouse/llm-1", adapters=GatewayAdapter)
+    message = str(info.value)
+    assert message.startswith("invalid model registry (3 problems):")
+    assert "providers must be a list of ProviderConfigs, got None" in message
+    assert "models must be a list of ModelSpecs, got str" in message
+    assert "adapters must be a mapping of protocol names to adapter classes" in message
+
+    with pytest.raises(ValueError, match="providers must be a list of ProviderConfigs, got dict"):
+        DEFAULT_REGISTRY.extend(providers=PROVIDERS)
+    for wrong in ([("gateway", GatewayAdapter)], {GatewayAdapter}):  # pairs, a set
+        with pytest.raises(ValueError, match="adapters must be a mapping"):
+            DEFAULT_REGISTRY.extend(adapters=wrong)
+
+
+def test_validation_checks_names_and_fields():
+    with pytest.raises(ValueError) as info:
+        ModelRegistry(
+            providers=[
+                ProviderConfig(None, "gateway"),
+                ProviderConfig("", "gateway"),
+                replace(GATEWAY, protocol=None),
+                replace(GATEWAY, name="keyed", key_env=""),
+            ],
+            models=[
+                replace(SPEC, model_id=None),
+                replace(SPEC, model_id="m-float", input_usd_per_mtok=0.3),  # read after the call
+                replace(SPEC, model_id="m-blank", provider=" "),
+            ],
+            adapters={None: GatewayAdapter, "": GatewayAdapter, "gateway": GatewayAdapter},
+        )
+    message = str(info.value)
+    assert message.startswith("invalid model registry (9 problems):")
+    for fragment in (
+        "a provider's name must be a non-empty string, got None",
+        "a provider's name must be a non-empty string, got ''",
+        "provider 'my-gateway': protocol must be a non-empty string, got None",
+        "provider 'keyed': key_env must name the environment variable that holds its key",
+        "a model's model_id must be a non-empty string, got None",
+        "model 'm-float': input_usd_per_mtok must be a Decimal",
+        "model 'm-blank': provider must be a non-empty string, got ' '",
+        "a protocol name must be a non-empty string, got None",
+        "a protocol name must be a non-empty string, got ''",
+    ):
+        assert fragment in message
+
+
+def test_validation_refuses_adapter_classes_that_cannot_work():
+    class InstanceMakeClient(GatewayAdapter):
+        def make_client(self, api_key, base_url, timeout_s):  # forgot @classmethod
+            return FakeGatewayClient(api_key, base_url, timeout_s)
+
+    with pytest.raises(ValueError) as info:
+        DEFAULT_REGISTRY.extend(
+            providers=[
+                GATEWAY,
+                replace(GATEWAY, name="gw-2", protocol="gw-2"),
+                replace(GATEWAY, name="gw-3", protocol="gw-3"),
+            ],
+            models=[SPEC],
+            adapters={
+                "gateway": AbstractAdapter,
+                "gw-2": NoVersionAdapter,
+                "gw-3": InstanceMakeClient,
+            },
+        )
+    message = str(info.value)
+    assert message.startswith("invalid model registry (3 problems):")
+    assert "protocol 'gateway': AbstractAdapter doesn't implement call" in message
+    assert "protocol 'gw-2': NoVersionAdapter must set adapter_version" in message
+    assert "protocol 'gw-3': InstanceMakeClient.make_client must be a classmethod" in message
+    assert "which has no adapter" not in message  # reported as broken, not as missing
+
+    # Without make_client at all, an adapter class is accepted: the registry still resolves
+    # its models when an adapter_factory builds the adapters
+    # (test_an_adapter_without_make_client_is_built_directly).
+    accepted = DEFAULT_REGISTRY.extend(adapters={"raising": RaisingAdapter})
+    assert accepted.adapters["raising"] is RaisingAdapter
+
+
+def test_repr_survives_odd_names_edited_into_the_built_ins(monkeypatch):
+    # Only reachable by editing the built-in dicts in place: a registry refuses such names.
+    monkeypatch.setitem(PROVIDERS, None, GATEWAY)
+    assert "'None'" in repr(DEFAULT_REGISTRY)
+
+
+def test_a_registry_pickles_and_the_default_stays_the_built_ins():
+    restored = pickle.loads(pickle.dumps(REGISTRY))  # noqa: S301 - our own bytes
+    assert restored is not REGISTRY
+    assert dict(restored.providers) == dict(REGISTRY.providers)
+    assert dict(restored.models) == dict(REGISTRY.models)
+    assert dict(restored.adapters) == dict(REGISTRY.adapters)
+    assert restored.resolve("inhouse/llm-1") == SPEC
+    # By reference: in the process that loads it, it's that process's live built-ins.
+    assert pickle.loads(pickle.dumps(DEFAULT_REGISTRY)) is DEFAULT_REGISTRY  # noqa: S301
 
 
 def test_a_registry_from_scratch_holds_only_what_it_is_given():
@@ -469,7 +749,19 @@ async def test_a_model_added_to_one_registry_is_invisible_elsewhere(monkeypatch)
 
 def test_the_public_names_keep_working():
     assert ConversationRouter().registry is DEFAULT_REGISTRY
+    with pytest.raises(AttributeError):
+        ConversationRouter().registry = REGISTRY  # read-only: pass it to the constructor
     assert PROTOCOLS is registry_module.PROTOCOLS  # router.PROTOCOLS is the same dict
+    # Names the router module had before the registry existed are still importable from it.
+    for name, canonical in {
+        "CATALOG": CATALOG,
+        "PROVIDERS": PROVIDERS,
+        "ModelCallError": ModelCallError,
+        "AnthropicAdapter": AnthropicAdapter,
+        "OpenAICompatibleAdapter": OpenAICompatibleAdapter,
+        "create_adapter": create_adapter,
+    }.items():
+        assert getattr(router_module, name) is canonical
     assert dict(DEFAULT_REGISTRY.adapters) == PROTOCOLS
     assert dict(DEFAULT_REGISTRY.models) == CATALOG
     assert dict(DEFAULT_REGISTRY.providers) == PROVIDERS
@@ -509,7 +801,9 @@ async def test_a_catalog_edit_with_a_positional_adapter_factory_still_works(monk
 
     def factory(provider, settings):
         built.append(provider)
-        return GatewayAdapter(GATEWAY, FakeGatewayClient("k", None, 1.0), settings)
+        if provider == GATEWAY.name:
+            return GatewayAdapter(GATEWAY, FakeGatewayClient("k", None, 1.0), settings)
+        return create_adapter(provider, settings)  # the built-ins
 
     async with ConversationRouter(SETTINGS, factory) as port:
         result = await port.generate(req())
@@ -517,16 +811,47 @@ async def test_a_catalog_edit_with_a_positional_adapter_factory_still_works(monk
 
 
 async def test_a_passed_adapter_factory_wins_over_the_registry():
+    # The factory is called for every provider the router uses: it builds its own adapter
+    # and leaves the rest to the registry (docs/adapters.md, "Adapters built by hand").
+    other = replace(GATEWAY, name="other-gateway")
+    registry = REGISTRY.extend(
+        providers=[other],
+        models=[replace(SPEC, provider=other.name, model_id="inhouse/llm-other")],
+    )
     built = []
 
     def factory(provider, settings):
         built.append(provider)
-        return GatewayAdapter(GATEWAY, FakeGatewayClient("from-factory", None, 1.0), settings)
+        if provider == GATEWAY.name:
+            client = FakeGatewayClient("from-factory", None, 1.0)
+            return GatewayAdapter(GATEWAY, client, settings)
+        return registry.create_adapter(provider, settings)
 
+    async with ConversationRouter(SETTINGS, factory, registry=registry) as port:
+        mine = await port.generate(req())
+        theirs = await port.generate(req(model_id="inhouse/llm-other"))
+    assert built == ["my-gateway", "other-gateway"]
+    assert (mine.provider, theirs.provider) == ("my-gateway", "other-gateway")
+    keys = [client.api_key for client in FakeGatewayClient.built]
+    assert keys == ["from-factory", PLACEHOLDER_KEY]  # the second built by the registry
+
+
+async def test_a_falsy_adapter_factory_is_still_used():
+    class MemoFactory(dict):
+        """Remembers the adapters it built: empty, so falsy, when the router is built."""
+
+        def __call__(self, provider, settings):
+            if provider not in self:
+                client = FakeGatewayClient("memo", None, 1.0)
+                self[provider] = GatewayAdapter(GATEWAY, client, settings)
+            return self[provider]
+
+    factory = MemoFactory()
+    assert not factory
     async with ConversationRouter(SETTINGS, factory, registry=REGISTRY) as port:
         await port.generate(req())
-    assert built == ["my-gateway"]
-    assert [client.api_key for client in FakeGatewayClient.built] == ["from-factory"]
+    assert set(factory) == {"my-gateway"}
+    assert [client.api_key for client in FakeGatewayClient.built] == ["memo"]
 
 
 # --- the response cache with a registry router --------------------------------------------

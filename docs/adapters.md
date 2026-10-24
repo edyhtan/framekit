@@ -46,7 +46,8 @@ LOCAL = ProviderConfig(
     protocol="openai",                    # served by the built-in OpenAI-compatible adapter
     base_url="http://127.0.0.1:8000/v1",  # vLLM's default; Ollama: http://127.0.0.1:11434/v1
     # key_env omitted (None): the server takes no key. For one that does, name the
-    # variable holding it, e.g. key_env="LOCAL_LLM_KEY".
+    # variable holding it, e.g. key_env="LOCAL_LLM_KEY", and use https for any host but
+    # this machine: over http:// the key travels in clear text.
 )
 MY_MODEL = ModelSpec(
     provider="local",
@@ -65,7 +66,7 @@ The built-in models stay available next to yours (`registry.listing()` shows the
 
 ### Claude on Amazon Bedrock (unverified)
 
-Bedrock serves Claude through the Anthropic Messages API on its "Mantle" endpoint, `https://bedrock-mantle.<region>.api.aws/anthropic`, where model IDs carry an `anthropic.` prefix. So a `ProviderConfig(protocol="anthropic", base_url=..., key_env=...)` whose variable holds a Bedrock API key *may* work as config only, but **nobody has probed it**, and there's a concrete reason it may not: framekit's Anthropic adapter sends the key in the `x-api-key` header, while the `anthropic` SDK's own Bedrock client (`AsyncAnthropicBedrockMantle`) sends a Bedrock API key as `Authorization: Bearer`. If the config route is rejected, an adapter whose `make_client` builds the SDK's Bedrock client is the way. Probe it before relying on it either way, and check which features Bedrock supports for your model.
+Bedrock serves Claude through the Anthropic Messages API on its "Mantle" endpoint, `https://bedrock-mantle.<region>.api.aws/anthropic`, where model IDs carry an `anthropic.` prefix. So a `ProviderConfig(protocol="anthropic", base_url=..., key_env=...)` whose variable holds a Bedrock API key *may* work as config only, but **nobody has probed it**, and there's a concrete reason it may not: framekit's Anthropic adapter sends the key in the `x-api-key` header, while the `anthropic` SDK's own Bedrock client (`AsyncAnthropicBedrockMantle`) sends a Bedrock API key as `Authorization: Bearer`. If the config route is rejected, an adapter whose `make_client` builds the SDK's Bedrock client is the way. In practice that's a subclass of the built-in `AnthropicAdapter` (`framekit.models.adapters.anthropic`) that overrides only `make_client`, to reuse its Messages requests and reply parsing. That class is internal, not covered by semantic versioning ([Public API and versions](#public-api-and-versions)), so its internals may change in any release: pin the framekit version you probed, and probe again when you upgrade. Probe it before relying on it either way, and check which features Bedrock supports for your model.
 
 ## The template
 
@@ -208,17 +209,17 @@ gateway 503: gateway overloaded | retryable: True
 
 | Member | | What it does |
 |---|---|---|
-| `adapter_version` | **required** | a string recorded in every result; bump it whenever the requests you send or the way you read replies change |
+| `adapter_version` | **required** | a non-empty string recorded in every result; bump it whenever the requests you send or the way you read replies change. Without one, building the adapter raises `TypeError` (before any call) |
 | `build_params(spec, request, max_tokens)` | **required** | the request for one call, as a dict. `max_tokens` is the budget to send: the base has already applied the output cap and the reasoning allowance |
 | `call(spec, params)` | **required** | send the request, parse the response into a `Reply` (text, reasoning, raw stop reason, token counts, request id, the model that answered) |
-| `make_client(api_key, base_url, timeout_s)` | optional | build your client. Lets `from_environment`, and so a registry, build the adapter from its `ProviderConfig`. Without it, build the adapter yourself, `GatewayAdapter(config, client, settings)`, and hand the router an `adapter_factory` |
+| `make_client(api_key, base_url, timeout_s)` | optional, **a classmethod** | build your client. Lets `from_environment`, and so a registry, build the adapter from its `ProviderConfig`. Without it, build the adapter yourself, `GatewayAdapter(config, client, settings)`, in an `adapter_factory` ([below](#adapters-built-by-hand)) |
 | `iterate(spec, params)` | optional | real streaming ([below](#streaming)) |
 | `map_error(exc)` | optional | translate your client's exceptions ([below](#errors)) |
-| `aclose()` | optional | release the client; the default awaits `client.close()` if it exists |
+| `aclose()` | optional | release the client. The default calls the client's `aclose()` (an `httpx` client, say) or else its `close()`, and awaits the result when it's awaitable |
 | `structured_modes` | optional | the structured-output methods your `build_params` applies; for any other method the base falls back to `"prompted"` (default: only `"prompted"`) |
 | `sdk` | optional | an `openai`/`anthropic`-style SDK module, whose errors the base then maps ([below](#errors)); default `None` |
 
-Inside your methods, `self.client` is the client, `self.config` the `ProviderConfig`.
+Inside your methods, `self.client` is the client, `self.config` the `ProviderConfig`. Your `__init__` may assign `self.client`: that replaces the client the adapter uses and closes.
 
 ### What the base does for you
 
@@ -230,6 +231,8 @@ Inside your methods, `self.client` is the client, `self.config` the `ProviderCon
 - **The result:** one `ConversationResult` with its provenance (provider, model, adapter version, request id), from both `generate` and `stream`.
 - **Streaming fallback, the response cache and closing:** `router.stream` works even if you never stream; the response cache works unchanged; the router closes your adapter with the others.
 
+What it doesn't do: translate your client's exceptions. Unless you set `sdk`, that's yours ([Errors](#errors)).
+
 The helpers you see in the example (`conversation`, `system_text`, `structured_mode`, `reasoning_active`, `reasoning_fields`, `merge_fields`, plus `output_budget`, `normalize_stop_reason` and `map_sdk_error`) are the ones the built-in adapters use.
 
 ## The registry
@@ -239,25 +242,53 @@ A `ModelRegistry` holds providers (by name), models (by `model_id`) and adapter 
 ```python
 from framekit.models import DEFAULT_REGISTRY, ConversationRouter, ModelRegistry
 
-mine = DEFAULT_REGISTRY.extend(providers=[...], models=[...], adapters={...})  # built-ins + yours
-only_mine = ModelRegistry(providers=[...], models=[...], adapters={...})        # yours alone
+# GATEWAY, IN_HOUSE and GatewayAdapter are from the template above.
+mine = DEFAULT_REGISTRY.extend(  # the built-ins plus yours
+    providers=[GATEWAY], models=[IN_HOUSE], adapters={"my-gateway": GatewayAdapter}
+)
+only_mine = ModelRegistry(  # yours alone
+    providers=[GATEWAY], models=[IN_HOUSE], adapters={"my-gateway": GatewayAdapter}
+)
 
 router = ConversationRouter(settings, registry=mine)
 ```
 
-- **Checked when built.** Every model's provider must be configured, every provider's protocol must have an adapter, and the entries must have the right types. All problems are reported at once, in one `ValueError`.
+- **Checked when built.** All problems are reported at once, in one `ValueError`:
+  - `providers` and `models` are lists (or other iterables) of `ProviderConfig`s and `ModelSpec`s, and `adapters` is a mapping of protocol names to adapter classes;
+  - names are non-empty strings (a provider's `name` and `protocol`, a model's `model_id` and `provider`, the protocol names), `key_env` is `None` or a variable's name, and prices are `Decimal`s (a float would only fail after the call, when the cost is computed);
+  - every model's provider is configured, and every provider's protocol has an adapter;
+  - every adapter class can work: it implements `build_params` and `call`, sets `adapter_version`, and its `make_client` and `from_environment` are classmethods.
+
+  Not checked: whether an adapter class implements `make_client` at all. One without it is accepted, because a router with an `adapter_factory` only uses the registry to resolve models ([below](#adapters-built-by-hand)); `registry.create_adapter` then raises `NotImplementedError` for it. Nor, of course, whether your provider accepts the values in your config: probe it.
 - **No silent replacement.** `extend` refuses a name the registry already has (a provider, a model or a protocol) unless you pass `override=True`. The same name twice in one call is always an error.
-- **Immutable and isolated.** `extend` returns a new registry and leaves the old one unchanged. A model you add to one registry is invisible to the default router and to every other registry.
+- **Immutable (shallowly) and isolated.** `extend` returns a new registry and leaves the old one unchanged, and a registry's mappings can't be changed. A model you add to one registry is invisible to the default router and to every other registry. The entries themselves are shared, with the built-ins and between registries, and some hold dicts (`ProviderConfig.extra_headers`, `ModelSpec.request_extras`, `ReasoningControl.on` and `off`): **never mutate an entry in place**, since that changes it for every registry and router in the process. Replace it instead: `DEFAULT_REGISTRY.extend(providers=[dataclasses.replace(PROVIDERS["hive"], base_url=...)], override=True)`.
 - **Lookups:** `registry.resolve(model_id)` and `registry.create_adapter(provider, settings)`; an unknown model, provider or protocol, or a missing key, is a non-retryable `ModelCallError`. `registry.listing(default_model)` gives the rows for a model picker (no prices).
-- **Factories still win.** If you pass `ConversationRouter(settings, adapter_factory)`, the factory builds the adapters and the registry only resolves models: useful in tests, or for adapters built by hand.
-- **The built-in dicts** (`CATALOG`, `PROVIDERS`, `PROTOCOLS`) are what `DEFAULT_REGISTRY` serves, and it reads them live, so code that edits them in place still reaches the default router. That is **unsupported**: it changes every router in the process. Use `extend`. An extended registry is a snapshot, so later in-place edits don't reach it either.
+- **Pickling:** a registry can be pickled, e.g. for worker processes. `DEFAULT_REGISTRY` goes by reference, so in the receiving process it's that process's own built-ins; any other registry goes by value, with its adapter classes by reference (define them at module level, so the worker can import them).
+- **The built-in dicts** (`CATALOG`, `PROVIDERS`, `PROTOCOLS`) are what `DEFAULT_REGISTRY` serves, and it reads them live, so code that edits them in place still reaches the default router. That is **unsupported**: it changes every router in the process. Use `extend`. An extended registry is a snapshot, so later in-place edits don't reach it either. Rebinding the names (`router.CATALOG = {...}`, or `monkeypatch.setattr` on them) reaches no router at all, since `DEFAULT_REGISTRY` holds the dicts themselves. `framekit.models.router` still re-exports the names it had before registries existed (`CATALOG`, `PROVIDERS`, `PROTOCOLS`, `ModelCallError` and the built-in adapter classes), so old imports keep working.
+
+### Adapters built by hand
+
+`ConversationRouter(settings, adapter_factory, registry=...)`: the factory builds the adapters, and the registry only resolves the models. This is for tests, and for an adapter without `make_client`. The router calls the factory once for **every provider** it uses, built-in ones included, so build yours and hand every other provider to the registry:
+
+```python
+def factory(provider: str, settings: ModelSettings):
+    if provider == GATEWAY.name:  # yours, built by hand
+        client = connect_to_gateway(settings.timeout_s)  # however your client is made
+        return GatewayAdapter(GATEWAY, client, settings)
+    return registry.create_adapter(provider, settings)  # every other provider
+
+async with ConversationRouter(settings, factory, registry=registry) as router:
+    ...
+```
+
+Use the registry's `create_adapter`, not the module-level `framekit.models.create_adapter`: that one serves only the built-ins, so your registry's other providers would fail with "no provider configured". A factory that ignores `provider` would serve every model through your adapter, with the wrong provider in the results.
 
 ## Errors
 
 Every failure a caller sees should be a `ModelCallError`, with `retryable` saying whether trying again can help (rate limits, timeouts, 5xx: yes; bad requests, auth, no balance: no). You have three ways to get there:
 
-1. **Raise `ModelCallError` yourself** in `call` or `iterate`. It passes through the base unchanged, the same object.
-2. **Override `map_error(exc)`**: return a `ModelCallError` for your client's exceptions, and `super().map_error(exc)` for the rest (the example above). The base raises what you return, chained to the original (`raise ... from exc`).
+1. **Raise `ModelCallError` yourself** in `call` or `iterate`. The base always lets it through unchanged, the same object: `map_error` never sees it.
+2. **Override `map_error(exc)`**: return a `ModelCallError` for your client's exceptions, and `super().map_error(exc)` for the rest (the example above). The base raises what you return, chained to the original (`raise ... from exc`); `None`, or `exc` itself, lets the exception propagate unchanged. Returning anything else is a bug in the adapter: the base raises a `TypeError` that names your `map_error`, chained to the original exception.
 3. **Set `sdk`** to a module shaped like the `openai` and `anthropic` SDKs. The base then maps its `APIError`s with `map_sdk_error`, which expects those SDKs' exception names (`AuthenticationError`, `RateLimitError`, `APIStatusError`, `APIConnectionError`, …). Only for adapters built on such an SDK.
 
 Anything else (an exception `map_error` returns `None` for) propagates unchanged: it's a bug in the adapter, and should surface as one. With `sdk=None`, the default, no exception is translated.
@@ -308,11 +339,13 @@ For real streaming, override `iterate`: yield `TextDelta("text", ...)` and `Text
 - **Only point a provider at a host you trust.** framekit sends the provider's key (from `key_env`) to the provider's `base_url` with every request. If the provider has a `base_url_env`, whoever sets that variable chooses where the key goes.
 - **Give every provider you add an explicit `base_url`.** With `base_url=None` the SDK chooses the host: its default (OpenAI's or Anthropic's API), or `OPENAI_BASE_URL` / `ANTHROPIC_BASE_URL` from the environment.
 - **Known gap: SDK environment variables reach custom hosts too.** The official SDKs read some settings from the environment by themselves and send them with every request, to whatever host the client points at: `OPENAI_CUSTOM_HEADERS` and `ANTHROPIC_CUSTOM_HEADERS` (arbitrary headers, which can carry credentials), and `OPENAI_ORG_ID` / `OPENAI_PROJECT_ID`. framekit doesn't strip them yet; this is a known gap, to be closed later. Until then, don't set these variables in a process that talks to a host you don't fully trust.
+- **Known gap: nothing binds a key to a host yet.** A provider config may name any key variable, including the built-in providers' (`ANTHROPIC_API_KEY`, …), and framekit sends that key to the config's own `base_url`. Review provider configs you didn't write as you would code.
+- **Known gap: framekit doesn't check the URL scheme.** Use `https` for every host that isn't on the same machine (`127.0.0.1`, `localhost`): with an `http://` `base_url`, the key travels in clear text.
 - **Keyless servers get a placeholder**, never nothing ([above](#keys-and-keyless-servers)), so the SDKs can't fall back to a cloud key.
 - **An adapter handles your keys.** Review one (yours or someone else's) like any code that holds credentials. framekit's own adapters depend only on the official provider SDKs; the dependency choices for yours are yours.
 
 ## Public API and versions
 
-`ExternalAIAdapterBase`, `Reply`, `PLACEHOLDER_KEY` and the helpers exported from `framekit.models.adapters` (its `__all__`), together with `ModelRegistry` and `DEFAULT_REGISTRY` from `framekit.models`, are public API under semantic versioning: an incompatible change to them is a new minor version while framekit is 0.x, and a new major version after that. Other names in the adapter modules are internal.
+`ExternalAIAdapterBase`, `Reply`, `PLACEHOLDER_KEY` and the helpers exported from `framekit.models.adapters` (its `__all__`), together with `ModelRegistry` and `DEFAULT_REGISTRY` from `framekit.models`, are public API under semantic versioning: an incompatible change to them is a new minor version while framekit is 0.x, and a new major version after that. Other names in the adapter modules are internal. That includes the built-in adapter classes (`OpenAICompatibleAdapter`, `AnthropicAdapter`), even though `DEFAULT_REGISTRY.adapters` hands them out: subclassing one relies on internals that may change in any release.
 
 To test an adapter, give it a fake client with the same shape, as framekit's own tests do (`tests/test_custom_adapters.py`).

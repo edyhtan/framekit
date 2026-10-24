@@ -31,7 +31,12 @@ Context that limits what framekit can expose:
 
 - **No footage:** the repository contains no video, frames, thumbnails, ripping tools or downloaders, and test fixtures are synthetic. The 0.1.x line (contracts and model access) doesn't read video files at all.
 - **The only secrets it reads are provider API keys** (and optional base-URL overrides), from the environment, by the names in the provider configs: the built-in catalog's (`HIVE_API_KEY`, `DEEPSEEK_API_KEY`, `ANTHROPIC_API_KEY`), or the variable a provider registered by an application names. It has no other environment-bound settings.
-- **Known gap:** a provider's key is sent to that provider's base URL, and the official SDKs also send headers taken from their own environment variables (`OPENAI_CUSTOM_HEADERS`, `ANTHROPIC_CUSTOM_HEADERS`, `OPENAI_ORG_ID`, `OPENAI_PROJECT_ID`) to whatever host a provider points at, including custom ones. framekit doesn't strip them yet ([docs/adapters.md](docs/adapters.md), "Security"); a report showing another way for a key to reach a host it wasn't configured for is in scope.
+- **Known gaps**, to be closed later ([docs/adapters.md](docs/adapters.md), "Security"):
+  - a provider's key is sent to that provider's base URL, and the official SDKs also send headers taken from their own environment variables (`OPENAI_CUSTOM_HEADERS`, `ANTHROPIC_CUSTOM_HEADERS`, `OPENAI_ORG_ID`, `OPENAI_PROJECT_ID`) to whatever host a provider points at, including custom ones. framekit doesn't strip them yet;
+  - nothing binds a key to a host yet: a provider config may name any key variable, including the built-in providers', and its key then goes to that config's base URL. Review provider configs you didn't write;
+  - framekit doesn't check the URL scheme: use `https` for every host that isn't on the same machine, since an `http://` base URL sends the key in clear text.
+
+  A report showing another way for a key to reach a host it wasn't configured for is in scope.
 
 Out of scope: vulnerabilities in the model providers' services or in their official SDKs (report those upstream), and in applications that use framekit (report those to their projects).
 

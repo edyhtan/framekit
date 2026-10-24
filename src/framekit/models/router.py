@@ -14,14 +14,25 @@ import logging
 from collections.abc import AsyncIterator, Callable
 from typing import Protocol
 
+# The `X as X` imports are re-exports: names this module had before the registry existed,
+# still importable from here. Rebinding them here (`router.CATALOG = {...}`) no longer
+# changes what a router uses: the default registry holds the dicts themselves
+# (docs/adapters.md, "The registry").
 from framekit.contracts.conversation import (
     ConversationRequest,
     ConversationResult,
     TextDelta,
 )
+from framekit.contracts.conversation import ModelCallError as ModelCallError
+from framekit.models.adapters.anthropic import AnthropicAdapter as AnthropicAdapter
 from framekit.models.adapters.base import (
     ExternalAIAdapterBase,
 )
+from framekit.models.adapters.openai_compatible import (
+    OpenAICompatibleAdapter as OpenAICompatibleAdapter,
+)
+from framekit.models.catalog import CATALOG as CATALOG
+from framekit.models.catalog import PROVIDERS as PROVIDERS
 from framekit.models.catalog import (
     ModelSettings,
     ModelSpec,
@@ -30,9 +41,7 @@ from framekit.models.registry import (
     DEFAULT_REGISTRY,
     ModelRegistry,
 )
-from framekit.models.registry import (
-    PROTOCOLS as PROTOCOLS,  # re-exported: router.PROTOCOLS predates the registry
-)
+from framekit.models.registry import PROTOCOLS as PROTOCOLS
 
 
 class ProviderAdapter(Protocol):
@@ -54,7 +63,8 @@ log = logging.getLogger(__name__)
 
 
 def create_adapter(provider: str, settings: ModelSettings) -> ExternalAIAdapterBase:
-    """Build the adapter for a built-in provider (`DEFAULT_REGISTRY.create_adapter`)."""
+    """Build the adapter for a built-in provider (`DEFAULT_REGISTRY.create_adapter`). It
+    knows only the built-ins: for a registry of your own, use its `create_adapter`."""
     return DEFAULT_REGISTRY.create_adapter(provider, settings)
 
 
@@ -63,7 +73,9 @@ class ConversationRouter:
 
     `registry` (default: `DEFAULT_REGISTRY`, the built-ins) resolves models and builds
     adapters. An `adapter_factory`, if given, builds the adapters instead (tests, or
-    adapters built by hand); the registry still resolves the models."""
+    adapters built by hand); the registry still resolves the models. The factory is called
+    once for every provider the router uses, so a factory for one adapter of your own
+    returns `registry.create_adapter(provider, settings)` for the others."""
 
     def __init__(
         self,
@@ -74,11 +86,15 @@ class ConversationRouter:
     ) -> None:
         self._settings = settings or ModelSettings()
         self._registry = registry if registry is not None else DEFAULT_REGISTRY
-        self._factory: AdapterFactory = adapter_factory or self._registry.create_adapter
+        self._factory: AdapterFactory = (
+            adapter_factory if adapter_factory is not None else self._registry.create_adapter
+        )
         self._adapters: dict[str, ProviderAdapter] = {}
 
     @property
     def registry(self) -> ModelRegistry:
+        """The registry this router resolves models with (read-only: pass another one to
+        the constructor)."""
         return self._registry
 
     def resolve(self, model_id: str | None) -> ModelSpec:

@@ -10,6 +10,7 @@ budget, timing, error mapping, stop-reason normalization, the result) is shared 
 (docs/adapters.md).
 """
 
+import inspect
 import json
 import os
 import time
@@ -173,7 +174,13 @@ def map_sdk_error(exc: Exception, sdk: ModuleType, config: ProviderConfig) -> Mo
 
 def require_api_key(config: ProviderConfig) -> str:
     """The provider's key from the environment; a missing key fails only this provider."""
-    api_key = os.environ.get(config.key_env) if config.key_env else None
+    if not config.key_env:
+        raise ModelCallError(
+            f"provider {config.name!r} has an empty key_env: name the variable that holds "
+            "its key, or use key_env=None for a provider that takes no key",
+            retryable=False,
+        )
+    api_key = os.environ.get(config.key_env)
     if not api_key:
         raise ModelCallError(
             f"{config.key_env} is not set in this service's environment", retryable=False
@@ -181,18 +188,45 @@ def require_api_key(config: ProviderConfig) -> str:
     return api_key
 
 
+def _version_problem(version: object, adapter: str) -> str | None:
+    if isinstance(version, str) and version.strip():
+        return None
+    return (
+        f"{adapter} must set adapter_version, a non-empty string recorded in every result, "
+        f'e.g. adapter_version: ClassVar[str] = "my-adapter-0.1.0" (got {version!r})'
+    )
+
+
+def adapter_class_problems(cls: type) -> list[str]:
+    """What keeps an `ExternalAIAdapterBase` subclass from working, found before it's used:
+    `from_environment` checks it before building a client, and a `ModelRegistry` when it's
+    built. Internal (not part of the template's public API)."""
+    problems = []
+    if inspect.isabstract(cls):
+        missing = ", ".join(sorted(getattr(cls, "__abstractmethods__", ())))
+        problems.append(f"{cls.__name__} doesn't implement {missing}")
+    version_problem = _version_problem(getattr(cls, "adapter_version", None), cls.__name__)
+    if version_problem:
+        problems.append(version_problem)
+    for name in ("make_client", "from_environment"):
+        if not isinstance(inspect.getattr_static(cls, name, None), classmethod | staticmethod):
+            problems.append(f"{cls.__name__}.{name} must be a classmethod (@classmethod)")
+    return problems
+
+
 class ExternalAIAdapterBase(ABC):
     """The adapter template: one subclass per wire protocol (or per client).
 
     The base owns the call lifecycle: the output budget and reasoning switches, timing
-    (including time to first token), error mapping, stop-reason normalization, the cost
-    estimate from the model's prices, and the `ConversationResult` with its provenance. A
-    subclass only builds the request, sends it and parses the reply.
+    (including time to first token), stop-reason normalization, the cost estimate from the
+    model's prices, and the `ConversationResult` with its provenance. A subclass only builds
+    the request, sends it and parses the reply, and maps its client's errors.
 
     Required in a subclass:
 
-    - `adapter_version` (`ClassVar[str]`): recorded in every result. Bump it whenever the
-      requests the adapter sends, or the way it reads replies, change.
+    - `adapter_version` (`ClassVar[str]`, non-empty): recorded in every result. Bump it
+      whenever the requests the adapter sends, or the way it reads replies, change. An
+      adapter without one can't be built (`TypeError`).
     - `build_params(spec, request, max_tokens) -> dict`: the request for one call. The
       helpers in `framekit.models.adapters` (`conversation`, `system_text`,
       `structured_mode`, `reasoning_fields`, `merge_fields`, ...) do the common parts.
@@ -200,20 +234,26 @@ class ExternalAIAdapterBase(ABC):
 
     Optional:
 
-    - `make_client(api_key, base_url, timeout_s)`: lets `from_environment`, and so a
-      `ModelRegistry`, build the adapter from its `ProviderConfig`. Without it, build the
-      adapter yourself: `MyAdapter(config, client, settings)`.
-    - `from_environment(config, settings)`: reads the key named by `config.key_env`
-      (`PLACEHOLDER_KEY` when that's None), then calls `make_client`.
+    - `make_client(api_key, base_url, timeout_s)`, a classmethod: lets `from_environment`,
+      and so a `ModelRegistry`, build the adapter from its `ProviderConfig`. Without it,
+      build the adapter yourself, `MyAdapter(config, client, settings)`, and hand the
+      router an `adapter_factory`.
+    - `from_environment(config, settings)`, a classmethod: reads the key named by
+      `config.key_env` (`PLACEHOLDER_KEY` when that's None), then calls `make_client`.
     - `iterate(spec, params)`: real streaming. The default makes one `call` and yields its
       reasoning and text as single pieces.
-    - `map_error(exc)`: translate your client's exceptions into `ModelCallError`. A
-      `ModelCallError` raised by `call` or `iterate` always passes through unchanged.
-    - `aclose()`: release the client. The default awaits `client.close()` if it exists.
+    - `map_error(exc)`: translate your client's exceptions into `ModelCallError`. It never
+      sees a `ModelCallError`: one raised by `call` or `iterate` always propagates
+      unchanged, the same object.
+    - `aclose()`: release the client. The default calls the client's `aclose()`, or else
+      its `close()`, and awaits the result when it's awaitable.
     - `structured_modes`: the structured-output methods `build_params` applies; any other
       method falls back to "prompted".
     - `sdk`: an `openai`/`anthropic`-style SDK module, whose `APIError`s are then mapped by
       `map_sdk_error`. None (the default): no SDK mapping.
+
+    In your methods, `self.client` is the client and `self.config` the `ProviderConfig`.
+    Assigning `self.client` replaces the client the adapter uses and closes.
 
     This class, `Reply`, `PLACEHOLDER_KEY` and the helpers exported from
     `framekit.models.adapters` are public API under semantic versioning: an incompatible
@@ -228,21 +268,35 @@ class ExternalAIAdapterBase(ABC):
     structured_modes: ClassVar[frozenset[str]] = frozenset({"prompted"})
 
     def __init__(self, config: ProviderConfig, client: Any, settings: ModelSettings) -> None:
+        # Checked here, not when the first reply is read: by then the call is paid for.
+        problem = _version_problem(getattr(self, "adapter_version", None), type(self).__name__)
+        if problem:
+            raise TypeError(problem)
         self.config = config
         self._client = client
         self._settings = settings
 
     @property
     def client(self) -> Any:
-        """The client this adapter sends its requests with."""
+        """The client this adapter sends its requests with (and closes in `aclose`)."""
         return self._client
+
+    @client.setter
+    def client(self, client: Any) -> None:
+        self._client = client
 
     @classmethod
     def from_environment(
         cls, config: ProviderConfig, settings: ModelSettings
     ) -> "ExternalAIAdapterBase":
         """Build the adapter with the provider's key from the environment, or with
-        `PLACEHOLDER_KEY` when the provider takes no key (`key_env` is None)."""
+        `PLACEHOLDER_KEY` when the provider takes no key (`key_env` is None).
+
+        An adapter class that can't work (abstract, no `adapter_version`, `make_client` not
+        a classmethod) is a `TypeError`, raised before any client is made."""
+        problems = adapter_class_problems(cls)
+        if problems:
+            raise TypeError("; ".join(problems))
         api_key = PLACEHOLDER_KEY if config.key_env is None else require_api_key(config)
         client = cls.make_client(api_key, config.resolved_base_url(), settings.timeout_s)
         return cls(config, client, settings)
@@ -258,25 +312,47 @@ class ExternalAIAdapterBase(ABC):
         )
 
     async def aclose(self) -> None:
-        """Close the client and its connection pool."""
-        close = getattr(self._client, "close", None)
-        if close is not None:
-            await close()
+        """Close the client and its connection pool: its `aclose()` if it has one (an
+        `httpx` client, say), else its `close()`, awaited when that returns an awaitable.
+        A client with neither is left as it is."""
+        for name in ("aclose", "close"):
+            close = getattr(self._client, name, None)
+            if callable(close):
+                result = close()
+                if inspect.isawaitable(result):
+                    await result
+                return
 
     def map_error(self, exc: Exception) -> ModelCallError | None:
         """The `ModelCallError` to raise for an exception from `call` or `iterate`, or None
         to let the exception propagate unchanged.
 
-        Default: a `ModelCallError` passes through untouched; an `APIError` of `sdk` is
-        translated by `map_sdk_error`; anything else (every exception, when `sdk` is None)
-        propagates as it is, since it's a bug to surface. Override it to translate your own
-        client's exceptions, and return `super().map_error(exc)` for the rest."""
+        Never called for a `ModelCallError`: `generate` and `stream` let one through
+        unchanged. Default: an `APIError` of `sdk` is translated by `map_sdk_error`;
+        anything else (every exception, when `sdk` is None) propagates as it is, since it's
+        a bug to surface. Override it to translate your own client's exceptions, and return
+        `super().map_error(exc)` for the rest. Returning anything but a `ModelCallError` or
+        None (or `exc` itself, which also lets it propagate) is a bug in the adapter, and
+        raises a `TypeError` chained to `exc`."""
         if isinstance(exc, ModelCallError):
             return None
         api_error = getattr(self.sdk, "APIError", None)
         if self.sdk is None or not isinstance(api_error, type) or not isinstance(exc, api_error):
             return None
         return map_sdk_error(exc, self.sdk, self.config)
+
+    def _replacement(self, exc: Exception) -> Exception | None:
+        """What `generate` and `stream` raise instead of `exc` (chained to it), from
+        `map_error`; None to re-raise `exc` itself."""
+        mapped = self.map_error(exc)
+        if mapped is None or mapped is exc:
+            return None
+        if isinstance(mapped, ModelCallError):
+            return mapped
+        return TypeError(
+            f"{type(self).__name__}.map_error must return a ModelCallError or None, "
+            f"got {mapped!r}"
+        )
 
     @abstractmethod
     def build_params(
@@ -311,11 +387,13 @@ class ExternalAIAdapterBase(ABC):
         started = time.perf_counter()
         try:
             reply = await self.call(spec, params)
+        except ModelCallError:
+            raise  # always unchanged, whatever map_error does
         except Exception as exc:
-            mapped = self.map_error(exc)
-            if mapped is None:
+            replacement = self._replacement(exc)
+            if replacement is None:
                 raise
-            raise mapped from exc
+            raise replacement from exc
         return self._result(
             spec,
             reply,
@@ -345,11 +423,13 @@ class ExternalAIAdapterBase(ABC):
                     yield piece
                 else:
                     reply = piece
+        except ModelCallError:
+            raise  # always unchanged, whatever map_error does
         except Exception as exc:
-            mapped = self.map_error(exc)
-            if mapped is None:
+            replacement = self._replacement(exc)
+            if replacement is None:
                 raise
-            raise mapped from exc
+            raise replacement from exc
         if reply is None:  # a protocol bug, not a provider error
             raise ModelCallError("the adapter produced no final reply", retryable=False)
         yield self._result(
