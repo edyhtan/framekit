@@ -17,7 +17,6 @@ model. Times are seconds on the unit timeline.
 """
 
 import json
-import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -97,9 +96,9 @@ def parse_json_reply(text: str) -> Any:
     """The JSON object in a model's reply: the whole text, or the first `{...}` in it (code
     fences and stray prose around it are ignored). Raises ValueError when there's none."""
     stripped = text.strip()
-    fenced = re.match(r"^```(?:json)?\s*(.*?)\s*```$", stripped, re.DOTALL)
-    if fenced:
-        stripped = fenced.group(1)
+    if stripped.startswith("```"):  # a code fence, with or without a language tag
+        stripped = stripped[3:].removeprefix("json")
+        stripped = stripped.removesuffix("```").strip()
     try:
         return json.loads(stripped)
     except json.JSONDecodeError:

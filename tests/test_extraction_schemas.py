@@ -13,6 +13,7 @@ from framekit.extraction import (
     LensSpec,
     SearchSpace,
 )
+from framekit.extraction.records import parse_json_reply
 from framekit.extraction.schemas.gold import overlapping_queries
 from framekit.extraction.schemas.lens import annotation_rows
 
@@ -370,3 +371,25 @@ def test_examples_that_repeat_a_gold_query_are_found():
         ("My team keeps arguing about the same thing!", "a quiet walk"), gold
     )
     assert len(found) == 1 and "repeats the gold query" in found[0]
+
+
+# --- model replies ---------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        '{"a": 1}',
+        '```json\n{"a": 1}\n```',
+        '```\n{"a": 1}\n```',
+        '```json {"a": 1} ```',
+        'Here is the record:\n{"a": 1}\nThat is all.',
+    ],
+)
+def test_the_json_object_is_found_in_fences_and_prose(reply):
+    assert parse_json_reply(reply) == {"a": 1}
+
+
+def test_a_reply_without_json_is_refused_quickly():
+    with pytest.raises(ValueError, match="no JSON object"):
+        parse_json_reply("```" + " " * 100_000 + "no closing fence")
