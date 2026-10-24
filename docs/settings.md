@@ -2,7 +2,7 @@
 
 Every setting that shapes an extraction run, in one place: what you give, what framekit decides, what comes out. It's the spec for the schemas built in milestone E1 (`SearchSpace`, `Corpus`, `ExtractionPlan`, `GoldSet`). Why it's shaped this way: [DESIGN.md](DESIGN.md) §2.3–§2.4; decisions: [DECISIONS.md](DECISIONS.md).
 
-> **Status:** reference, mostly not built. framekit v0.1.0 implements model access (`ModelSettings`, `CacheSettings`, per-request options); `main` adds the vision parameters (`framekit.vision`, §5.2: schema, checks, resolution, pixel-free planning; not released yet). Everything else below is the target.
+> **Status:** reference, mostly not built. framekit v0.1.0 implements model access (`ModelSettings`, `CacheSettings`, per-request options); `main` adds the vision parameters (`framekit.vision`, §5.2: schema, checks, resolution, pixel-free planning) and lens specs (§3.1), not released yet. Everything else below is the target.
 
 **Tags:** **[built]** in code (v0.1.0, or on `main` since) · **[designed]** in DESIGN.md / ARCHITECTURE.md · **[discussed]** agreed with the owner, first written down here · **[open]** value or choice not decided · **[fixed]** a rule, not a setting. **Every number is a placeholder** until a benchmark sweep sets it.
 
@@ -143,7 +143,7 @@ search_space:
   intent: >                                        # [designed] opaque text
     Moments whose emotional and interpersonal structure mirrors a real-life situation.
   lenses:                                          # [designed] the searchable dimensions
-    - {spec: lenses/emotions_dynamics, version: 1.0.0}   # lens spec file format [open]
+    - {spec: lenses/emotions_dynamics, version: 1.0.0}   # lens spec format [built]: §3.1
     - {spec: lenses/comedy_craft, version: 0.1.0}
   evidence:                                        # [designed] optional, taken as given;
     modules: [sound]                               #   the lenses' own needs are added in the plan
@@ -157,6 +157,49 @@ search_space:
       - "my team keeps arguing about the same thing"
       - "planning something perfect that goes wrong"
 ```
+
+### 3.1 Lens specs: `lens.yaml` [built]
+
+A lens is a spec file (YAML or JSON), or a folder holding `lens.yaml`, `lens.yml` or `lens.json`, plus prompt files. Decided as built (v1, DECISIONS 2026-10-24). In code: `LensSpec.load(path)`, `LensSpec.from_mapping(data)`.
+
+```yaml
+lens:
+  name: emotions_dynamics                # lower snake case
+  version: 1.0.0                         # 1, 1.0 or 1.0.0
+  description: Emotional and interpersonal structure.
+  example_queries: ["every fix I push breaks something else"]   # carried for consumers
+  requires_modules: [sound]              # perception modules beyond core
+  targets: [scene, beat]                 # what gets annotations (default: both)
+  fields:                                # the output schema; labels are fixed vocabularies
+    dynamics: {type: labels, vocabulary: [futile_effort, backfire, escalation], max: 3}
+    outcome:  {type: label, vocabulary: [schemer_wins, schemer_loses, draw], optional: true}
+    feelings:                            # a map keyed by the corpus profile's entities
+      type: map
+      keys: entities
+      extra_keys: [viewer]
+      values:
+        type: list
+        max: 3
+        items:
+          type: object
+          fields:
+            label: {type: label, vocabulary: [frustration, smugness, schadenfreude]}
+            intensity: {type: integer, min: 1, max: 5}
+  prompts:
+    interpretation: {file: prompts/interpret.md}   # or inline text; files stay in this folder
+    phrasing: "Real-life situations the moment could describe."
+    phrasing_style: "first person, everyday words"   # used when the space has no examples
+  validators:                            # checked in L4
+    - {kind: required, fields: [dynamics]}
+    - {kind: exclusive, field: dynamics, labels: [backfire, futile_effort]}
+  gold: gold/annotations.yaml            # carried for benchmarks
+  consumer: {...}                        # carried verbatim for consumers; never read here
+```
+
+- **Field types:** `label` (one value of `vocabulary`), `labels` (several, unique; `min`/`max` count them), `integer` and `number` (`min`/`max` bound the value), `boolean`, `object` (`fields`), `list` (`items`; `min`/`max` count them), `map` (`keys: entities`, the corpus profile's names plus `extra_keys`, or `keys: vocabulary`; `values` for each). Any field may be `optional`. There's **no free-text type**, and vocabulary labels are lower snake case.
+- **Checked at load, every problem at once:** settings that don't belong to a type, missing vocabularies or parts, duplicate labels, `min` above `max`, validators naming unknown fields or labels, prompt files outside the spec's folder.
+- **What the model gets:** the fields compiled into a JSON Schema (`scene`, `beats` by index, `phrasings`); every reply is checked against the fields, the vocabularies, the beat indexes and the phrasing count, whatever the provider enforced.
+- **Digest:** the spec's canonical form, prompts included; it's part of the search space's digest and of every lens pass's input hash.
 
 ---
 
@@ -493,4 +536,4 @@ Layout is Parquet / Arrow tables plus the manifest; details are [open].
 3. **Dropped rows.** Rows are flagged, never dropped, per DESIGN.md §3 L4. Should a "drop" ever exist, meaning excluded from the main tables but kept with its reason in `qc`?
 4. **Default numbers** for every placeholder above, from benchmark sweeps (vision profiles first).
 5. **Model choices** per role (video, vision, text, embeddings) and the L1 tools.
-6. **Schema details** still open in DESIGN.md §9: the lens spec file format and the dataset layout.
+6. **Schema details** still open in DESIGN.md §9: the dataset layout (the lens spec file format is decided: §3.1).
