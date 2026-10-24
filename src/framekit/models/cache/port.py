@@ -18,6 +18,7 @@ from framekit.contracts.conversation import (
     ModelCallError,
     TextDelta,
 )
+from framekit.contracts.embedding import EmbeddingRequest, EmbeddingResult
 from framekit.contracts.response_store import ResponseStore
 from framekit.models.cache.entries import Entry, request_key
 from framekit.models.cache.settings import CacheSettings
@@ -120,6 +121,10 @@ class CachingConversationPort:
             else:
                 await self._save(key, Entry(piece, deltas), ttl_s)
             yield piece
+
+    async def embed(self, request: EmbeddingRequest) -> EmbeddingResult:
+        """Embeddings pass through uncached (they're cheap, and deterministic per model)."""
+        return await self._inner.embed(request)
 
     def resolve(self, model_id: str | None) -> Any:
         return self._inner.resolve(model_id)

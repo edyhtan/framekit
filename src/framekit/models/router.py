@@ -25,6 +25,7 @@ from framekit.contracts.conversation import (
     TextDelta,
 )
 from framekit.contracts.conversation import ModelCallError as ModelCallError
+from framekit.contracts.embedding import EmbeddingRequest, EmbeddingResult
 from framekit.models.adapters.anthropic import AnthropicAdapter as AnthropicAdapter
 from framekit.models.adapters.base import (
     ExternalAIAdapterBase,
@@ -160,6 +161,19 @@ class ConversationRouter:
             if source and isinstance(piece, ConversationResult):
                 piece = dataclasses.replace(piece, source=source)
             yield piece
+
+    async def embed(self, request: EmbeddingRequest) -> EmbeddingResult:
+        """Texts to vectors (the `embed_text` port), through the model's adapter. A
+        protocol without embeddings is a non-retryable `ModelCallError`."""
+        name = request.model_id or self._settings.default_model
+        spec, adapter, source = self._adapter_for(name)
+        embed = getattr(adapter, "embed", None)
+        if embed is None:
+            raise ModelCallError(
+                f"the adapter for {name!r} doesn't serve embeddings", retryable=False
+            )
+        result: EmbeddingResult = await embed(spec, request)
+        return dataclasses.replace(result, source=source) if source else result
 
     async def aclose(self) -> None:
         """Close every adapter this router opened. Safe to call more than once."""

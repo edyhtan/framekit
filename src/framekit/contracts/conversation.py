@@ -5,6 +5,7 @@ this port; which model serves a role is configuration. Plain dataclasses only, s
 provider or library type crosses the port.
 """
 
+import hashlib
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
 from decimal import Decimal
@@ -15,6 +16,25 @@ from typing import Any, Literal, Protocol
 class ChatMessage:
     role: Literal["user", "assistant"]
     content: str
+
+
+ImageMediaType = Literal["image/jpeg", "image/png", "image/webp"]
+
+
+@dataclass(frozen=True)
+class ImagePart:
+    """One image attached to the new user message (e.g. a frame sent for perception).
+    Only models whose catalog entry says they accept images (`ModelSpec.vision`) take
+    them; any other model fails the call with a non-retryable error."""
+
+    data: bytes
+    media_type: ImageMediaType = "image/jpeg"
+
+    @property
+    def digest(self) -> str:
+        """sha256 of the image bytes: what the response cache keys an image by (the bytes
+        themselves are never put in a key or a record)."""
+        return hashlib.sha256(self.data).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -33,6 +53,13 @@ class ConversationRequest:
     # What kind of request this is (e.g. "lens_pass", "chat"), for the model
     # response cache's per-class policy. None: the "default" class.
     cache_class: str | None = None
+    # Images for the new user message, in order (sent before the prompt's text).
+    images: tuple[ImagePart, ...] = ()
+    # Sampling, when the caller needs it pinned or varied (e.g. repeated runs that must
+    # differ). None: the provider's default. A provider without a seed parameter ignores
+    # `seed`; both are part of the response cache key when set.
+    temperature: float | None = None
+    seed: int | None = None
 
 
 @dataclass(frozen=True)

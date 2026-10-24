@@ -270,6 +270,16 @@ These were decided in short_extract (dates are from its journal) and bind this e
 - **Supersedes:** the separate `credentials=` router argument proposed in conversation (never built), and, for sources, the deferred "host fingerprint in response-cache keys" in the 03:40 entry.
 - **Recorded in:** `src/framekit/models/sources.py` (new), `router.py`, `cache/port.py`, `adapters/base.py` (`from_key`), `contracts/conversation.py` (`ConversationResult.source`), `models/__init__.py`; `tests/test_model_sources.py` (new); `pyproject.toml` (the provider-SDK contract covers `sources`); docs/adapters.md (now led by `ModelSource`), README.md "Configure" and "Your own models and providers", ARCHITECTURE.md §3.
 
+### 05:37 — Model access for extraction: images, sampling, embeddings
+- **Decision** (needed by extraction, which the owner asked to finish: "finish the framekit.extraction layers"):
+  - `ConversationRequest` gains `images` (`ImagePart`: bytes and a media type, jpeg, png or webp), `temperature` and `seed`. Both adapters send images before the prompt's text (Anthropic base64 image blocks; OpenAI-compatible `data:` URLs) and pass the sampling settings; Anthropic's Messages API has no seed, so its adapter leaves it out.
+  - Catalog entries declare `vision`, `max_images` and `max_image_side_px`. A request with images to a model whose entry has `vision=False` fails before any call (non-retryable). The Claude values are from platform.claude.com/docs/en/build-with-claude/vision (2026-10-24): Haiku 4.5 takes 100 images per request at a 1,568 px native long edge; Sonnet 5 and Opus 5 take 600, capped here at 2,000 px because a request with more than 20 images rejects any larger side.
+  - **The cache key** adds the images' digests (never their bytes), `temperature` and `seed`, each only when set, so every existing key is unchanged.
+  - **Embeddings (`embed_text`):** `EmbeddingRequest` / `EmbeddingResult` / `EmbeddingPort` in `contracts`; the OpenAI-compatible adapter serves `/embeddings` (vectors in request order, the count checked, errors through the shared mapper); `router.embed()`; the response cache passes embeddings through uncached. An adapter without embeddings keeps the template's default, a non-retryable error.
+  - **The file response store** keeps entries in `<namespace>/<class>/` folders (taken from the cache keys), with `stats()` and `clear(cache_class=, namespace=)`, so one class can be counted or wiped. Entries recorded in the old flat layout are counted and wiped but no longer read; nothing released used it.
+- **Why:** L2 and L3a send frames; self-consistency runs must be distinct requests with distinct cache keys (settings.md §8, decision 2); the dataset needs text vectors.
+- **Supersedes:** settings.md §8 decision 2 (temperature and seed in the request and the cache key), now done.
+- **Recorded in:** `src/framekit/contracts/` (`conversation.py`, `embedding.py` new, `__init__.py`); `src/framekit/models/` (`catalog.py`, `router.py`, `adapters/base.py`, `adapters/openai_compatible.py`, `adapters/anthropic.py`, `adapters/__init__.py`, `cache/entries.py`, `cache/port.py`, `cache/file_store.py`); `tests/test_model_media.py` (new), `tests/test_cache.py`, `tests/test_custom_adapters.py`; ARCHITECTURE.md §5; settings.md §5.2, §8; README.md "Response cache".
 
 ---
 
