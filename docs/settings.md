@@ -473,7 +473,7 @@ frames.timestamps, frames.pending_filters, frames.notes
 
 - **The perception record** (schema 1): `summary`, `setting`, `entities`, `props`, `beats` (`t: [start, end]`, `who: [names]`, `action`, `audio` or null), plus the `camera`, `timing` and `sound` modules the run needs; `speech` comes from the L1 speech detector, never from the model. Times are on the unit timeline.
 - **A role's model** is a model id from the catalog (or your registry) or the name of one of your `ModelSource`s; `max_tokens` defaults per role as above, `temperature` and `reasoning` default from `defaults`, `seed` is unset unless given. Frame-sending roles (L2 with `method: model`, L3a) need a model whose catalog entry has `vision: true`, and their profiles must fit its `max_images` and `max_image_side_px`. `embed_text` needs a provider whose adapter serves embeddings (the OpenAI-compatible one does; Anthropic's doesn't).
-- **Retries:** a reply that isn't usable (no JSON, a schema or vocabulary problem, cut off at `max_tokens`) is retried as a new request carrying what was wrong, up to `quality_control.invalid_output.max_attempts`, then flagged.
+- **Retries:** a reply that isn't usable (no JSON, a schema or vocabulary problem, cut off at `max_tokens`) is retried as a new request carrying what was wrong, up to `quality_control.invalid_output.max_attempts`, then flagged. A flagged task is kept like a finished one, so a rerun doesn't pay for it again; `--rerun L3a` (or a changed prompt, model or setting) tries it anew.
 
 ### 5.5 Policy, formatting, governance: what rules apply (question 6)
 
