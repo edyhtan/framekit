@@ -353,7 +353,8 @@ Detectors are named, versioned code, picked in the plan; the built-ins (version 
 - **Motion intensity:** built in, `frame_difference` (mean absolute difference between consecutive small gray frames, a cut included); optical-flow magnitude remains an option.
 
 ### L2 — Scene segmentation
-- A long-context video model gets the whole unit (frames chosen by L2's vision profile, §2.3; typically uniform ~1 fps) and returns a **synopsis** plus **scene boundaries** (30–60 s), snapped to L1 shot cuts.
+- A long-context video model gets the whole unit (frames chosen by L2's vision profile, §2.3; typically uniform ~1 fps, as images or storyboard grids until native video is built) and returns a **synopsis** plus **scene boundaries** (30–60 s), snapped to L1 shot cuts. framekit repairs the proposal into a clean cover of the unit's processable parts (ordered, contiguous, too-short scenes merged, too-long ones split), noting every repair; an unusable reply falls back to shot groups, flagged.
+- `segmentation.method: shot_groups` makes scenes from consecutive shots without a model (and without a synopsis).
 - The synopsis is passed to later passes, because a scene's meaning depends on unit context.
 
 ### L3a — Perception (video → observable facts)
@@ -495,11 +496,10 @@ flowchart LR
 - **Done (2026-10-23):** the conversation port, `ResponseStore`, catalog, router, both adapters and the response cache with a file store; history kept via `git filter-repo`; CI on locked and newest dependencies. ids and run records follow with E1, where extraction first needs them.
 
 **E1: first dataset (5 units of the test corpus)**
-- Lens spec format and loader, and the A and V schemas (search space, corpus, plan, gold set): **built (2026-10-24)**; the dataset schema next.
+- A, V and dataset schemas; lens spec format and loader. **Built (2026-10-24).**
 - Vision parameters (§2.3): schema, checks, resolution, planning, pixel filters, image preparation and delivery. **Built (2026-10-24).**
-- L0–L3a end to end with the corpus profile and modular perception.
-- Emotions & dynamics lens (Appendix B) with a ~10-scene gold set, plus a **minimal second lens** (e.g. comedy craft, ~10 labels) on the same scenes, purely to prove framekit has no lens leakage.
-- Dataset writer and reader v1; CLI `extract`.
+- L0–L3a end to end with the corpus profile and modular perception; dataset writer and reader v1. **Built (2026-10-24)**, tested on generated test patterns with a scripted model; not yet run against a real provider.
+- Next: lens passes (L3b) and vectors, the CLI (`extract`, `bench`, `cache`) and the benchmark harness; then a run on 5 units with real models (the model choice is open, §9), the emotions & dynamics lens (Appendix B) with a ~10-scene gold set, plus a **minimal second lens** (e.g. comedy craft, ~10 labels) on the same scenes, purely to prove framekit has no lens leakage.
 
 **E2: full test corpus**
 - L0–L4 on every unit (~161 units, ~19 h for the example corpus); the search app loads the result.

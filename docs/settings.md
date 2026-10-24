@@ -2,7 +2,7 @@
 
 Every setting that shapes an extraction run, in one place: what you give, what framekit decides, what comes out. It's the spec for the schemas built in milestone E1 (`SearchSpace`, `Corpus`, `ExtractionPlan`, `GoldSet`). Why it's shaped this way: [DESIGN.md](DESIGN.md) §2.3–§2.4; decisions: [DECISIONS.md](DECISIONS.md).
 
-> **Status:** in progress on `main` (2026-10-24), after v0.1.0. Built: model access (`ModelSettings`, `CacheSettings`, per-request options), the vision parameters (§5.2: schema, checks, resolution, pixel-free planning), lens specs (§3.1), and the schemas of the search space, corpus, plan and gold set (§3–§6): every setting below is parsed and checked. What a setting does takes effect when its stage is built (milestone E1: resolution, media work, runs, benchmarks); until then, its description is the design.
+> **Status:** in progress on `main` (2026-10-24), after v0.1.0. Built: every setting below is parsed and checked (§3–§6), resolved (§5.1) and, through L0–L3a, run: the analysis copy, signals, scenes and observable facts, written as a dataset (§7). Not yet: the lens passes and vectors (§5.4 `lens_passes`, `embedding`: parsed and checked, not run yet), the `framekit` command (§2) and the benchmark harness (§6), the next steps of milestone E1. Defaults are placeholders until a benchmark sweep sets them.
 
 **Tags:** **[built]** in code (v0.1.0, or on `main` since) · **[not built]** accepted or refused with a clear reason, but not implemented yet · **[designed]** in DESIGN.md / ARCHITECTURE.md · **[discussed]** agreed with the owner, first written down here · **[open]** value or choice not decided · **[fixed]** a rule, not a setting. **Every number is a placeholder** until a benchmark sweep sets it.
 
@@ -135,7 +135,7 @@ report = benchmark(
 
 ## 3. Search space: `search-space.yaml`
 
-What should become findable. It's **given input**: written by hand or produced by an augmentation strategy, and framekit never edits it (DESIGN.md §2.4). Its digest (`SearchSpace.digest`) covers the file as given and every lens spec it names.
+What should become findable. It's **given input**: written by hand or produced by an augmentation strategy, and framekit never edits it (DESIGN.md §2.4). The manifest records it verbatim with a digest that also covers every lens spec it names.
 
 ```yaml
 search_space:
@@ -228,7 +228,7 @@ corpus:
                                                    #   all); the search space's scope narrows further
   manifest:                                        # [built]
     - unit_id: tj042
-      expected_duration_s: 412.3
+      expected_duration_s: 412.3                   #   more than 2 s or 2% off: excluded, unmatched
       fingerprint: "chromaprint:…"                 #   recorded; matching by it [not built]
       excluded_ranges: [[0.0, 9.5], [404.0, 412.3]]   # title cards, logos: never processed
   units:                                           # [built] the user's own files
@@ -241,8 +241,8 @@ corpus:
 ```
 
 - **Unit ids** become file names: letters, digits, `_`, `-` and `.`.
-- **The digest** covers the profile, subset, manifest and each unit's id, metadata and alignment, not the paths (they differ between machines).
-- **Matching and alignment** (DESIGN.md §8.2: Chromaprint, cross-correlation, piecewise drift) [not built]: timestamps are on each file's own timeline.
+- **The digest** covers the profile, subset, manifest and each unit's id, metadata and alignment, not the paths (they differ between machines); each unit's content fingerprint (size plus three 1 MiB samples) is recorded in the manifest and keys its L0 task.
+- **Matching and alignment** (DESIGN.md §8.2: Chromaprint, cross-correlation, piecewise drift) [not built]: today a unit is matched by its expected duration only, and timestamps are on each file's own timeline.
 
 ---
 
@@ -332,8 +332,8 @@ The vision profiles aren't derived from the resolution: they're explicit, so not
     chunk_s: 600
     overlap_s: 90
     snap_to: shot_boundaries
-    enabled_over_s: 900
-    merge: {role: L2_merge}
+    enabled_over_s: 900                            #   a longer unit is excluded, with the reason;
+    merge: {role: L2_merge}                        #   raise this to process it in one pass
 ```
 
 **Detectors** [built] are named, versioned code like vision strategies, and their keys go into L1's input hash: `ffmpeg_scene@1` (cuts where ffmpeg's scene score, on frames 160 px wide, exceeds `threshold`), `spectral_flux@1` (peaks of the spectral flux of the mono 16 kHz audio, Hann frames of 64 ms every 16 ms, above the surrounding 0.5 s mean plus `(1 − sensitivity) × 2` standard deviations, at least 50 ms apart; loudness per window), `frame_difference@1` (mean absolute difference of consecutive 64 px gray frames, four samples per value). `register_detector(Detector(kind, name, version, run))` adds others (kinds `shots`, `audio`, `motion`, `speech`, `audio_tags`); a plan naming one that isn't registered fails at load time.
@@ -350,7 +350,7 @@ The vision profiles aren't derived from the resolution: they're explicit, so not
 
 **When the facts are known** [built], two more checks return their problems (raise `VisionParamsError(problems)` to stop):
 - `check_against_source`: no profile asks for more fps (candidates, the overview) or pixels than the analysis copy has (`max_side_px` against the copy's long side, per unit);
-- `check_against_model`: native video only on a model that takes it; no more images than the model accepts, counted from the profile's frame cap (a storyboard sends ⌈frames ÷ tiles⌉ images, each tile a frame of `max_side_px`); no larger images than it accepts. The catalog declares these limits (`vision`, `max_images`, `max_image_side_px`; [built]); `check_against_model` takes them as a `ModelVisionCaps`.
+- `check_against_model`: native video only on a model that takes it; no more images than the model accepts, counted from the profile's frame cap (a storyboard sends ⌈frames ÷ tiles⌉ images, each tile a frame of `max_side_px`); no larger images than it accepts. Extraction runs both before any spend: the model's limits from its catalog entry (`max_images`, `max_image_side_px`), the copy's size from probing each unit; outside extraction, describe a model with `ModelVisionCaps`.
 
 **Filled at resolution** [built]; the values are placeholders [open] like every number:
 
@@ -405,7 +405,9 @@ frames.timestamps, frames.pending_filters, frames.notes
     fixed_windows: {window_s: null, stride_s: 1}  # null: derived; pure arithmetic, no model
 ```
 
-Excluded ranges aren't a setting here: they come from the search space's scope with no override.
+- **`method: model`:** the L2 model sees frames of the whole unit (its vision profile, the excluded ranges left out), the cuts, the names and hints, and returns a synopsis and scenes. framekit repairs them into a clean cover of each processable span: ordered and contiguous, boundaries snapped to a cut within the tolerance, scenes under `min` merged into a neighbour (when the result stays within `max`), scenes over `max` split near even points (at a cut when one is close). Every repair is a note in the manifest. An unusable reply after the allowed attempts falls back to shot groups, flagged.
+- **`method: shot_groups`:** consecutive shots grouped until a scene reaches `target`, never past `max` (a longer shot is split evenly). No synopsis.
+- Excluded ranges aren't a setting here: they come from the search space's scope with no override. Scene ids are `<unit>_s000`, beat ids `<scene>_b000`, window ids `<unit>_w00000`.
 
 ### 5.4 Interpretation and models: what is written, by whom (question 5)
 
@@ -453,7 +455,9 @@ Excluded ranges aren't a setting here: they come from the search space's scope w
     embed_image: {model_id: <image-embedding-model>}   # [not built]
 ```
 
+- **The perception record** (schema 1): `summary`, `setting`, `entities`, `props`, `beats` (`t: [start, end]`, `who: [names]`, `action`, `audio` or null), plus the `camera`, `timing` and `sound` modules the run needs; `speech` comes from the L1 speech detector, never from the model. Times are on the unit timeline.
 - **A role's model** is a model id from the catalog (or your registry) or the name of one of your `ModelSource`s; `max_tokens` defaults per role as above, `temperature` and `reasoning` default from `defaults`, `seed` is unset unless given. Frame-sending roles (L2 with `method: model`, L3a) need a model whose catalog entry has `vision: true`, and their profiles must fit its `max_images` and `max_image_side_px`.
+- **Retries:** a reply that isn't usable (no JSON, a schema or vocabulary problem, cut off at `max_tokens`) is retried as a new request carrying what was wrong, up to `quality_control.invalid_output.max_attempts`, then flagged. A flagged task is kept like a finished one, so a rerun doesn't pay for it again; `--rerun L3a` (or a changed prompt, model or setting) tries it anew.
 
 ### 5.5 Policy, formatting, governance: what rules apply (question 6)
 
@@ -485,6 +489,7 @@ Excluded ranges aren't a setting here: they come from the search space's scope w
     model_inputs: null                             # provider_transient | local_only
 ```
 
+- **Budget:** spend is the adapters' cost estimate from the catalog prices, checked before every model call, so a run overshoots by at most the calls in flight. When a cap is reached no new unit starts; `stop` also fails the next call of every unit in progress (those units end partial), `finish_unit_then_stop` lets them finish. The manifest marks partial and skipped units.
 - **`model_inputs`:** may frames go to a model provider for inference (`provider_transient`), or only to models on this machine or a private network (`local_only`, checked against each frame-sending role's base URL: `localhost` or a loopback, private or link-local IP)? For a **byo_media** corpus there's no default: a run that sends frames needs the plan to say. Other corpora default to `provider_transient`. Either way it's recorded in the manifest.
 
 Transport retries (`--provider-retries`), concurrency and rate limits are execution, not plan (§2).
@@ -538,7 +543,7 @@ The baseline scorer (`baseline_retriever`) embeds each gold query with a fixed m
 | `runs` | per task | `run_id`, `stage`, `unit_id`, `target_id`, `input_hash`, `status`, `attempts`, `model_id`, `provider`, `adapter_version`, `started_at`, `finished_at`, `latency_ms`, tokens, `cost_usd` (estimated), `cached`, `reused`, `lens`, `run_index` |
 | `qc` | per check and target | `check`, `target_type`, `target_id`, `unit_id`, `scene_id`, `lens`, `run_index`, `status` (pass, flag, down_weight), `detail` |
 
-**The manifest** (`DatasetManifest`; [built]: its schema, the writer and the reader; `extract()` fills it once runs are built) records: the dataset id (from the search space, corpus and plan digests, so a rerun keeps it); the search space verbatim with its digest; the corpus name, digest, rights mode and each unit's content fingerprint; the resolved plan (defaults filled in, strategy versions pinned, derived values in place) with its digest, `content_digest` (without budget, governance and layout) and `fairness_digest`; the derivation rules applied; lens versions and digests; the model of each role; the vision digest; governance; each unit's status and reason; every table file with its row count and sha256; the estimated cost (this run, total, per stage) and tasks computed or reused; the ffmpeg version and execution options; notes (repairs, dropped frames, unused settings); and the benchmark label when made by the harness. `Dataset.open(path, verify=True)` checks every file against it.
+**The manifest** [built] records: the dataset id (from the search space, corpus and plan digests, so a rerun keeps it); the search space verbatim with its digest; the corpus name, digest, rights mode and each unit's content fingerprint; the resolved plan (defaults filled in, strategy versions pinned, derived values in place) with its digest, `content_digest` (without budget, governance and layout) and `fairness_digest`; the derivation rules applied; lens versions and digests; the model of each role; the vision digest; governance; each unit's status and reason; every table file with its row count and sha256; the estimated cost (this run, total, per stage) and tasks computed or reused; the ffmpeg version and execution options; notes (repairs, dropped frames, unused settings); and the benchmark label when made by the harness. `Dataset.open(path, verify=True)` checks every file against it.
 
 ---
 

@@ -30,7 +30,7 @@ In scope: the library code in this repository (`framekit.contracts`, `framekit.m
 
 Context that limits what framekit can expose:
 
-- **No footage:** the repository contains no video, frames, thumbnails, ripping tools or downloaders, and test videos are generated test patterns. Media work reads the video files it's given and writes only where it's told (analysis copies go to a work folder). The 0.1.x line (contracts and model access) doesn't read video files at all.
+- **No footage:** the repository contains no video, frames, thumbnails, ripping tools or downloaders, and test videos are generated test patterns. Extraction reads the video files you point it at, writes analysis copies only to its work folder, and sends frames only to the models your plan names (for a `byo_media` corpus, only once the plan says it may: `governance.model_inputs`). The 0.1.x line (contracts and model access) doesn't read video files at all.
 - **The only secrets it reads are provider API keys** (and optional base-URL overrides), from the environment, by the names in the provider configs: the built-in catalog's (`HIVE_API_KEY`, `DEEPSEEK_API_KEY`, `ANTHROPIC_API_KEY`), or the variable a provider registered by an application names. It has no other environment-bound settings.
 - **Known gaps**, to be closed later ([docs/adapters.md](docs/adapters.md), "Security"):
   - a provider's key is sent to that provider's base URL, and the official SDKs also send headers taken from their own environment variables (`OPENAI_CUSTOM_HEADERS`, `ANTHROPIC_CUSTOM_HEADERS`, `OPENAI_ORG_ID`, `OPENAI_PROJECT_ID`) to whatever host a provider points at, including custom ones. framekit doesn't strip them yet;

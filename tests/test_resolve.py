@@ -149,3 +149,10 @@ def test_lens_only_differences_keep_the_fairness_digest():
     assert other.fairness_digest != one.fairness_digest
     budget = resolve(space(lens(COLOUR_LENS)), None, plan(budget={"max_cost_usd": 3}))
     assert budget.content_digest == one.content_digest  # a budget changes nothing computed
+
+
+def test_unknown_detectors_are_refused():
+    text = problems_of(
+        space(lens(COLOUR_LENS)), None, plan(signals={"shots": {"detector": "transnet"}})
+    )
+    assert "signals.shots.detector: no shots detector 'transnet'" in text

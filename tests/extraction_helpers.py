@@ -43,6 +43,61 @@ def write_yaml(path: Path, data: Any) -> Path:
     return path
 
 
+def write_inputs(
+    root: Path,
+    video: Path,
+    *,
+    lenses: tuple[str, ...] = ("pace",),
+    plan: dict[str, Any] | None = None,
+    space: dict[str, Any] | None = None,
+    rights_mode: str = "byo_media",
+) -> dict[str, Path]:
+    """Lens specs, a search space, a corpus and a plan as files, like a user's."""
+    write_yaml(root / "lenses" / "pace" / "lens.yaml", PACE_LENS)
+    (root / "lenses" / "pace" / "interpret.md").write_text(
+        "Rate how fast the moment feels.", encoding="utf-8"
+    )
+    write_yaml(root / "lenses" / "colour.yaml", COLOUR_LENS)
+    refs = {
+        "pace": {"spec": "lenses/pace", "version": "0.1.0"},
+        "colour": {"spec": "lenses/colour.yaml", "version": "1.0.0"},
+    }
+    space_data = {
+        "search_space": {
+            "version": 1,
+            "intent": "test patterns",
+            "lenses": [refs[name] for name in lenses],
+            "resolution": {"moment_length_s": {"min": 3, "max": 6}},
+            "query_style": {"examples": ["when everything moves at once"]},
+            **(space or {}),
+        }
+    }
+    corpus_data = {
+        "corpus": {
+            "profile": {
+                "name": "synthetic",
+                "unit_definition": "one generated test video per file",
+                "metadata_fields": {"title": "str", "quality": ["good", "fair"]},
+                "entities": ["Ada", "Brook"],
+                "perception_hints": ["generated test patterns"],
+                "rights_mode": rights_mode,
+            },
+            "manifest": [
+                {"unit_id": "u1", "expected_duration_s": 24.0, "excluded_ranges": [[0.0, 1.0]]}
+            ],
+            "units": [
+                {"unit_id": "u1", "path": str(video), "title": "Patterns", "quality": "good"}
+            ],
+        }
+    }
+    plan_data = {"plan": base_plan() | (plan or {})}
+    return {
+        "space": write_yaml(root / "search-space.yaml", space_data),
+        "corpus": write_yaml(root / "corpus.yaml", corpus_data),
+        "plan": write_yaml(root / "plan.yaml", plan_data),
+    }
+
+
 def base_plan() -> dict[str, Any]:
     """A small, fast plan on the scripted models."""
     return {
