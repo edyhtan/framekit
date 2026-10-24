@@ -71,6 +71,10 @@ Development: `uv sync`, then `uv run pytest`, `uv run lint-imports`, `uv run ruf
 | [docs/DECISIONS.md](docs/DECISIONS.md) | why, in date order |
 | [CLAUDE.md](CLAUDE.md) | rules for contributors and coding agents |
 
+## Licence
+
+Code: [MIT](LICENSE). Annotation packs, if published, are CC-BY and contain no footage (docs/DESIGN.md §8).
+
 ## Rights
 
 Not affiliated with any rights holder. For corpora in `byo_media` mode, users supply their own copies; this repository contains no footage, frames, thumbnails, ripping tools or downloaders, and datasets built from such corpora stay local.

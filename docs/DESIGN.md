@@ -535,7 +535,7 @@ Users' copies of a corpus differ (releases, edits, frame rates). A dedicated mod
 - reports coverage; unmatched units are excluded from the dataset.
 
 ### 8.3 Packaging
-- Code: MIT or Apache-2.0. Annotation packs: CC-BY, stating they contain no footage. README disclaimer: not affiliated with any rights holder.
+- Code: **MIT** (decided 2026-10-23; `LICENSE`). Annotation packs: CC-BY, stating they contain no footage. README disclaimer: not affiliated with any rights holder.
 
 ---
 
