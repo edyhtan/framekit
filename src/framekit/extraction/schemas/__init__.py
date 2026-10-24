@@ -1,5 +1,5 @@
 """The extraction schemas: A (`SearchSpace`), V (`Corpus`), the plan (`ExtractionPlan`), lens
-specs (`LensSpec`) and the gold set (`GoldSet`).
+specs (`LensSpec`), the gold set (`GoldSet`) and the dataset manifest (`DatasetManifest`).
 
 Pydantic models, strict and read-only once parsed. Each loads from a YAML or JSON file
 (`.load(path)`) or plain data (`.from_mapping(data)`) and raises one `ConfigError` listing
@@ -17,6 +17,7 @@ from framekit.extraction.schemas.corpus import (
 )
 from framekit.extraction.schemas.gold import GoldMatch, GoldMoment, GoldQuery, GoldSet
 from framekit.extraction.schemas.lens import FieldSpec, LensPrompts, LensSpec, LensValidator
+from framekit.extraction.schemas.manifest import SCHEMA_VERSION, DatasetManifest
 from framekit.extraction.schemas.plan import (
     DEFAULT_VISION,
     MODEL_ROLES,
@@ -30,11 +31,13 @@ __all__ = [
     "DEFAULT_VISION",
     "MODEL_ROLES",
     "MODULES",
+    "SCHEMA_VERSION",
     "TABLES",
     "AlignmentSegment",
     "ConfigError",
     "Corpus",
     "CorpusProfile",
+    "DatasetManifest",
     "ExtractionPlan",
     "FieldSpec",
     "GoldMatch",
