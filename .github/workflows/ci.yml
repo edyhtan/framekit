@@ -1,0 +1,34 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: checks (${{ matrix.deps }} dependencies)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # locked: the versions in uv.lock; newest: the newest versions the ranges allow,
+        # as a consumer installing framekit today would get.
+        deps: [locked, newest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Install
+        run: |
+          if [ "${{ matrix.deps }}" = "newest" ]; then uv sync --upgrade; else uv sync --locked; fi
+      - name: Tests
+        run: uv run pytest -q
+      - name: Import contracts
+        run: uv run lint-imports
+      - name: Lint
+        run: uv run ruff check .
+      - name: Build
+        run: uv build

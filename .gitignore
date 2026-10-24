@@ -4,6 +4,7 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .ruff_cache/
+/dist/
 # media and datasets never go in the repo
 *.mp4
 *.mkv

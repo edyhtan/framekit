@@ -1,4 +1,4 @@
-"""The single model-adapter interface: shared lifecycle, both protocols, providers, router.
+"""Model access: the shared adapter lifecycle, both protocols, providers, the router.
 
 No real API calls: SDK clients are replaced by fakes with the same shape.
 """
@@ -12,31 +12,31 @@ import httpx2
 import openai
 import pytest
 
-from clipsearch_adapters.external_connections.adapters.anthropic_text import AnthropicAdapter
-from clipsearch_adapters.external_connections.adapters.external_ai_adapter_base import (
+from framekit.contracts.conversation import STOP_REASONS, ConversationRequest, ModelCallError
+from framekit.models.adapters.anthropic import AnthropicAdapter
+from framekit.models.adapters.base import (
     ExternalAIAdapterBase,
     map_sdk_error,
     normalize_stop_reason,
     output_budget,
 )
-from clipsearch_adapters.external_connections.adapters.openai_compatible import (
+from framekit.models.adapters.openai_compatible import (
     OpenAICompatibleAdapter,
 )
-from clipsearch_adapters.external_connections.catalog import (
+from framekit.models.catalog import (
     ANTHROPIC,
     CATALOG,
     DEEPSEEK,
     HIVE,
     PROVIDERS,
+    ModelSettings,
     ProviderConfig,
-    TextModelSettings,
 )
-from clipsearch_adapters.external_connections.router import (
+from framekit.models.router import (
     PROTOCOLS,
     ConversationRouter,
     create_adapter,
 )
-from clipsearch_domain.common.ports import STOP_REASONS, ConversationRequest, ModelCallError
 
 HIVE_MODEL = "deepseek-ai/deepseek-v4.1-flash"
 
@@ -233,13 +233,13 @@ def test_provider_specific_permanent_statuses(config, status):
 def test_missing_key_is_not_retryable_for_every_provider(monkeypatch, provider):
     monkeypatch.delenv(PROVIDERS[provider].key_env, raising=False)
     with pytest.raises(ModelCallError) as info:
-        create_adapter(provider, TextModelSettings())
+        create_adapter(provider, ModelSettings())
     assert info.value.retryable is False and PROVIDERS[provider].key_env in str(info.value)
 
 
 def test_unknown_provider_is_rejected():
     with pytest.raises(ModelCallError):
-        create_adapter("nope", TextModelSettings())
+        create_adapter("nope", ModelSettings())
 
 
 def test_hive_base_url_default_and_override(monkeypatch):
@@ -254,7 +254,7 @@ def test_hive_base_url_default_and_override(monkeypatch):
 
 async def test_hive_streams_and_assembles_reply_reasoning_and_usage():
     client = openai_client(hive_stream())
-    adapter = OpenAICompatibleAdapter(HIVE, client, TextModelSettings())
+    adapter = OpenAICompatibleAdapter(HIVE, client, ModelSettings())
     result = await adapter.generate(CATALOG[HIVE_MODEL], req(max_tokens=100, reasoning=True))
 
     [params] = client.chat.completions.calls
@@ -272,7 +272,7 @@ async def test_hive_output_hitting_the_limit_is_length():
     stream = FakeStream(
         [chunk(reasoning="thinking..."), chunk(finish="stop"), chunk(usage=usage(30, 868))]
     )
-    adapter = OpenAICompatibleAdapter(HIVE, openai_client(stream), TextModelSettings())
+    adapter = OpenAICompatibleAdapter(HIVE, openai_client(stream), ModelSettings())
     result = await adapter.generate(CATALOG[HIVE_MODEL], req(max_tokens=100))
     assert result.text == "" and result.stop_reason == "length"
     assert result.provider_stop_reason == "stop"
@@ -297,7 +297,7 @@ def tool_completion(arguments='{"answer": 3}', name="response"):
 async def test_function_calling_forces_one_tool_and_reads_its_arguments():
     # Hive's models use function_calling (a native json_schema response_format gets a 400).
     client = openai_client(tool_completion())
-    adapter = OpenAICompatibleAdapter(HIVE, client, TextModelSettings())
+    adapter = OpenAICompatibleAdapter(HIVE, client, ModelSettings())
     request = ConversationRequest("hi", 32, system="Be brief.", response_schema=SCHEMA)
     result = await adapter.generate(CATALOG[HIVE_MODEL], request)
 
@@ -317,7 +317,7 @@ async def test_function_calling_forces_one_tool_and_reads_its_arguments():
 async def test_function_calling_without_a_tool_call_keeps_the_text_for_validation():
     reply = completion(model=HIVE_MODEL)  # the model answered in prose instead
     client = openai_client(reply)
-    adapter = OpenAICompatibleAdapter(HIVE, client, TextModelSettings())
+    adapter = OpenAICompatibleAdapter(HIVE, client, ModelSettings())
     request = ConversationRequest("hi", 32, response_schema=SCHEMA)
     result = await adapter.generate(CATALOG[HIVE_MODEL], request)
     assert result.text == "Hi! It finds clips."  # the caller's validation rejects it
@@ -325,7 +325,7 @@ async def test_function_calling_without_a_tool_call_keeps_the_text_for_validatio
 
 async def test_prompted_schema_goes_into_the_system_prompt():
     client = openai_client(completion())
-    adapter = OpenAICompatibleAdapter(DEEPSEEK, client, TextModelSettings())
+    adapter = OpenAICompatibleAdapter(DEEPSEEK, client, ModelSettings())
     spec = replace(CATALOG["deepseek-flash"], structured_method="prompted")
     request = ConversationRequest("hi", 32, system="Be brief.", response_schema=SCHEMA)
     result = await adapter.generate(spec, request)
@@ -339,7 +339,7 @@ async def test_prompted_schema_goes_into_the_system_prompt():
 
 async def test_json_mode_sets_response_format_and_keeps_schema_in_prompt():
     client = openai_client(completion())
-    adapter = OpenAICompatibleAdapter(DEEPSEEK, client, TextModelSettings())
+    adapter = OpenAICompatibleAdapter(DEEPSEEK, client, ModelSettings())
     spec = replace(CATALOG["deepseek-flash"], structured_method="json_mode")
     result = await adapter.generate(spec, ConversationRequest("hi", 32, response_schema=SCHEMA))
     [params] = client.chat.completions.calls
@@ -350,7 +350,7 @@ async def test_json_mode_sets_response_format_and_keeps_schema_in_prompt():
 
 async def test_anthropic_system_prompt_and_prompted_schema():
     client = anthropic_client(claude_message())
-    adapter = AnthropicAdapter(ANTHROPIC, client, TextModelSettings())
+    adapter = AnthropicAdapter(ANTHROPIC, client, ModelSettings())
     request = ConversationRequest("hi", 32, system="Be brief.", response_schema=SCHEMA)
     result = await adapter.generate(CATALOG["claude-haiku-4-5"], request)
     [params] = client.messages.calls
@@ -360,7 +360,7 @@ async def test_anthropic_system_prompt_and_prompted_schema():
 
 async def test_no_schema_means_no_structured_mode_and_no_system():
     client = openai_client(completion())
-    adapter = OpenAICompatibleAdapter(DEEPSEEK, client, TextModelSettings())
+    adapter = OpenAICompatibleAdapter(DEEPSEEK, client, ModelSettings())
     result = await adapter.generate(CATALOG["deepseek-flash"], req())
     [params] = client.chat.completions.calls
     assert params["messages"][0]["role"] == "user" and result.structured_mode is None
@@ -368,7 +368,7 @@ async def test_no_schema_means_no_structured_mode_and_no_system():
 
 async def test_deepseek_non_streaming_completion():
     client = openai_client(completion())
-    adapter = OpenAICompatibleAdapter(DEEPSEEK, client, TextModelSettings(max_tokens_cap=64))
+    adapter = OpenAICompatibleAdapter(DEEPSEEK, client, ModelSettings(max_tokens_cap=64))
     result = await adapter.generate(CATALOG["deepseek-flash"], req())
 
     [params] = client.chat.completions.calls
@@ -381,7 +381,7 @@ async def test_deepseek_non_streaming_completion():
 
 async def test_openai_protocol_errors_go_through_the_shared_mapper():
     error = api_error(openai, "APIStatusError", 405)
-    adapter = OpenAICompatibleAdapter(HIVE, openai_client(error=error), TextModelSettings())
+    adapter = OpenAICompatibleAdapter(HIVE, openai_client(error=error), ModelSettings())
     with pytest.raises(ModelCallError) as info:
         await adapter.generate(CATALOG[HIVE_MODEL], req())
     assert info.value.retryable is False and "405" in str(info.value)
@@ -392,7 +392,7 @@ async def test_openai_protocol_errors_go_through_the_shared_mapper():
 
 async def test_anthropic_message_is_mapped_into_the_same_result():
     client = anthropic_client(claude_message())
-    adapter = AnthropicAdapter(ANTHROPIC, client, TextModelSettings(max_tokens_cap=64))
+    adapter = AnthropicAdapter(ANTHROPIC, client, ModelSettings(max_tokens_cap=64))
     result = await adapter.generate(CATALOG["claude-haiku-4-5"], req())
 
     [params] = client.messages.calls
@@ -405,21 +405,21 @@ async def test_anthropic_message_is_mapped_into_the_same_result():
 
 async def test_anthropic_thinking_blocks_become_reasoning():
     client = anthropic_client(claude_message(thinking="Short greeting needed."))
-    adapter = AnthropicAdapter(ANTHROPIC, client, TextModelSettings())
+    adapter = AnthropicAdapter(ANTHROPIC, client, ModelSettings())
     result = await adapter.generate(CATALOG["claude-haiku-4-5"], req())
     assert result.reasoning_text == "Short greeting needed."
 
 
 async def test_anthropic_max_tokens_is_length():
     client = anthropic_client(claude_message(stop="max_tokens", out=5))
-    adapter = AnthropicAdapter(ANTHROPIC, client, TextModelSettings())
+    adapter = AnthropicAdapter(ANTHROPIC, client, ModelSettings())
     result = await adapter.generate(CATALOG["claude-haiku-4-5"], req())
     assert (result.stop_reason, result.provider_stop_reason) == ("length", "max_tokens")
 
 
 async def test_opus_uses_beta_endpoint_with_fallbacks_and_low_effort():
     client = anthropic_client(claude_message(model="claude-opus-5"))
-    adapter = AnthropicAdapter(ANTHROPIC, client, TextModelSettings())
+    adapter = AnthropicAdapter(ANTHROPIC, client, ModelSettings())
     await adapter.generate(CATALOG["claude-opus-5"], req(max_tokens=32))
     assert client.messages.calls == []
     [params] = client.beta.messages.calls
@@ -429,7 +429,7 @@ async def test_opus_uses_beta_endpoint_with_fallbacks_and_low_effort():
 
 async def test_anthropic_errors_go_through_the_shared_mapper():
     error = api_error(anthropic, "RateLimitError", 429)
-    adapter = AnthropicAdapter(ANTHROPIC, anthropic_client(error=error), TextModelSettings())
+    adapter = AnthropicAdapter(ANTHROPIC, anthropic_client(error=error), ModelSettings())
     with pytest.raises(ModelCallError) as info:
         await adapter.generate(CATALOG["claude-haiku-4-5"], req())
     assert info.value.retryable is True
@@ -454,7 +454,7 @@ class RecordingAdapter:
 
 async def test_router_sends_each_model_to_its_provider():
     adapters = {name: RecordingAdapter(name) for name in PROVIDERS}
-    router = ConversationRouter(TextModelSettings(), lambda name, _s: adapters[name])
+    router = ConversationRouter(ModelSettings(), lambda name, _s: adapters[name])
     assert (await router.generate(req())).provider == "hive"  # default model
     assert (await router.generate(req(model_id="deepseek-flash"))).provider == "deepseek"
     assert (await router.generate(req(model_id="claude-sonnet-5"))).provider == "anthropic"
@@ -469,14 +469,14 @@ async def test_router_missing_key_only_affects_that_provider():
             raise ModelCallError("HIVE_API_KEY is not set", retryable=False)
         return claude
 
-    router = ConversationRouter(TextModelSettings(), factory)
+    router = ConversationRouter(ModelSettings(), factory)
     with pytest.raises(ModelCallError):
         await router.generate(req())
     assert (await router.generate(req(model_id="claude-haiku-4-5"))).provider == "anthropic"
 
 
 async def test_router_rejects_unknown_model():
-    router = ConversationRouter(TextModelSettings(), lambda name, _s: RecordingAdapter(name))
+    router = ConversationRouter(ModelSettings(), lambda name, _s: RecordingAdapter(name))
     with pytest.raises(ModelCallError) as info:
         await router.generate(req(model_id="nope"))
     assert info.value.retryable is False
@@ -487,7 +487,7 @@ async def test_router_rejects_unknown_model():
 
 async def test_router_closes_every_adapter_it_opened_and_is_idempotent():
     adapters = {"hive": RecordingAdapter("hive"), "anthropic": RecordingAdapter("anthropic")}
-    async with ConversationRouter(TextModelSettings(), lambda n, _s: adapters[n]) as router:
+    async with ConversationRouter(ModelSettings(), lambda n, _s: adapters[n]) as router:
         await router.generate(req())
         await router.generate(req(model_id="claude-haiku-4-5"))
     assert adapters["hive"].closed == 1 and adapters["anthropic"].closed == 1
@@ -498,7 +498,7 @@ async def test_router_closes_every_adapter_it_opened_and_is_idempotent():
 async def test_router_close_failure_does_not_stop_other_closes():
     bad, good = RecordingAdapter("hive", fail_close=True), RecordingAdapter("anthropic")
     router = ConversationRouter(
-        TextModelSettings(), lambda n, _s: {"hive": bad, "anthropic": good}[n]
+        ModelSettings(), lambda n, _s: {"hive": bad, "anthropic": good}[n]
     )
     await router.generate(req())
     await router.generate(req(model_id="claude-haiku-4-5"))
@@ -514,7 +514,7 @@ async def test_adapter_close_closes_the_sdk_client():
 
     client = openai_client(completion())
     client.close = close
-    adapter = OpenAICompatibleAdapter(DEEPSEEK, client, TextModelSettings())
+    adapter = OpenAICompatibleAdapter(DEEPSEEK, client, ModelSettings())
     await adapter.aclose()
     assert closed == [True]
 
@@ -536,7 +536,7 @@ class BrokenStream(FakeStream):
 
 async def test_stream_failing_mid_way_is_closed_and_reported_retryable():
     stream = BrokenStream()
-    adapter = OpenAICompatibleAdapter(HIVE, openai_client(stream), TextModelSettings())
+    adapter = OpenAICompatibleAdapter(HIVE, openai_client(stream), ModelSettings())
     with pytest.raises(ModelCallError) as info:
         await adapter.generate(CATALOG[HIVE_MODEL], req())
     assert stream.closed is True and info.value.retryable is True
@@ -550,6 +550,6 @@ async def test_completed_stream_is_closed_too():
         closed.append(True)
 
     stream.close = close
-    adapter = OpenAICompatibleAdapter(HIVE, openai_client(stream), TextModelSettings())
+    adapter = OpenAICompatibleAdapter(HIVE, openai_client(stream), ModelSettings())
     await adapter.generate(CATALOG[HIVE_MODEL], req())
     assert closed == [True]

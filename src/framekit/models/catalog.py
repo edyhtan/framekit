@@ -2,7 +2,7 @@
 
 - `PROVIDERS`: how to reach each provider (protocol, URL, key variable, streaming, …)
 - `CATALOG`: the selectable models, each naming its provider
-- `TextModelSettings`: the prototype model profile (default model, caps, timeout)
+- `ModelSettings`: the defaults a router uses (default model, output cap, timeout)
 
 Adding an OpenAI-compatible provider is one `ProviderConfig` plus its models, here.
 Prices are per 1M tokens, used only to record an estimated cost (never displayed).
@@ -11,10 +11,9 @@ Prices are per 1M tokens, used only to record an estimated cost (never displayed
 import os
 from dataclasses import dataclass, field
 from decimal import Decimal
-from functools import lru_cache
 from typing import Any
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import BaseModel
 
 MILLION = Decimal(1_000_000)
 
@@ -219,24 +218,14 @@ _SPECS = (
 CATALOG: dict[str, ModelSpec] = {spec.model_id: spec for spec in _SPECS}
 
 
-class TextModelSettings(BaseSettings):
-    """Prototype model profile for the test AI worker (`CLIPSEARCH_AI_TEST_*`)."""
-
-    model_config = SettingsConfigDict(
-        env_prefix="CLIPSEARCH_AI_TEST_", env_file=".env", extra="ignore"
-    )
+class ModelSettings(BaseModel):
+    """What a router needs besides the catalog. Plain data: consumers build it from their
+    own configuration (framekit reads no settings from the environment, only provider keys
+    and optional base-URL overrides named in `PROVIDERS`)."""
 
     default_model: str = "deepseek-ai/deepseek-v4.1-flash"
-    max_tokens_cap: int = 256
-    # Search turns (Interpreter, Responder, digest) set their own per-role budgets; this
-    # caps them all. The 256 above is the ai_test job's probe cap.
-    search_max_tokens_cap: int = 2048
+    max_tokens_cap: int = 256  # caps every request's output budget
     timeout_s: float = 30.0
-
-
-@lru_cache
-def get_text_model_settings() -> TextModelSettings:
-    return TextModelSettings()
 
 
 def estimate_cost(spec: ModelSpec, input_tokens: int, output_tokens: int) -> Decimal:
@@ -247,14 +236,14 @@ def estimate_cost(spec: ModelSpec, input_tokens: int, output_tokens: int) -> Dec
     return cost.quantize(Decimal("0.000001"))
 
 
-def catalog_listing() -> list[dict[str, Any]]:
-    default = get_text_model_settings().default_model
+def catalog_listing(default_model: str | None = None) -> list[dict[str, Any]]:
+    """The selectable models, for clients choosing one (no prices)."""
     return [
         {
             "provider": spec.provider,
             "model_id": spec.model_id,
             "label": spec.label,
-            "default": spec.model_id == default,
+            "default": spec.model_id == default_model,
             "reasoning": spec.reasoning_mode,
         }
         for spec in CATALOG.values()

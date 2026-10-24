@@ -14,7 +14,8 @@ from typing import Any, ClassVar
 
 import openai
 
-from clipsearch_adapters.external_connections.adapters.external_ai_adapter_base import (
+from framekit.contracts.conversation import ConversationRequest, TextDelta
+from framekit.models.adapters.base import (
     ExternalAIAdapterBase,
     Reply,
     conversation,
@@ -24,8 +25,7 @@ from clipsearch_adapters.external_connections.adapters.external_ai_adapter_base 
     structured_mode,
     system_text,
 )
-from clipsearch_adapters.external_connections.catalog import ModelSpec
-from clipsearch_domain.common.ports import ConversationRequest, TextDelta
+from framekit.models.catalog import ModelSpec
 
 
 def _reasoning_delta(delta: Any) -> str | None:

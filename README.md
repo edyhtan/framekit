@@ -28,7 +28,37 @@ Used by the video clip search agent ([short_extract](https://github.com/edyhtan/
 
 ## Status
 
-Design only. The first code (contracts and model access) is seeded from short_extract; extraction stages follow. See the roadmap in [docs/DESIGN.md](docs/DESIGN.md) §7.
+**v0.1.0: contracts and model access.** `framekit.vision` and `framekit.extraction` are designed but not built yet; see the roadmap in [docs/DESIGN.md](docs/DESIGN.md) §7.
+
+Install (uv), pinned to a release tag:
+
+```toml
+[project]
+dependencies = ["framekit"]
+
+[tool.uv.sources]
+framekit = { git = "https://github.com/edyhtan/framekit", tag = "v0.1.0" }
+```
+
+Use:
+
+```python
+from framekit.contracts import ConversationRequest
+from framekit.models import ConversationRouter, ModelSettings
+from framekit.models.cache import CacheSettings, FileResponseStore, with_cache
+
+port = with_cache(
+    lambda: ConversationRouter(ModelSettings(default_model="claude-haiku-4-5")),
+    settings=CacheSettings(mode="record"),   # record once, replay later for free
+    store=FileResponseStore(".cache/models"),
+)()
+result = await port.generate(ConversationRequest("Describe this scene.", max_tokens=200))
+await port.aclose()
+```
+
+Provider keys come from the environment only (`HIVE_API_KEY`, `DEEPSEEK_API_KEY`, `ANTHROPIC_API_KEY`); a missing key fails only that provider's calls.
+
+Development: `uv sync`, then `uv run pytest`, `uv run lint-imports`, `uv run ruff check .`.
 
 ## Documents
 

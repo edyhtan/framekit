@@ -1,8 +1,8 @@
-"""Model capability ports (DESIGN.md §0, model-agnostic rule).
+"""The `conversation` port: provider-neutral types for one model conversation.
 
-The domain calls capabilities, never providers. Adapters in
-`clipsearch_adapters.external_connections` implement these; which model serves a role
-is configuration.
+Callers use capabilities, never providers (DESIGN.md §0.2). `framekit.models` implements
+this port; which model serves a role is configuration. Plain dataclasses only, so no
+provider or library type crosses the port.
 """
 
 from collections.abc import AsyncIterator, Mapping
@@ -30,7 +30,7 @@ class ConversationRequest:
     # Structured output: a JSON Schema (plain data). The reply text is then JSON meant to
     # match it; callers always validate it themselves, whatever the adapter enforced.
     response_schema: Mapping[str, Any] | None = None
-    # What kind of request this is (e.g. "search.interpret", "ai_test"), for the model
+    # What kind of request this is (e.g. "lens_pass", "chat"), for the model
     # response cache's per-class policy. None: the "default" class.
     cache_class: str | None = None
 
@@ -84,8 +84,8 @@ class ModelCallError(Exception):
 
 
 class ConversationPort(Protocol):
-    """One generator per job attempt or chat turn: it may open connections, and `aclose`
-    releases them."""
+    """One port per unit of work (a task attempt, a chat turn): it may open connections,
+    and `aclose` releases them."""
 
     async def generate(self, request: ConversationRequest) -> ConversationResult: ...
 

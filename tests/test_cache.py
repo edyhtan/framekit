@@ -1,23 +1,23 @@
 """Model response cache: record model calls once, replay them later (any request class)."""
 
-import fnmatch
-import json
 
 import pytest
-import redis
-from test_chat import final_result, parse_sse
-from test_search_api import new_session, turn
+from helpers import final_result
 
-from clipsearch_adapters.model_cache import CachingConversationPort, with_cache
-from clipsearch_adapters.model_cache import __main__ as cli
-from clipsearch_adapters.model_cache.entries import Entry, request_key
-from clipsearch_adapters.model_cache.settings import ClassPolicy, ModelCacheSettings
-from clipsearch_adapters.model_cache.store import ValkeyResponseStore
-from clipsearch_domain.common.ports import (
+from framekit.contracts.conversation import (
     ChatMessage,
     ConversationRequest,
     ModelCallError,
     TextDelta,
+)
+from framekit.models.cache import (
+    CacheSettings,
+    CachingConversationPort,
+    ClassPolicy,
+    Entry,
+    FileResponseStore,
+    request_key,
+    with_cache,
 )
 
 
@@ -76,7 +76,7 @@ def req(**overrides):
 
 def cached_port(model, store=None, **settings):
     return CachingConversationPort(
-        model, store or MemoryStore(), ModelCacheSettings(**({"mode": "record"} | settings))
+        model, store or MemoryStore(), CacheSettings(**({"mode": "record"} | settings))
     )
 
 
@@ -84,19 +84,19 @@ def cached_port(model, store=None, **settings):
 
 
 def test_policy_per_class_and_enabled():
-    settings = ModelCacheSettings(
+    settings = CacheSettings(
         mode="off", ttl_s=100, classes={"ai_test": ClassPolicy(mode="record", ttl_s=5)}
     )
     assert settings.policy("ai_test") == ("record", 5)
     assert settings.policy("search.respond") == ("off", 100)
     assert settings.policy(None) == ("off", 100)  # the "default" class
     assert settings.enabled()
-    assert not ModelCacheSettings(mode="off").enabled()
+    assert not CacheSettings(mode="off").enabled()
 
 
 def test_off_everywhere_wraps_nothing():
     factory = object
-    assert with_cache(factory, settings=ModelCacheSettings(mode="off")) is factory
+    assert with_cache(factory, settings=CacheSettings(mode="off"), store=MemoryStore()) is factory
 
 
 def test_key_changes_with_everything_that_shapes_a_reply():
@@ -229,118 +229,49 @@ def test_entries_round_trip():
     assert back.result == entry.result and back.deltas == [("text", "hé", 12)]
 
 
-# --- the Valkey store --------------------------------------------------------------------
-
-
-class FakeValkey:
-    def __init__(self, used=0, limit=0, broken=False):
-        self.data, self.ex, self.used, self.limit, self.broken = {}, {}, used, limit, broken
-
-    async def get(self, key):
-        if self.broken:
-            raise redis.ConnectionError("down")
-        return self.data.get(key)
-
-    async def set(self, key, value, ex):
-        if self.broken:
-            raise redis.ConnectionError("down")
-        self.data[key], self.ex[key] = value, ex
-
-    async def info(self, section):
-        if self.broken:
-            raise redis.ConnectionError("down")
-        return {"used_memory": self.used, "maxmemory": self.limit}
-
-
-async def test_valkey_store_sets_a_lifetime_and_respects_the_memory_guard():
-    client = FakeValkey(used=10, limit=100)
-    store = ValkeyResponseStore(client, memory_guard=0.8)
-    assert await store.put("k", b"v", 60) and client.ex["k"] == 60
-    assert await store.get("k") == b"v"
-
-    full = ValkeyResponseStore(FakeValkey(used=81, limit=100), memory_guard=0.8)
-    assert await full.put("k", b"v", 60) is False  # would risk blocking the task queue
-
-
-async def test_valkey_store_outages_degrade_to_misses():
-    store = ValkeyResponseStore(FakeValkey(broken=True), memory_guard=0.8)
-    assert await store.get("k") is None
-    assert await store.put("k", b"v", 60) is False
+def test_on_for_any_class_wraps_the_factory():
     model = Model()
-    port = cached_port(model, store)
-    assert (await port.generate(req())).cached is False  # the call still works
+    settings = CacheSettings(classes={"ai_test": ClassPolicy(mode="record")})
+    port = with_cache(lambda: model, settings=settings, store=MemoryStore())()
+    assert isinstance(port, CachingConversationPort)
 
 
-def test_cli_stats_and_wipe_by_class(monkeypatch, capsys):
-    class SyncFake:
-        def __init__(self):
-            self.data = {
-                b"llmcache:v1:search.respond:a": b"xx",
-                b"llmcache:v1:search.respond:b": b"x",
-                b"llmcache:v1:ai_test:c": b"xxx",
-            }
-
-        def scan_iter(self, match, count):
-            return [k for k in self.data if fnmatch.fnmatchcase(k.decode(), match)]
-
-        def strlen(self, key):
-            return len(self.data[key.encode()])
-
-        def delete(self, *keys):
-            return sum(self.data.pop(k.encode(), None) is not None for k in keys)
-
-    fake = SyncFake()
-    monkeypatch.setattr(cli, "sync_client", lambda url: fake)
-    assert cli.main(["stats"]) == 0
-    out = capsys.readouterr().out
-    assert "entries=3" in out and "search.respond" in out and "ai_test" in out
-    assert cli.main(["wipe", "--class", "search.respond"]) == 0
-    assert list(fake.data) == [b"llmcache:v1:ai_test:c"]
+# --- the file store ----------------------------------------------------------------------
 
 
-# --- a whole session, replayed -----------------------------------------------------------
+async def test_file_store_round_trip_lifetime_and_clear(tmp_path, monkeypatch):
+    store = FileResponseStore(tmp_path / "cache")
+    assert await store.get("llmcache:v1:x:abc") is None
+    assert await store.put("llmcache:v1:x:abc", b"reply", ttl_s=60)
+    assert await store.get("llmcache:v1:x:abc") == b"reply"  # ':' in keys is fine
+
+    import framekit.models.cache.file_store as file_store
+
+    later = file_store.time.time() + 120
+    monkeypatch.setattr(file_store.time, "time", lambda: later)
+    assert await store.get("llmcache:v1:x:abc") is None  # expired, and removed
+    monkeypatch.undo()
+
+    await store.put("a", b"1", ttl_s=60)
+    await store.put("b", b"2", ttl_s=60)
+    assert store.clear() == 2 and await store.get("a") is None
 
 
-class StreamingModel(Model):
-    async def generate(self, request):  # the Interpreter
-        self.generated += 1
-        reading = {"message_type": "chat", "reading": "a greeting"}
-        return final_result(text=json.dumps(reading))
+async def test_file_store_failures_are_misses_and_skipped_writes(tmp_path):
+    blocker = tmp_path / "not-a-dir"
+    blocker.write_text("x")
+    store = FileResponseStore(blocker)  # a file where the directory should be
+    assert await store.put("k", b"v", ttl_s=60) is False
+    assert await store.get("k") is None
 
 
-async def test_a_session_replays_from_the_cache_with_no_model_calls(client, session_factory):
-    from sqlalchemy import select
-
-    from clipsearch_domain.jobs.entities import Run
-
-    model = StreamingModel("Hi! How can I help?")
-    store = MemoryStore()
-    state = client._transport.app.state
-    state.conversation_factory = with_cache(
-        lambda: model, settings=ModelCacheSettings(mode="record"), store=store
-    )
-
-    async def run_session():
-        session_id = await new_session(client)
-        events = []
-        for n, message in enumerate(["hello", "what can you do?"]):
-            response = await turn(client, session_id, client_turn_id=f"r{n}", message=message)
-            events.append(parse_sse(response.text))
-        return events
-
-    first = await run_session()
-    calls_after_first = (model.generated, model.streamed)
-    second = await run_session()
-
-    assert (model.generated, model.streamed) == calls_after_first == (2, 2)
-    texts = lambda run: ["".join(d["text"] for n, d in t if n == "text") for t in run]  # noqa: E731
-    assert texts(second) == texts(first)
-    done = second[-1][-1][1]
-    assert [c["cached"] for c in done["calls"]] == [True, True]
-    async with session_factory() as db:
-        replayed = [
-            r
-            for r in (await db.execute(select(Run))).scalars()
-            if r.adapter_version.endswith("+cache")
-        ]
-    assert len(replayed) == 4 and all(str(r.cost_usd) in ("0", "0.000000") for r in replayed)
+async def test_a_session_of_calls_replays_from_the_file_store(tmp_path):
+    settings = CacheSettings(mode="record")
+    model = Model()
+    port = with_cache(lambda: model, settings=settings, store=FileResponseStore(tmp_path))()
+    first = await port.generate(req())
+    replay = with_cache(
+        lambda: model, settings=CacheSettings(mode="replay"), store=FileResponseStore(tmp_path)
+    )()
+    again = await replay.generate(req())
+    assert model.generated == 1 and again.cached and again.text == first.text

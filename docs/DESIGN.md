@@ -492,6 +492,7 @@ flowchart LR
 
 **E0: seed the library**
 - Contracts (ports, ids, run records, the response-store port) and model access (catalog, router, adapters on the official SDKs, response cache) are moved here from short_extract with `git subtree split`, keeping their history. Tag `v0.1.0`. See [ARCHITECTURE.md](ARCHITECTURE.md) §7.
+- **Done (2026-10-23):** the conversation port, `ResponseStore`, catalog, router, both adapters and the response cache with a file store; history kept via `git filter-repo`; CI on locked and newest dependencies. ids and run records follow with E1, where extraction first needs them.
 
 **E1: first dataset (5 units of the test corpus)**
 - A, V and dataset schemas; lens spec format and loader.

@@ -1,4 +1,7 @@
-"""The caching wrapper around a conversation port (normally the ConversationRouter)."""
+"""The caching wrapper around a conversation port (normally the ConversationRouter).
+
+Off / record / replay per cache class. Replays are marked: `cached=True`, cost 0, and the
+adapter version suffixed `+cache`, so stored records never mistake a replay for a call."""
 
 import asyncio
 import logging
@@ -8,24 +11,23 @@ from dataclasses import replace
 from decimal import Decimal
 from typing import Any
 
-from clipsearch_adapters.model_cache.entries import Entry, request_key
-from clipsearch_adapters.model_cache.settings import ModelCacheSettings, get_model_cache_settings
-from clipsearch_adapters.model_cache.store import ResponseStore, valkey_store
-from clipsearch_domain.common.config import get_settings
-from clipsearch_domain.common.ports import (
+from framekit.contracts.conversation import (
     ConversationPort,
     ConversationRequest,
     ConversationResult,
     ModelCallError,
     TextDelta,
 )
+from framekit.contracts.response_store import ResponseStore
+from framekit.models.cache.entries import Entry, request_key
+from framekit.models.cache.settings import CacheSettings
 
 log = logging.getLogger(__name__)
 CACHED_SUFFIX = "+cache"
 
 
 class CachingConversationPort:
-    def __init__(self, inner: Any, store: ResponseStore, settings: ModelCacheSettings) -> None:
+    def __init__(self, inner: Any, store: ResponseStore, settings: CacheSettings) -> None:
         self._inner = inner
         self._store = store
         self._settings = settings
@@ -118,19 +120,14 @@ class CachingConversationPort:
 
 
 def with_cache(
-    factory: Callable[[], Any],
-    *,
-    settings: ModelCacheSettings | None = None,
-    store: ResponseStore | None = None,
+    factory: Callable[[], Any], *, settings: CacheSettings, store: ResponseStore
 ) -> Callable[[], ConversationPort]:
     """Wrap a port factory with the cache. With caching off for every class, the factory
-    is returned unchanged (no overhead, nothing touches Valkey)."""
-    settings = settings or get_model_cache_settings()
+    is returned unchanged (no overhead, the store is never touched)."""
     if not settings.enabled():
         return factory
 
     def build() -> ConversationPort:
-        backing = store or valkey_store(get_settings().execution_store_url, settings.memory_guard)
-        return CachingConversationPort(factory(), backing, settings)
+        return CachingConversationPort(factory(), store, settings)
 
     return build

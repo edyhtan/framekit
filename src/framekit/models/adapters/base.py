@@ -16,17 +16,17 @@ from dataclasses import dataclass
 from types import ModuleType
 from typing import Any, ClassVar
 
-from clipsearch_adapters.external_connections.catalog import (
-    ModelSpec,
-    ProviderConfig,
-    TextModelSettings,
-    estimate_cost,
-)
-from clipsearch_domain.common.ports import (
+from framekit.contracts.conversation import (
     ConversationRequest,
     ConversationResult,
     ModelCallError,
     TextDelta,
+)
+from framekit.models.catalog import (
+    ModelSettings,
+    ModelSpec,
+    ProviderConfig,
+    estimate_cost,
 )
 
 REASONING_TEXT_LIMIT = 4000  # characters kept for display
@@ -176,14 +176,14 @@ class ExternalAIAdapterBase(ABC):
     # "prompted".
     structured_modes: ClassVar[frozenset[str]] = frozenset({"prompted"})
 
-    def __init__(self, config: ProviderConfig, client: Any, settings: TextModelSettings) -> None:
+    def __init__(self, config: ProviderConfig, client: Any, settings: ModelSettings) -> None:
         self.config = config
         self._client = client
         self._settings = settings
 
     @classmethod
     def from_environment(
-        cls, config: ProviderConfig, settings: TextModelSettings
+        cls, config: ProviderConfig, settings: ModelSettings
     ) -> "ExternalAIAdapterBase":
         api_key = require_api_key(config)
         client = cls.make_client(api_key, config.resolved_base_url(), settings.timeout_s)

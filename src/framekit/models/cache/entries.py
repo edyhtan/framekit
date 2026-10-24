@@ -13,7 +13,7 @@ from dataclasses import asdict, dataclass, field, fields
 from decimal import Decimal
 from typing import Any
 
-from clipsearch_domain.common.ports import ConversationRequest, ConversationResult, TextDelta
+from framekit.contracts.conversation import ConversationRequest, ConversationResult, TextDelta
 
 KEY_PREFIX = "llmcache"
 

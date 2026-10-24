@@ -1,8 +1,7 @@
 """Reasoning is an explicit option: off unless asked for, switched per model from the catalog."""
 
 import pytest
-from test_chat import FakeGenerator, final_result, use_generator
-from test_llm_adapters import (
+from test_adapters import (
     HIVE_MODEL,
     FakeStream,
     anthropic_client,
@@ -14,19 +13,19 @@ from test_llm_adapters import (
     usage,
 )
 
-from clipsearch_adapters.external_connections.adapters.anthropic_text import AnthropicAdapter
-from clipsearch_adapters.external_connections.adapters.external_ai_adapter_base import (
+from framekit.models.adapters.anthropic import AnthropicAdapter
+from framekit.models.adapters.base import (
     merge_fields,
 )
-from clipsearch_adapters.external_connections.adapters.openai_compatible import (
+from framekit.models.adapters.openai_compatible import (
     OpenAICompatibleAdapter,
 )
-from clipsearch_adapters.external_connections.catalog import (
+from framekit.models.catalog import (
     ANTHROPIC,
     CATALOG,
     DEEPSEEK,
     HIVE,
-    TextModelSettings,
+    ModelSettings,
 )
 
 
@@ -36,7 +35,7 @@ def hive_stream():
 
 async def hive_params(model_id, reasoning):
     client = openai_client(hive_stream())
-    adapter = OpenAICompatibleAdapter(HIVE, client, TextModelSettings())
+    adapter = OpenAICompatibleAdapter(HIVE, client, ModelSettings())
     result = await adapter.generate(CATALOG[model_id], req(max_tokens=100, reasoning=reasoning))
     [params] = client.chat.completions.calls
     return params, result
@@ -70,7 +69,7 @@ async def test_glm_uses_its_own_off_switch():
 )
 async def test_deepseek_api_switches_thinking_explicitly(reasoning, expected):
     client = openai_client(completion())
-    adapter = OpenAICompatibleAdapter(DEEPSEEK, client, TextModelSettings())
+    adapter = OpenAICompatibleAdapter(DEEPSEEK, client, ModelSettings())
     await adapter.generate(CATALOG["deepseek-flash"], req(reasoning=reasoning))
     [params] = client.chat.completions.calls
     assert {k: params[k] for k in expected} == expected
@@ -78,7 +77,7 @@ async def test_deepseek_api_switches_thinking_explicitly(reasoning, expected):
 
 async def anthropic_params(model_id, reasoning, max_tokens=100):
     client = anthropic_client(claude_message(model=model_id))
-    adapter = AnthropicAdapter(ANTHROPIC, client, TextModelSettings())
+    adapter = AnthropicAdapter(ANTHROPIC, client, ModelSettings())
     request = req(max_tokens=max_tokens, reasoning=reasoning)
     await adapter.generate(CATALOG[model_id], request)
     calls = client.beta.messages.calls or client.messages.calls
@@ -113,24 +112,3 @@ def test_merge_fields_merges_nested_request_fields():
 
 def test_every_catalog_model_can_switch_reasoning_off():
     assert {spec.reasoning_mode for spec in CATALOG.values()} == {"optional"}
-
-
-# --- api ---------------------------------------------------------------------------------
-
-
-async def test_models_listing_says_how_each_model_reasons(client):
-    body = (await client.get("/prototype/ai-test/models")).json()
-    assert {m["reasoning"] for m in body["models"]} <= {"optional", "always", "none"}
-
-
-async def test_chat_passes_the_reasoning_option_and_reports_it(client):
-    gen = FakeGenerator([final_result(reasoning_on=True)])
-    use_generator(client, gen)
-    response = await client.post("/prototype/chat", json={"message": "hi", "reasoning": True})
-    assert gen.requests[0].reasoning is True
-    assert '"reasoning_on": true' in response.text
-
-    gen = FakeGenerator([final_result()])
-    use_generator(client, gen)
-    await client.post("/prototype/chat", json={"message": "hi"})
-    assert gen.requests[0].reasoning is False  # off unless asked for
