@@ -258,6 +258,18 @@ These were decided in short_extract (dates are from its journal) and bind this e
 - **Decision** (owner): Gemini integration is paused. Nothing for it is built: no provider entry, no adapter, no dependency.
 - **Recorded in:** DESIGN.md §9 ("Video model").
 
+### 04:31 — `ModelSource`: one structure for model, provider, credential and adapter
+- **Decision** (owner: "one single structure to identify both model and credentials (or a custom adapter)"; name chosen by the owner: `ModelSource`):
+  - **`ModelSource(name, model, provider=None, credential=None, adapter=None)`** (`framekit.models.sources`) says which model, where it's served, with which key and through which adapter. Requests and `ModelSettings.default_model` name a source; the router argument is `sources=[...]`.
+  - `model` is a registry model id (e.g. a built-in) or your own `ModelSpec`, whose `model_id` is what's sent. `provider` is a `ProviderConfig` or a registry provider name, and wins over the spec's own `provider` field. `credential` is a string, a `SecretStr` or a callable (called once per router). `adapter` is an adapter class, never an instance, since the router opens and closes clients per unit of work.
+  - **The registry stays** as the lower-level container: everything that isn't a source resolves through it, so the built-in catalog and environment keys work as before, and sources are checked against it when the router is built (every problem in one `ValueError`). A source reusing a catalog id overrides it for that router only. An `adapter_factory` builds registry models only; sources build their own.
+  - **Explicit keys:** the adapter template gains `from_key(config, api_key, settings)`; `from_environment` reads the key and calls it, so one override covers both paths. Precedence: the source's credential, then the provider's `key_env`, then the keyless placeholder.
+  - **Credentials are never recorded:** stored as a `SecretStr` (hidden in reprs), passed only to `make_client`, kept out of results, cache keys and fingerprints, and a source holding one refuses to be pickled.
+  - **Provenance and cache:** `ConversationResult.source` names the source that served a call (`None` for registry models). The response cache keys a source by its model id plus a public fingerprint (protocol, base URL, adapter class and version), so two hosts serving the same model id never share answers. Registry models keep their plain model id, so existing cache keys are unchanged.
+- **Why:** one object per model-and-access instead of three router arguments (`registry=`, a separate `credentials=`, `adapter_factory=`), and the explicit-key request (keys as arguments, with the environment as the fallback) is covered by the same structure. It also gives the host fingerprint the 03:40 entry deferred, for sources.
+- **Supersedes:** the separate `credentials=` router argument proposed in conversation (never built), and, for sources, the deferred "host fingerprint in response-cache keys" in the 03:40 entry.
+- **Recorded in:** `src/framekit/models/sources.py` (new), `router.py`, `cache/port.py`, `adapters/base.py` (`from_key`), `contracts/conversation.py` (`ConversationResult.source`), `models/__init__.py`; `tests/test_model_sources.py` (new); `pyproject.toml` (the provider-SDK contract covers `sources`); docs/adapters.md (now led by `ModelSource`), README.md "Configure" and "Your own models and providers", ARCHITECTURE.md §3.
+
 
 ---
 

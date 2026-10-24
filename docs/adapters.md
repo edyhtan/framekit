@@ -1,14 +1,16 @@
-# Write your own adapter
+# Your own models, providers and adapters
 
-How to use your own models and providers with framekit without changing framekit: register them in a **model registry**, and, when the provider speaks a protocol framekit doesn't know, write an **adapter** from the template. Decided 2026-10-24 ([DECISIONS](DECISIONS.md)).
+How to use your own models and providers with framekit without changing framekit. The usual way is a **`ModelSource`**: one structure that names the model, where it's served, its credential and, when the provider speaks a protocol framekit doesn't know, your **adapter** written from the template. A **model registry** is the lower-level container underneath. Decided 2026-10-24 ([DECISIONS](DECISIONS.md)).
 
-**Contents:** [Do you need an adapter?](#do-you-need-an-adapter) · [Config only: an OpenAI-compatible server](#config-only-an-openai-compatible-server) · [The template](#the-template) · [The registry](#the-registry) · [Errors](#errors) · [Keys and keyless servers](#keys-and-keyless-servers) · [Streaming](#streaming) · [Provenance and the response cache](#provenance-and-the-response-cache) · [Security](#security) · [Public API and versions](#public-api-and-versions)
+**Contents:** [Do you need an adapter?](#do-you-need-an-adapter) · [ModelSource: one structure](#modelsource-one-structure) · [Config only: an OpenAI-compatible server](#config-only-an-openai-compatible-server) · [The template](#the-template) · [The registry](#the-registry) · [Errors](#errors) · [Keys and keyless servers](#keys-and-keyless-servers) · [Streaming](#streaming) · [Provenance and the response cache](#provenance-and-the-response-cache) · [Security](#security) · [Public API and versions](#public-api-and-versions)
 
 ```mermaid
 flowchart LR
     REQ["ConversationRequest"] --> R["ConversationRouter"]
-    R -- "resolve model_id" --> REG["ModelRegistry<br/>models, providers,<br/>protocol → adapter class"]
-    REG -- "from_environment:<br/>key + make_client" --> A["your adapter<br/>(ExternalAIAdapterBase)"]
+    R -- "resolve model_id" --> SRC["ModelSource<br/>model, provider,<br/>credential, adapter"]
+    R -- "otherwise" --> REG["ModelRegistry<br/>models, providers,<br/>protocol → adapter class"]
+    SRC -- "from_key: credential<br/>+ make_client" --> A["your adapter<br/>(ExternalAIAdapterBase)"]
+    REG -- "from_environment:<br/>key + make_client" --> A
     A --> BP["build_params"]
     BP --> C["call, or iterate<br/>when streaming"]
     C -- "Reply" --> RES["the base: timing, stop reason,<br/>cost, provenance"]
@@ -33,13 +35,54 @@ Often not. A provider is plain data (`ProviderConfig`), and so is a model (`Mode
 - leave `reasoning=None` (no switch is sent) and `structured_method="prompted"` (the schema goes into the instructions only);
 - keep `stream=False` on the `ProviderConfig` (the default): framekit's streaming path takes token usage from the stream itself, and some servers include it there only when asked to. `router.stream(...)` still works without it.
 
+## ModelSource: one structure
+
+A `ModelSource` answers four questions in one place: which model, where it's served, with which key, and through which adapter. Pass sources to the router; requests (`ConversationRequest.model_id`) and `ModelSettings.default_model` refer to a source by its name.
+
+```python
+import os
+from decimal import Decimal
+
+from pydantic import SecretStr
+
+from framekit.models import ConversationRouter, ModelSettings, ModelSource, ModelSpec, ProviderConfig
+
+sources = [
+    # a built-in catalog model, with your own key instead of ANTHROPIC_API_KEY
+    ModelSource("claude", model="claude-haiku-4-5",
+                credential=SecretStr(os.environ["MY_CLAUDE_KEY"])),
+    # a self-hosted model: your model description, your server, no key
+    ModelSource("local", model=ModelSpec("box", "qwen3-32b", "Qwen3 32B on vLLM",
+                                         Decimal(0), Decimal(0)),
+                provider=ProviderConfig("box", "openai", base_url="http://127.0.0.1:8000/v1")),
+    # your own adapter (the template below), with a token fetched for each unit of work
+    ModelSource("inhouse", model=IN_HOUSE, provider=GATEWAY, adapter=GatewayAdapter,
+                credential=lambda: vault.read("gateway")),
+]
+router = ConversationRouter(ModelSettings(default_model="claude"), sources=sources)
+```
+
+| Field | Meaning | If omitted |
+|---|---|---|
+| `name` | what requests and plan roles refer to | required |
+| `model` | a model id from the router's registry (e.g. a built-in catalog model), or your own `ModelSpec`; its `model_id` is what's sent to the provider | required |
+| `provider` | where it's served: a `ProviderConfig`, or the name of a provider in the registry. It wins over the spec's own `provider` field | the model's own provider |
+| `credential` | a string, a pydantic `SecretStr`, or a callable returning one (called once per router, so rotating tokens and secret managers work) | the provider's `key_env` variable; no key for a provider without one |
+| `adapter` | your adapter class ([the template](#the-template)) | the registry's adapter for the provider's protocol |
+
+- **Built-ins keep working.** Anything that isn't a source's name is resolved by the router's registry, so `model_id="claude-haiku-4-5"` and the environment keys work as before. A source that reuses a catalog id overrides that model, for this router only.
+- **Checked when the router is built.** Unknown models or providers, a protocol without an adapter, an adapter class that can't work, an empty credential and duplicate names are all reported at once, in one `ValueError`.
+- **An adapter class, not an instance.** The router builds a fresh adapter (and client) per unit of work and closes it at the end; a shared instance would be closed under its other users.
+- **Credentials are never recorded.** A string credential is stored as a `SecretStr` (hidden in reprs and logs) and goes only to the adapter's `make_client` (through `from_key`). Results record the source's name (`result.source`), cache keys its public fingerprint, never the key. A source holding a credential refuses to be pickled: give worker processes their keys through their own environment or secret store.
+- **What a source doesn't hold:** settings per use (`max_tokens`, temperature, reasoning) stay on the request, since one source can serve several roles; router-wide limits stay in `ModelSettings`.
+
 ## Config only: an OpenAI-compatible server
 
 ```python
 from decimal import Decimal
 
 from framekit.contracts import ConversationRequest
-from framekit.models import DEFAULT_REGISTRY, ConversationRouter, ModelSettings, ModelSpec, ProviderConfig
+from framekit.models import ConversationRouter, ModelSettings, ModelSource, ModelSpec, ProviderConfig
 
 LOCAL = ProviderConfig(
     name="local",
@@ -56,13 +99,13 @@ MY_MODEL = ModelSpec(
     input_usd_per_mtok=Decimal("0"),
     output_usd_per_mtok=Decimal("0"),
 )
-registry = DEFAULT_REGISTRY.extend(providers=[LOCAL], models=[MY_MODEL])
+sources = [ModelSource("local", model=MY_MODEL, provider=LOCAL)]
 
-async with ConversationRouter(ModelSettings(default_model="my-local-model"), registry=registry) as router:
+async with ConversationRouter(ModelSettings(default_model="local"), sources=sources) as router:
     result = await router.generate(ConversationRequest("Say hello.", max_tokens=50))
 ```
 
-The built-in models stay available next to yours (`registry.listing()` shows them all).
+The built-in models stay available next to your sources.
 
 ### Claude on Amazon Bedrock (unverified)
 
@@ -195,6 +238,8 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
+The same model as a source, with no registry: `ConversationRouter(settings, sources=[ModelSource("inhouse", model=IN_HOUSE, provider=GATEWAY, adapter=GatewayAdapter)])`, with `default_model="inhouse"`.
+
 It prints:
 
 ```text
@@ -237,7 +282,7 @@ The helpers you see in the example (`conversation`, `system_text`, `structured_m
 
 ## The registry
 
-A `ModelRegistry` holds providers (by name), models (by `model_id`) and adapter classes (by protocol). The router resolves models and builds adapters through it.
+The lower-level container; sources are usually enough. A `ModelRegistry` holds providers (by name), models (by `model_id`) and adapter classes (by protocol). The router resolves everything that isn't a source through it, and checks sources against it.
 
 ```python
 from framekit.models import DEFAULT_REGISTRY, ConversationRouter, ModelRegistry
@@ -295,6 +340,8 @@ Anything else (an exception `map_error` returns `None` for) propagates unchanged
 
 ## Keys and keyless servers
 
+Where a key comes from, in order: the source's `credential` (passed to `from_key`); else the variable `ProviderConfig.key_env` names (`from_environment` reads it, then calls `from_key`); else, for a provider without a key, the placeholder below. Override `from_key`, not `from_environment`, to build your client another way: both paths go through it.
+
 `from_environment` reads the key from the variable `ProviderConfig.key_env` names. A missing key fails only that provider's requests, with a non-retryable `ModelCallError` that names the variable.
 
 For a server that takes no key, leave `key_env` as `None`. Your `make_client` then gets `PLACEHOLDER_KEY` (`"framekit-no-key"`), **never `None`**: given no key, the `openai` and `anthropic` SDKs fall back to their own environment variables (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, …) and would send a real cloud key to your server. If your own client does something similar, make sure the placeholder reaches it.
@@ -328,24 +375,25 @@ For real streaming, override `iterate`: yield `TextDelta("text", ...)` and `Text
 ## Provenance and the response cache
 
 - **What a result records:** `provider` is your `ProviderConfig.name`; `adapter_version` is your class's; `model_id` is the model that answered (`Reply.model_id`) or, when the reply doesn't say, the one requested; `cost_usd` is an estimate from your `ModelSpec` prices (use `0` for servers you don't pay per token). Record these with every output.
-- **The response cache** works with any registry. Its key covers the resolved `model_id` and everything in the request that shapes a reply, but **not** the provider, the host or the adapter version. So:
-  - if two registries map the same `model_id` to different hosts (say, a local copy and a hosted one), keep their caches apart with different `CacheSettings.namespace` values;
-  - bumping `adapter_version` doesn't invalidate recorded replies; change the namespace for that too.
-
-  A host fingerprint in the cache key is planned.
+- **`result.source`** names the `ModelSource` that served the call (`None` for a registry model).
+- **The response cache** keys a **source** by its model id plus a public fingerprint: the protocol, the base URL, the adapter class and its `adapter_version`. So two sources serving the same model id from different hosts never share cached answers, and bumping an adapter's version starts fresh entries. Sources that differ only in name or credential share entries (same model, same place).
+- **Registry models** keep their plain model id in the cache key, unchanged: the key covers everything in the request that shapes a reply, but **not** the provider, the host or the adapter version. So:
+  - if two registries map the same `model_id` to different hosts (say, a local copy and a hosted one), keep their caches apart with different `CacheSettings.namespace` values, or use sources;
+  - bumping `adapter_version` doesn't invalidate a registry model's recorded replies; change the namespace for that too.
 
 ## Security
 
 - **Only point a provider at a host you trust.** framekit sends the provider's key (from `key_env`) to the provider's `base_url` with every request. If the provider has a `base_url_env`, whoever sets that variable chooses where the key goes.
 - **Give every provider you add an explicit `base_url`.** With `base_url=None` the SDK chooses the host: its default (OpenAI's or Anthropic's API), or `OPENAI_BASE_URL` / `ANTHROPIC_BASE_URL` from the environment.
 - **Known gap: SDK environment variables reach custom hosts too.** The official SDKs read some settings from the environment by themselves and send them with every request, to whatever host the client points at: `OPENAI_CUSTOM_HEADERS` and `ANTHROPIC_CUSTOM_HEADERS` (arbitrary headers, which can carry credentials), and `OPENAI_ORG_ID` / `OPENAI_PROJECT_ID`. framekit doesn't strip them yet; this is a known gap, to be closed later. Until then, don't set these variables in a process that talks to a host you don't fully trust.
-- **Known gap: nothing binds a key to a host yet.** A provider config may name any key variable, including the built-in providers' (`ANTHROPIC_API_KEY`, …), and framekit sends that key to the config's own `base_url`. Review provider configs you didn't write as you would code.
+- **Known gap: nothing binds a key to a host yet.** A provider config may name any key variable, including the built-in providers' (`ANTHROPIC_API_KEY`, …), and framekit sends that key to the config's own `base_url`. A `ModelSource` puts the credential and the provider side by side, so the pairing is visible in one place, but framekit doesn't restrict it. Review provider configs and sources you didn't write as you would code.
+- **Credentials stay out of records.** A source's credential is a `SecretStr`, never written to results, cache keys, fingerprints or manifests, and a source holding one refuses to be pickled.
 - **Known gap: framekit doesn't check the URL scheme.** Use `https` for every host that isn't on the same machine (`127.0.0.1`, `localhost`): with an `http://` `base_url`, the key travels in clear text.
 - **Keyless servers get a placeholder**, never nothing ([above](#keys-and-keyless-servers)), so the SDKs can't fall back to a cloud key.
 - **An adapter handles your keys.** Review one (yours or someone else's) like any code that holds credentials. framekit's own adapters depend only on the official provider SDKs; the dependency choices for yours are yours.
 
 ## Public API and versions
 
-`ExternalAIAdapterBase`, `Reply`, `PLACEHOLDER_KEY` and the helpers exported from `framekit.models.adapters` (its `__all__`), together with `ModelRegistry` and `DEFAULT_REGISTRY` from `framekit.models`, are public API under semantic versioning: an incompatible change to them is a new minor version while framekit is 0.x, and a new major version after that. Other names in the adapter modules are internal. That includes the built-in adapter classes (`OpenAICompatibleAdapter`, `AnthropicAdapter`), even though `DEFAULT_REGISTRY.adapters` hands them out: subclassing one relies on internals that may change in any release.
+`ExternalAIAdapterBase`, `Reply`, `PLACEHOLDER_KEY` and the helpers exported from `framekit.models.adapters` (its `__all__`), together with `ModelSource`, `ModelRegistry` and `DEFAULT_REGISTRY` from `framekit.models` (and `ExternalAIAdapterBase.from_key`), are public API under semantic versioning: an incompatible change to them is a new minor version while framekit is 0.x, and a new major version after that. Other names in the adapter modules are internal. That includes the built-in adapter classes (`OpenAICompatibleAdapter`, `AnthropicAdapter`), even though `DEFAULT_REGISTRY.adapters` hands them out: subclassing one relies on internals that may change in any release.
 
 To test an adapter, give it a fake client with the same shape, as framekit's own tests do (`tests/test_custom_adapters.py`).

@@ -84,6 +84,7 @@ source_modules = [
     "framekit.contracts",
     "framekit.models.catalog",
     "framekit.models.registry",
+    "framekit.models.sources",
     "framekit.models.router",
     "framekit.models.cache",
     "framekit.vision",

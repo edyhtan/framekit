@@ -33,10 +33,19 @@ class CachingConversationPort:
         self._settings = settings
 
     def _model_id(self, request: ConversationRequest) -> str:
-        resolve = getattr(self._inner, "resolve", None)  # the router knows the default model
+        # The router knows the default model and, for a ModelSource, its public fingerprint
+        # (so two hosts serving the same model id never share cached answers).
+        identity = getattr(self._inner, "cache_identity", None)
+        if identity is not None:
+            return identity(request.model_id)
+        resolve = getattr(self._inner, "resolve", None)
         if resolve is not None:
             return resolve(request.model_id).model_id
         return request.model_id or "default"
+
+    def cache_identity(self, model_id: str | None) -> str:
+        """The identity the cache keys calls by (passed through, so caches can nest)."""
+        return self._model_id(ConversationRequest("", 1, model_id=model_id))
 
     def _key(self, request: ConversationRequest, method: str) -> str:
         return request_key(request, self._model_id(request), self._settings.namespace, method)

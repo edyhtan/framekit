@@ -298,6 +298,25 @@ class ExternalAIAdapterBase(ABC):
         if problems:
             raise TypeError("; ".join(problems))
         api_key = PLACEHOLDER_KEY if config.key_env is None else require_api_key(config)
+        return cls.from_key(config, api_key, settings)
+
+    @classmethod
+    def from_key(
+        cls, config: ProviderConfig, api_key: str, settings: ModelSettings
+    ) -> "ExternalAIAdapterBase":
+        """Build the adapter with this key: a `ModelSource`'s credential, or the key
+        `from_environment` read. Override this (not `from_environment`) to build the client
+        another way, so both paths use it.
+
+        The key goes only to `make_client`: it's never recorded in results, cache keys or
+        error messages. An empty key is a non-retryable `ModelCallError`."""
+        problems = adapter_class_problems(cls)
+        if problems:
+            raise TypeError("; ".join(problems))
+        if not isinstance(api_key, str) or not api_key:
+            raise ModelCallError(
+                f"provider {config.name!r}: the credential is empty", retryable=False
+            )
         client = cls.make_client(api_key, config.resolved_base_url(), settings.timeout_s)
         return cls(config, client, settings)
 

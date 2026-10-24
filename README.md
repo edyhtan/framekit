@@ -57,7 +57,9 @@ framekit reads **no settings from the environment** except provider keys and an 
 | `ANTHROPIC_API_KEY` | Claude models |
 | `HIVE_BASE_URL` | optional Hive endpoint override (e.g. a regional one) |
 
-A missing key fails only the calls to that provider, with a non-retryable error. Keep keys in your shell or a git-ignored `.env`; never commit them. Providers you add name their own key variable, or none ([Your own models and providers](#your-own-models-and-providers)).
+A missing key fails only the calls to that provider, with a non-retryable error. Keep keys in your shell or a git-ignored `.env`; never commit them.
+
+**Or pass a key explicitly**, which wins over the environment: a `ModelSource` with `credential=` (a string, a `SecretStr`, or a callable for a secret manager), [below](#your-own-models-and-providers). Applications usually load their `.env` themselves (e.g. `python-dotenv` or `pydantic-settings`): framekit never reads files on its own.
 
 ## Quick start
 
@@ -222,24 +224,33 @@ These are the built-ins. To add your own, see the next section.
 
 ## Your own models and providers
 
-Add models and providers in your own code, without changing framekit: extend the built-in registry and hand the result to the router. (On `main`, for the release after v0.1.0.)
+Add models and providers in your own code, without changing framekit. One structure, a **`ModelSource`**, says which model, where it's served, with which key, and through which adapter; pass sources to the router and refer to them by name. (On `main`, for the release after v0.1.0.)
 
 ```python
+import os
 from decimal import Decimal
 
-from framekit.models import DEFAULT_REGISTRY, ConversationRouter, ModelSettings, ModelSpec, ProviderConfig
+from pydantic import SecretStr
 
-local = ProviderConfig(name="local", protocol="openai", base_url="http://127.0.0.1:8000/v1")  # no key_env: keyless
-registry = DEFAULT_REGISTRY.extend(
-    providers=[local],
-    models=[ModelSpec("local", "my-local-model", "My local model", Decimal("0"), Decimal("0"))],
-)
-async with ConversationRouter(ModelSettings(default_model="my-local-model"), registry=registry) as router:
-    ...  # your models and the built-ins, side by side
+from framekit.models import ConversationRouter, ModelSettings, ModelSource, ModelSpec, ProviderConfig
+
+sources = [
+    ModelSource("claude", model="claude-haiku-4-5",                        # a built-in model,
+                credential=SecretStr(os.environ["MY_CLAUDE_KEY"])),       # with your own key
+    ModelSource("local", model=ModelSpec("box", "my-local-model", "My local model",
+                                         Decimal("0"), Decimal("0")),
+                provider=ProviderConfig("box", "openai",                  # keyless local server
+                                        base_url="http://127.0.0.1:8000/v1")),
+]
+async with ConversationRouter(ModelSettings(default_model="local"), sources=sources) as router:
+    ...  # your sources and the built-in catalog, side by side
 ```
 
+- **Credentials are never recorded:** kept as a `SecretStr`, passed only to the client; results record the source's name (`result.source`), and the response cache keys a source by a public fingerprint of where it's served, so two hosts never share cached answers.
+
 - **Any OpenAI-compatible server** (a hosted provider, a self-hosted vLLM server, Ollama's `/v1` endpoint) is config only, as above. Probe it before relying on it: reasoning switches, structured output and streaming differ from server to server.
-- **Another protocol or client** needs an adapter: subclass `ExternalAIAdapterBase` from `framekit.models.adapters`, set `adapter_version`, implement `build_params` and `call`, and map your client's errors to `ModelCallError` (override `map_error`, or raise `ModelCallError` in `call`). The base does the rest: output budget, reasoning switches, timing, stop reasons, cost, provenance.
+- **Another protocol or client** needs an adapter: subclass `ExternalAIAdapterBase` from `framekit.models.adapters`, set `adapter_version`, implement `build_params` and `call`, and map your client's errors to `ModelCallError` (override `map_error`, or raise `ModelCallError` in `call`). Pass the class as the source's `adapter=`. The base does the rest: output budget, reasoning switches, timing, stop reasons, cost, provenance.
+- **Lower level:** a `ModelRegistry` (`DEFAULT_REGISTRY.extend(...)`, `ConversationRouter(..., registry=...)`) holds providers, models and adapter classes; sources are checked against it.
 - **Only point a provider at a host you trust**, over `https` unless it's on the same machine. framekit sends the provider's key to its `base_url`, and the SDKs also send some of their own environment variables there (known gaps, described in the guide).
 
 Guide, with a complete runnable adapter: **[docs/adapters.md](docs/adapters.md)**.

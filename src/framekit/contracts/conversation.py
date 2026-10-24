@@ -61,6 +61,9 @@ class ConversationResult:
     # True when the reply was replayed from the model response cache, not a provider call
     # (then cost is 0 and timings are the replay's own).
     cached: bool = False
+    # The `ModelSource` that served the call (its name). None: a model from the router's
+    # registry (e.g. a built-in catalog model).
+    source: str | None = None
 
 
 @dataclass(frozen=True)
