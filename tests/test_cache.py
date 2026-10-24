@@ -1,6 +1,5 @@
 """Model response cache: record model calls once, replay them later (any request class)."""
 
-
 import pytest
 from helpers import final_result
 
@@ -275,3 +274,24 @@ async def test_a_session_of_calls_replays_from_the_file_store(tmp_path):
     )()
     again = await replay.generate(req())
     assert model.generated == 1 and again.cached and again.text == first.text
+
+
+async def test_the_file_store_counts_and_wipes_by_class(tmp_path):
+    store = FileResponseStore(tmp_path)
+    await store.put("llmcache:v1:L3a:aaa", b"x" * 10, ttl_s=60)
+    await store.put("llmcache:v1:L3b:bbb", b"y", ttl_s=60)
+    await store.put("llmcache:v1:L3b:ccc", b"z", ttl_s=-1)  # already expired
+    await store.put("anything else", b"w", ttl_s=60)
+    stats = store.stats()
+    assert stats["v1/L3a"]["entries"] == 1
+    assert stats["v1/L3b"] == {"entries": 2, "bytes": 2 * (8 + 1), "expired": 1}
+    assert store.clear(cache_class="L3b") == 2
+    assert await store.get("llmcache:v1:L3a:aaa") == b"x" * 10
+    assert set(store.stats()) == {"_other/_other", "v1/L3a"}
+
+
+async def test_cache_class_names_never_escape_the_folder(tmp_path):
+    store = FileResponseStore(tmp_path / "cache")
+    await store.put("llmcache:..:../../x:key", b"v", ttl_s=60)
+    assert all(p.is_relative_to(tmp_path / "cache") for p in tmp_path.rglob("*") if p.is_file())
+    assert await store.get("llmcache:..:../../x:key") == b"v"

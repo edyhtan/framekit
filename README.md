@@ -302,6 +302,7 @@ assert again.cached and again.text == first.text and again.cost_usd == 0
 - **Marked replays:** replays come back with `cached=True`, `cost_usd=0`, and `adapter_version` ending in `+cache`, so stored records never mistake a replay for a real call.
 - **Streams:** they replay their pieces in order; use `CacheSettings(replay_pace="original")` to keep the recorded timing.
 - **Settings:** `ttl_s` (default 7 days), `namespace` (change it to invalidate everything at once), `max_entry_bytes` (larger replies aren't stored).
+- **The file store** keeps entries in a folder per namespace and cache class, so `store.stats()` counts them per class and `store.clear(cache_class="...")` wipes one class.
 - **Your own store:** implement the `ResponseStore` protocol from `framekit.contracts`: `async get(key) -> bytes | None` and `async put(key, value, ttl_s) -> bool`. A store must never raise: a failed read is a miss, and a failed write is a skipped write. The search agent, for example, stores entries in Valkey.
 
 ## Vision parameters

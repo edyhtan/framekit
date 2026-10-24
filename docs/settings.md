@@ -357,7 +357,7 @@ Rules v1 [discussed]. Each is deterministic, versioned, and recorded when applie
 
 **When the facts are known** [built], two more checks return their problems (raise `VisionParamsError(problems)` to stop):
 - `check_against_source`: no profile asks for more fps (candidates, the overview) or pixels than the analysis copy has (`max_side_px` against the copy's long side, per unit);
-- `check_against_model`: native video only on a model that takes it; no more images than the model accepts, counted from the profile's frame cap (a storyboard sends ⌈frames ÷ tiles⌉ images, each tile a frame of `max_side_px`); no larger images than it accepts. The catalog doesn't declare vision capabilities yet [open], so callers describe a model with `ModelVisionCaps`.
+- `check_against_model`: native video only on a model that takes it; no more images than the model accepts, counted from the profile's frame cap (a storyboard sends ⌈frames ÷ tiles⌉ images, each tile a frame of `max_side_px`); no larger images than it accepts. The catalog declares these limits (`vision`, `max_images`, `max_image_side_px`; [built]); `check_against_model` takes them as a `ModelVisionCaps`.
 
 **Filled at resolution** [built]; the values are placeholders [open] like every number:
 
@@ -532,7 +532,7 @@ Layout is Parquet / Arrow tables plus the manifest; details are [open].
 ## 8. Open decisions
 
 1. **Frames to cloud models.** For a bring-your-own corpus, no footage or frames are published. But the plan sends frames to remote video and vision models for inference (L2, L3a). Is a transient send to a provider allowed (`model_inputs: provider_transient`)? Or must those roles run locally (`local_only`)? It should be decided before E1, and enforced against each role's adapter at load time.
-2. **The response cache and repeated runs.** Today's cache key has no temperature, seed or run index, so two identical self-consistency runs would replay one answer. Fix: add `temperature` and `seed` to `ConversationRequest` and to the cache key (a framekit release), and give each run its own seed.
+2. ~~The response cache and repeated runs~~: done 2026-10-24. `temperature` and `seed` are in `ConversationRequest` and, when set, in the cache key, so each self-consistency run can have its own seed.
 3. **Dropped rows.** Rows are flagged, never dropped, per DESIGN.md §3 L4. Should a "drop" ever exist, meaning excluded from the main tables but kept with its reason in `qc`?
 4. **Default numbers** for every placeholder above, from benchmark sweeps (vision profiles first).
 5. **Model choices** per role (video, vision, text, embeddings) and the L1 tools.

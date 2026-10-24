@@ -10,6 +10,7 @@ budget, timing, error mapping, stop-reason normalization, the result) is shared 
 (docs/adapters.md).
 """
 
+import base64
 import inspect
 import json
 import os
@@ -23,9 +24,11 @@ from typing import Any, ClassVar
 from framekit.contracts.conversation import (
     ConversationRequest,
     ConversationResult,
+    ImagePart,
     ModelCallError,
     TextDelta,
 )
+from framekit.contracts.embedding import EmbeddingRequest, EmbeddingResult
 from framekit.models.catalog import (
     ModelSettings,
     ModelSpec,
@@ -65,6 +68,22 @@ def conversation(request: ConversationRequest) -> list[dict[str, str]]:
     return [{"role": m.role, "content": m.content} for m in request.history] + [
         {"role": "user", "content": request.prompt}
     ]
+
+
+def image_data_url(image: ImagePart) -> str:
+    """An image as a `data:` URL (base64), the form OpenAI-compatible APIs take."""
+    return f"data:{image.media_type};base64,{base64.b64encode(image.data).decode('ascii')}"
+
+
+def sampling_fields(request: ConversationRequest, *, seed: bool = True) -> dict[str, Any]:
+    """The request's temperature and seed, when set (a protocol without a seed passes
+    seed=False and leaves it out)."""
+    fields: dict[str, Any] = {}
+    if request.temperature is not None:
+        fields["temperature"] = request.temperature
+    if seed and request.seed is not None:
+        fields["seed"] = request.seed
+    return fields
 
 
 def structured_mode(
@@ -397,7 +416,26 @@ class ExternalAIAdapterBase(ABC):
             yield TextDelta("text", reply.text)
         yield reply
 
+    def check_request(self, spec: ModelSpec, request: ConversationRequest) -> None:
+        """Refuse, before any call, what the model can't take: images for a model whose
+        catalog entry doesn't accept them. A non-retryable `ModelCallError`."""
+        if request.images and not spec.vision:
+            raise ModelCallError(
+                f"model {spec.model_id!r} doesn't accept images (its catalog entry has "
+                "vision=False)",
+                retryable=False,
+            )
+
+    async def embed(self, spec: ModelSpec, request: EmbeddingRequest) -> EmbeddingResult:
+        """Texts to vectors. Optional: an adapter for a protocol without embeddings keeps
+        this default, a non-retryable `ModelCallError`."""
+        raise ModelCallError(
+            f"{type(self).__name__} doesn't serve embeddings (model {spec.model_id!r})",
+            retryable=False,
+        )
+
     async def generate(self, spec: ModelSpec, request: ConversationRequest) -> ConversationResult:
+        self.check_request(spec, request)
         reasoning = reasoning_active(spec, request)
         max_tokens = output_budget(
             spec, request.max_tokens, self._settings.max_tokens_cap, reasoning=reasoning
@@ -427,6 +465,7 @@ class ExternalAIAdapterBase(ABC):
         self, spec: ModelSpec, request: ConversationRequest
     ) -> AsyncIterator[TextDelta | ConversationResult]:
         """Same lifecycle as `generate`, yielding pieces as they arrive, then the result."""
+        self.check_request(spec, request)
         reasoning = reasoning_active(spec, request)
         max_tokens = output_budget(
             spec, request.max_tokens, self._settings.max_tokens_cap, reasoning=reasoning
