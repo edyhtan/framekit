@@ -236,7 +236,7 @@ corpus:
       path: D:/media/tj/042.mkv                    #   relative paths: from this file's folder
       release_source: "Golden Era Anthology (2025), Blu-ray"   # declared metadata, checked
       source_quality: good
-      alignment_override:                          # [not built]
+      alignment_override:                          # [not built] only the identity is accepted
         - {ref: [0.0, 412.3], offset_s: 0.0, drift: 1.0}   # t_user = t_ref * drift + offset
 ```
 
@@ -255,18 +255,21 @@ How the search space is realized. Optional: documented defaults, your overrides 
 ```yaml
 plan:
   version: 1
-  derivation_rules: v1                             # [designed] recorded in the manifest
+  derivation_rules: v1                             # [built] each rule applied is recorded
 ```
 
-Rules v1 [discussed]. Each is deterministic, versioned, and recorded when applied:
+Rules v1 [built]. Each is deterministic, and the manifest records every one applied with its inputs (`manifest.derivations`):
 
-| From the search space | Into the plan | Override |
-|---|---|---|
-| `evidence.modules` + what each lens spec requires | `perception.modules` (always with `core`) | the plan may **add** modules, never remove a required one |
-| `resolution.moment_length_s` | `perception.beats`, `segmentation.fixed_windows`, and the vision detail density | explicit values must stay within the resolution |
-| `query_style.examples` | the phrasing prompts (`lens_passes.phrasings.style`) | the lens spec's style is the fallback when there are no examples |
-| `scope` (units, excluded ranges) | which units and ranges are processed | **none**: the plan can't widen the scope |
-| `lenses` (with versions) | `lens_passes.lenses` | none |
+| Rule | From the search space | Into the plan | Override |
+|---|---|---|---|
+| `modules` | `evidence.modules` + each lens's `requires_modules` | `perception.modules` (always with `core`) | the plan may **add** modules, never remove a required one |
+| `beats` | `resolution.moment_length_s` | `perception.beats`: `max_s` = the longest moment, `min_s` = 0.5 s (or `max_s` if shorter) | explicit values; `max_s` may not exceed the longest moment |
+| `windows` | `resolution.moment_length_s` | `segmentation.fixed_windows.window_s` = the shortest moment (when `mode: both`) | explicit values within the moment length |
+| `phrasing_style` | `query_style.examples` | the phrasing prompt shows the examples as the style | `phrasings.style: from_lens`; with no examples, each lens's `phrasing_style` |
+| `scope` | `scope` (units, excluded ranges) | the units and ranges processed | **none**: the plan can't widen the scope |
+| `lenses` | `lenses` (with versions and digests) | `lens_passes.lenses` | none |
+
+The vision profiles aren't derived from the resolution: they're explicit, so nothing adapts them behind your back.
 
 ### 5.2 Observation: how the video is looked at (question 3)
 
@@ -446,6 +449,8 @@ Excluded ranges aren't a setting here: they come from the search space's scope w
     embed_image: {model_id: <image-embedding-model>}   # [not built]
 ```
 
+- **A role's model** is a model id from the catalog (or your registry) or the name of one of your `ModelSource`s; `max_tokens` defaults per role as above, `temperature` and `reasoning` default from `defaults`, `seed` is unset unless given. Frame-sending roles (L2 with `method: model`, L3a) need a model whose catalog entry has `vision: true`, and their profiles must fit its `max_images` and `max_image_side_px`.
+
 ### 5.5 Policy, formatting, governance: what rules apply (question 6)
 
 ```yaml
@@ -475,6 +480,8 @@ Excluded ranges aren't a setting here: they come from the search space's scope w
     annotation_pack: false                         # recorded; exporting one is [not built]
     model_inputs: null                             # provider_transient | local_only
 ```
+
+- **`model_inputs`:** may frames go to a model provider for inference (`provider_transient`), or only to models on this machine or a private network (`local_only`, checked against each frame-sending role's base URL: `localhost` or a loopback, private or link-local IP)? For a **byo_media** corpus there's no default: a run that sends frames needs the plan to say. Other corpora default to `provider_transient`. Either way it's recorded in the manifest.
 
 Transport retries (`--provider-retries`), concurrency and rate limits are execution, not plan (§2).
 
@@ -533,7 +540,7 @@ The baseline scorer (`baseline_retriever`) embeds each gold query with a fixed m
 
 ## 8. Open decisions
 
-1. **Frames to cloud models.** For a bring-your-own corpus, no footage or frames are published. But the plan sends frames to remote video and vision models for inference (L2, L3a). Is a transient send to a provider allowed (`model_inputs: provider_transient`)? Or must those roles run locally (`local_only`)? It should be decided before E1, and enforced against each role's adapter at load time.
+1. **Frames to cloud models** for a bring-your-own corpus: decided 2026-10-24 as "the plan must say" (`governance.model_inputs`, §5.5). Whether one answer should become the project default stays the owner's call.
 2. ~~The response cache and repeated runs~~: done 2026-10-24. `temperature` and `seed` are in `ConversationRequest` and, when set, in the cache key, so each self-consistency run can have its own seed.
 3. **Dropped rows.** Rows are flagged, never dropped, per DESIGN.md §3 L4. Should a "drop" ever exist, meaning excluded from the main tables but kept with its reason in `qc`?
 4. **Default numbers** for every placeholder above, from benchmark sweeps (vision profiles first).

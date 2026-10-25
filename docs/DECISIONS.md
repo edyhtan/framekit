@@ -309,6 +309,15 @@ These were decided in short_extract (dates are from its journal) and bind this e
 - **Why:** consumers (the search agent's loader, training experiments) read datasets with any Parquet reader, so the format is fixed and self-describing; idempotent tasks make runs resumable and reruns free where nothing changed (DESIGN.md §5.1).
 - **Recorded in:** `src/framekit/extraction/runner.py`, `dataset.py`, `schemas/manifest.py` (new), `schemas/__init__.py`; `tests/test_runner.py`, `tests/test_dataset.py` (new); `pyproject.toml` (pyarrow; the pyarrow and yaml contract); settings.md §7, §8; DESIGN.md §2.1, §9; ARCHITECTURE.md §2.1, §3, §8; CLAUDE.md "Open decisions".
 
+### 14:55 — Extraction v1, part 4: resolution (derivation rules v1 and the checks before any spend)
+- **Decision** (the fourth PR of the extraction series; v1, revisitable):
+  - **Derivation rules v1**, deterministic and each recorded with its inputs: perception modules (core + the search space's evidence + every lens's needs; a plan may add, never remove), beat lengths (max = the longest moment, min 0.5 s), fixed windows (the shortest moment, with `mode: both`), the phrasing style (the space's examples, else each lens's style), the scope (it can only narrow the corpus), the lenses. The vision profiles aren't derived: they're explicit, so nothing adapts them behind the user's back.
+  - **Checks, every problem in one `ConfigError`:** unknown unit ids in the scope; a non-identity `alignment_override` (alignment isn't built); a model for each role that runs (L2 with `segmentation.method: model`, and L3a; the lens-pass and embedding roles join with their stage), known to the router (catalog, registry or `ModelSource`); frame-sending roles need a vision model whose profile fits its `max_images` and `max_image_side_px`; native video is refused until a `video_understand` port exists; candidate frame rates can't exceed the analysis copy's.
+  - **Governance:** for a `byo_media` corpus, a run that sends frames needs the plan to say `governance.model_inputs` (no default); `local_only` is checked against each frame-sending role's base URL (localhost, or a loopback, private or link-local IP); `image_vectors` and `training_use` stay `local_only`. Other corpora default to `provider_transient`. This settles how settings.md §8 decision 1 is enforced; which answer to use stays per plan, the owner's call.
+  - **Recorded:** the resolved plan in canonical form with three digests: everything (`plan_digest`), without budget, governance and layout (`content_digest`), and also without what the derivation rules wrote (`fairness_digest`, which the benchmark harness will compare).
+- **Why:** nothing should be spent on a run that can't finish or isn't allowed; and plans derive from A only through documented, recorded rules (DESIGN.md §2.4).
+- **Recorded in:** `src/framekit/extraction/resolve.py` (new); `tests/test_resolve.py`, `tests/model_helpers.py` (new); settings.md §4, §5.1, §5.4, §5.5, §8; DESIGN.md §9; ARCHITECTURE.md §4, §5.
+
 ---
 
 ## Still open
