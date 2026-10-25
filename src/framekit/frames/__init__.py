@@ -1,11 +1,12 @@
-"""Vision: how a model sees video (`vision_params`, docs/DESIGN.md §2.3), as data.
+"""Frames: which frames a model sees, and how they're prepared and delivered
+(docs/DESIGN.md §2.3), as data.
 
 The schema and its load-time checks, resolution to the canonical form the manifest records
 (with digests), the strategy registry, and pixel-free frame planning. The filters that need
-pixels are in `framekit.vision.pixels` (numpy, the media extra); extraction's media stage
+pixels are in `framekit.frames.pixels` (numpy, the media extra); extraction's media stage
 reads the frames, runs them, and prepares and delivers the images.
 
-    params = VisionParams.from_mapping(                  # VisionParamsError lists problems
+    params = FrameParams.from_mapping(                  # FrameParamsError lists problems
         {"vision_profiles": plan["vision_profiles"], "stages": plan["stages"]}
     )
     resolved = resolve(params)                           # pinned, defaults filled, digest
@@ -17,31 +18,31 @@ No media library, no model call: strategies are named, versioned code; profiles 
 and parameterize them.
 """
 
-from framekit.vision import builtin as _builtin  # noqa: F401  registers the built-ins
-from framekit.vision.checks import (
+from framekit.frames import builtin as _builtin  # noqa: F401  registers the built-ins
+from framekit.frames.checks import (
     ModelVisionCaps,
     SourceLimits,
     check_against_model,
     check_against_source,
     frame_cap,
 )
-from framekit.vision.params import (
+from framekit.frames.params import (
     Budget,
     Delivery,
     DetailView,
+    FrameParams,
+    FrameParamsError,
+    FrameProfile,
     FrameSelection,
     ImagePrep,
     OverviewView,
-    StageVision,
+    StageFrames,
     StoryboardGrid,
     StrategyRef,
     Views,
-    VisionParams,
-    VisionParamsError,
-    VisionProfile,
 )
-from framekit.vision.planning import FramePlan, PlannedView, plan_frames
-from framekit.vision.registry import (
+from framekit.frames.planning import FramePlan, PlannedView, plan_frames
+from framekit.frames.registry import (
     Strategy,
     StrategyKind,
     UnknownStrategyError,
@@ -49,13 +50,13 @@ from framekit.vision.registry import (
     register_strategy,
     strategies,
 )
-from framekit.vision.resolve import (
+from framekit.frames.resolve import (
+    ResolvedFrameParams,
     ResolvedProfile,
-    ResolvedVisionParams,
     resolve,
     resolve_profile,
 )
-from framekit.vision.signals import Signals, Span
+from framekit.frames.signals import Signals, Span
 
 __all__ = [
     "Budget",
@@ -68,20 +69,20 @@ __all__ = [
     "OverviewView",
     "PlannedView",
     "ResolvedProfile",
-    "ResolvedVisionParams",
+    "ResolvedFrameParams",
     "Signals",
     "SourceLimits",
     "Span",
-    "StageVision",
+    "StageFrames",
     "StoryboardGrid",
     "Strategy",
     "StrategyKind",
     "StrategyRef",
     "UnknownStrategyError",
     "Views",
-    "VisionParams",
-    "VisionParamsError",
-    "VisionProfile",
+    "FrameParams",
+    "FrameParamsError",
+    "FrameProfile",
     "check_against_model",
     "check_against_source",
     "frame_cap",

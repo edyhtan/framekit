@@ -4,7 +4,7 @@ the dataset.
 1. **Resolve** A, V and the plan (derivation rules, every check) — `ConfigError` before
    any spend.
 2. **Preflight:** probe every unit's source (no decoding): its facts and content
-   fingerprint, the expected duration, long units, and each vision profile against the
+   fingerprint, the expected duration, long units, and each frame profile against the
    analysis copy the unit will get. A dry run stops here with the cost estimate.
 3. **Run** each unit: L0 → L1 → L2 → L3a per scene → L3b per scene, lens and run → embed;
    L4's checks on every result. Units run in parallel; every step is a task keyed by its
@@ -59,10 +59,10 @@ from framekit.extraction.stages.qc import (
 )
 from framekit.extraction.stages.segment import segment
 from framekit.extraction.stages.signals import detect, signal_rows
+from framekit.frames import SourceLimits, check_against_source
 from framekit.models import ConversationRouter, ModelSettings, ModelSource
 from framekit.models.cache import CacheSettings, with_cache
 from framekit.models.registry import ModelRegistry
-from framekit.vision import SourceLimits, check_against_source
 
 DURATION_TOLERANCE = (2.0, 0.02)  # a source within 2 s or 2% of the expected duration matches
 MODEL_STAGES = {"L2", "L3a", "L3b", "embed"}
@@ -397,7 +397,7 @@ class Preflight:
 
 
 async def preflight(run: ResolvedRun, ffmpeg: FFmpeg, slots: asyncio.Semaphore) -> Preflight:
-    """Probe every unit's source; raise ConfigError when a vision profile asks for more than
+    """Probe every unit's source; raise ConfigError when a frame profile asks for more than
     a unit's analysis copy will have (nothing is upsampled)."""
     plan = run.plan
 
@@ -443,7 +443,7 @@ async def preflight(run: ResolvedRun, ffmpeg: FFmpeg, slots: asyncio.Semaphore) 
         probes[unit_id] = info
         fingerprints[unit_id] = fingerprint
     if problems:
-        raise ConfigError(problems, "the vision profiles against the analysis copies")
+        raise ConfigError(problems, "the frame profiles against the analysis copies")
     return Preflight(probes, fingerprints, excluded)
 
 

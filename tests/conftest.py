@@ -2,7 +2,7 @@
 
 import pytest
 
-from framekit.vision import registry
+from framekit.frames import registry
 
 
 @pytest.fixture

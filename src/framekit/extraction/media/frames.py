@@ -1,6 +1,6 @@
 """Frames for a model: read the planned frames, run the pixel filters, prepare and deliver.
 
-The steps after pixel-free planning (`framekit.vision.plan_frames`), in DESIGN.md §2.3's
+The steps after pixel-free planning (`framekit.frames.plan_frames`), in DESIGN.md §2.3's
 order: decode each planned timestamp from the analysis copy at the profile's image size,
 apply the pending pixel filters (anchors are never dropped), encode, and deliver as images
 or storyboard grids. What was sent is returned for the `frames_sent` table.
@@ -16,8 +16,8 @@ import numpy as np
 
 from framekit.contracts import ImagePart
 from framekit.extraction.media.ffmpeg import FFmpeg, MediaInfo, frame_index, scaled_size
-from framekit.vision import FramePlan, ResolvedProfile
-from framekit.vision.pixels import PixelFrame, apply_pixel_filters
+from framekit.frames import FramePlan, ResolvedProfile
+from framekit.frames.pixels import PixelFrame, apply_pixel_filters
 
 MEDIA_TYPES = {"jpeg": "image/jpeg", "png": "image/png", "webp": "image/webp"}
 

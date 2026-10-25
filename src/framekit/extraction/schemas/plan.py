@@ -29,7 +29,7 @@ from framekit.extraction.schemas.common import (
     read_mapping,
     unwrap,
 )
-from framekit.vision import VisionParams, VisionParamsError
+from framekit.frames import FrameParams, FrameParamsError
 
 WHAT = "the plan"
 
@@ -62,9 +62,9 @@ QC_CHECKS = (
     "agreement",
 )
 
-# The default vision profiles (placeholders, like every number): a storyboard overview of
+# The default frame profiles (placeholders, like every number): a storyboard overview of
 # the whole unit for L2, and up to 16 frames per scene for L3a.
-DEFAULT_VISION: dict[str, Any] = {
+DEFAULT_FRAMES: dict[str, Any] = {
     "vision_profiles": {
         "scene_overview": {
             "version": 1,
@@ -387,7 +387,7 @@ class ExtractionPlan(Model):
     version: Literal[1] = 1
     derivation_rules: Literal["v1"] = "v1"
     normalize: NormalizeSettings = NormalizeSettings()
-    vision: VisionParams = VisionParams.from_mapping(DEFAULT_VISION)
+    vision: FrameParams = FrameParams.from_mapping(DEFAULT_FRAMES)
     signals: SignalSettings = SignalSettings()
     long_units: LongUnits = LongUnits()
     segmentation: Segmentation = Segmentation()
@@ -409,13 +409,13 @@ class ExtractionPlan(Model):
         problems: list[str] = []
         if "vision" in raw:
             problems.append("vision: give `vision_profiles` and `stages` at the top level")
-        vision_keys = {k: raw.pop(k) for k in ("vision_profiles", "stages") if k in raw}
+        frame_keys = {k: raw.pop(k) for k in ("vision_profiles", "stages") if k in raw}
         vision = None
-        if vision_keys:
-            block = {**DEFAULT_VISION, **vision_keys}
+        if frame_keys:
+            block = {**DEFAULT_FRAMES, **frame_keys}
             try:
-                vision = VisionParams.from_mapping(block)
-            except VisionParamsError as exc:
+                vision = FrameParams.from_mapping(block)
+            except FrameParamsError as exc:
                 problems += list(exc.problems)
         try:
             plan = parse(cls, raw, WHAT, extra=lambda p: p.problems())
@@ -472,7 +472,7 @@ class ExtractionPlan(Model):
 
 
 __all__ = [
-    "DEFAULT_VISION",
+    "DEFAULT_FRAMES",
     "MODEL_ROLES",
     "QC_CHECKS",
     "STAGES",

@@ -1,6 +1,6 @@
 """The strategy registry: named, versioned frame-selection strategies.
 
-Strategies are code, settings are data (DESIGN.md §2.3). A vision profile names a strategy
+Strategies are code, settings are data (DESIGN.md §2.3). A frame profile names a strategy
 for each slot and gives its settings; the registry says what each name means:
 
 - **kind**: the slot it fills. `candidates` (where frames may come from), `anchor` (frames
@@ -11,7 +11,7 @@ for each slot and gives its settings; the registry says what each name means:
   their defaults.
 - **needs_pixels**: whether it must look at decoded frames. Those are validated and
   recorded now and run in the media stage; the others run in pixel-free planning
-  (`framekit.vision.planning`) through `run`.
+  (`framekit.frames.planning`) through `run`.
 
 A name never changes meaning: a changed algorithm registers a new version (`dedupe@2`), so
 datasets made with `dedupe@1` stay reproducible. Registering an existing kind, name and

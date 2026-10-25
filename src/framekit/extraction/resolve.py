@@ -6,7 +6,7 @@
   phrasing style, the lenses, the units in scope.
 - **Checks**, every problem in one `ConfigError`: the units in scope, alignment, signal
   detectors, a model for every role the run uses (vision models for frame-sending roles,
-  checked against each vision profile), embeddings, frame rates against the analysis copy,
+  checked against each frame profile), embeddings, frame rates against the analysis copy,
   and governance (what may leave the machine).
 - **Recorded:** the resolved plan in canonical form with its digests, for the manifest and
   the benchmark harness's fairness check.
@@ -23,17 +23,17 @@ from framekit.extraction.schemas.corpus import Corpus, UnitRef
 from framekit.extraction.schemas.lens import LensSpec
 from framekit.extraction.schemas.plan import ExtractionPlan, RoleModel
 from framekit.extraction.schemas.space import SearchSpace
-from framekit.models.adapters.base import ExternalAIAdapterBase
-from framekit.models.catalog import ModelSpec, ProviderConfig
-from framekit.vision import (
+from framekit.frames import (
     ModelVisionCaps,
+    ResolvedFrameParams,
     ResolvedProfile,
-    ResolvedVisionParams,
     SourceLimits,
     check_against_model,
     check_against_source,
     resolve,
 )
+from framekit.models.adapters.base import ExternalAIAdapterBase
+from framekit.models.catalog import ModelSpec, ProviderConfig
 
 WHAT = "the extraction run"
 DEFAULT_BEAT_MIN_S = 0.5  # a placeholder, like every number
@@ -116,7 +116,7 @@ class ResolvedRun:
     style_examples: tuple[str, ...]  # phrasing style from the space; empty: the lens's style
     units: tuple[ScopedUnit, ...]
     roles: Mapping[str, RoleBinding]
-    vision: ResolvedVisionParams
+    vision: ResolvedFrameParams
     derivations: tuple[dict[str, Any], ...]
     resolved_plan: dict[str, Any]
     plan_digest: str  # everything resolved
@@ -361,13 +361,13 @@ def resolve_run(
             except (LookupError, ValueError) as exc:
                 problems.append(f"plan: {path}: {exc}")
 
-    # --- vision profiles -------------------------------------------------------------
+    # --- frame profiles -------------------------------------------------------------
     vision = resolve(plan.vision)
     frame_roles = [r for r in FRAME_ROLES if r == "L3a" or plan.segmentation.method == "model"]
     for role in frame_roles:
         if role not in vision.stages:
             problems.append(
-                f"plan: stages.{role}: {role} sends frames, so it needs a vision profile"
+                f"plan: stages.{role}: {role} sends frames, so it needs a frame profile"
             )
             continue
         profile = vision.for_stage(role)

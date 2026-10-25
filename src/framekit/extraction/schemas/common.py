@@ -1,7 +1,7 @@
 """Shared pieces of the extraction schemas: strict read-only models, one error that lists
 every problem, digests, and loading YAML or JSON files.
 
-The schemas follow the conventions of `framekit.vision.params`: unknown keys fail, numbers
+The schemas follow the conventions of `framekit.frames.params`: unknown keys fail, numbers
 must be numbers (YAML `yes` or `"4"` fails; a whole number is fine where a decimal is
 expected) and finite, lists are stored as tuples, and one `ConfigError` lists every problem
 with its path, so a file is fixed in one pass.
@@ -16,7 +16,7 @@ from typing import Annotated, Any, Literal, get_args
 import yaml
 from pydantic import BaseModel, BeforeValidator, ConfigDict, StringConstraints, ValidationError
 
-from framekit.vision.params import FrozenDict, freeze, problems_from_validation
+from framekit.frames.params import FrozenDict, freeze, problems_from_validation
 
 # Perception modules (DESIGN.md §3 L3a): `core` is always on; lenses and the search space
 # ask for the others.

@@ -8,12 +8,12 @@ AI building blocks for video datasets, in Python. One package with modules you c
 |---|---|---|
 | `framekit.contracts` | provider-neutral types: the conversation port, the response-store port | **v0.1.0** |
 | `framekit.models` | model access: a catalog of providers and models (extendable with your own), a router, adapters on the official `openai` and `anthropic` SDKs, a record / replay response cache | **v0.1.0** |
-| `framekit.vision` | how a model sees video: frame selection, image preparation and delivery | on `main`: schema, checks, planning, pixel filters ([settings](docs/settings.md) §5.2) |
+| `framekit.frames` | how a model sees video: frame selection, image preparation and delivery | on `main`: schema, checks, planning, pixel filters ([settings](docs/settings.md) §5.2) |
 | `framekit.extraction` | turns a video corpus into a dataset of segments, text, vectors and provenance, plus a benchmark harness and the `framekit` command | on `main` ([below](#extraction), [settings](docs/settings.md)) |
 
 Used by the video clip search agent ([short_extract](https://github.com/edyhtan/short_extract)), and built for benchmarks and experimental model training.
 
-**Contents:** [Install](#install) · [Configure](#configure) · [Quick start](#quick-start) · [Usage guide](#usage-guide) · [Models](#models) · [Your own models and providers](#your-own-models-and-providers) · [Response cache](#response-cache) · [Vision parameters](#vision-parameters) · [Extraction](#extraction) · [Development](#development) · [Documents](#documents) · [Licence](#licence)
+**Contents:** [Install](#install) · [Configure](#configure) · [Quick start](#quick-start) · [Usage guide](#usage-guide) · [Models](#models) · [Your own models and providers](#your-own-models-and-providers) · [Response cache](#response-cache) · [Frame parameters](#frame-parameters) · [Extraction](#extraction) · [Development](#development) · [Documents](#documents) · [Licence](#licence)
 
 ---
 
@@ -305,14 +305,14 @@ assert again.cached and again.text == first.text and again.cost_usd == 0
 - **The file store** keeps entries in a folder per namespace and cache class, so `store.stats()` counts them per class and `store.clear(cache_class="...")` wipes one class (on the command line: `framekit cache stats|wipe --cache-dir DIR [--class L3b]`).
 - **Your own store:** implement the `ResponseStore` protocol from `framekit.contracts`: `async get(key) -> bytes | None` and `async put(key, value, ttl_s) -> bool`. A store must never raise: a failed read is a miss, and a failed write is a skipped write. The search agent, for example, stores entries in Valkey.
 
-## Vision parameters
+## Frame parameters
 
-How a model sees video (which frames, at what size, delivered how) is structured, versioned data: named **vision profiles**, assigned per stage. `framekit.vision` checks them, records them in a canonical form with a digest, and plans frame timestamps from cheap signals (shot cuts, audio onsets, motion) without decoding any video. Not released yet: it's on `main`, after v0.1.0.
+How a model sees video (which frames, at what size, delivered how) is structured, versioned data: named **frame profiles**, assigned per stage. `framekit.frames` checks them, records them in a canonical form with a digest, and plans frame timestamps from cheap signals (shot cuts, audio onsets, motion) without decoding any video. Not released yet: it's on `main`, after v0.1.0.
 
 ```python
-from framekit.vision import Signals, VisionParams, plan_frames, resolve
+from framekit.frames import Signals, FrameParams, plan_frames, resolve
 
-params = VisionParams.from_mapping({                 # parse your YAML or JSON first
+params = FrameParams.from_mapping({                 # parse your YAML or JSON first
     "vision_profiles": {
         "detail": {
             "version": 1,
@@ -325,7 +325,7 @@ params = VisionParams.from_mapping({                 # parse your YAML or JSON f
         },
     },
     "stages": {"L3a": {"vision": "detail"}},
-})                                                    # VisionParamsError lists every problem
+})                                                    # FrameParamsError lists every problem
 resolved = resolve(params)                            # versions pinned, defaults filled
 print(resolved.digest)                                # same settings, same digest
 plan = plan_frames(resolved.for_stage("L3a"), (12.0, 48.5),
@@ -335,7 +335,7 @@ print(plan.timestamps)                                # seconds on the video's o
 
 - **Checks before any spend, all reported at once:** unknown strategies or keys, a strategy in the wrong slot, missing settings, `true` or `"4"` where a number belongs, `native_video` with anything but uniform sampling, views that overflow the frame budget. `check_against_source` and `check_against_model` add the analysis copy's and the model's limits.
 - **Read-only once checked:** parsed and resolved parameters can't be changed in place, so the digest always describes what runs.
-- **Strategies are versioned code:** `uniform`, `shot_based`, `shot_boundaries`, `audio_onsets`, `dedupe`, `sharpness`, `motion`; a changed algorithm gets a new version (`dedupe@2`), so old datasets stay reproducible. Filters that need pixels (`dedupe`, `sharpness`) run in extraction's media stage (`framekit.vision.pixels`, with the media extra), after the budget; anchors are never dropped.
+- **Strategies are versioned code:** `uniform`, `shot_based`, `shot_boundaries`, `audio_onsets`, `dedupe`, `sharpness`, `motion`; a changed algorithm gets a new version (`dedupe@2`), so old datasets stay reproducible. Filters that need pixels (`dedupe`, `sharpness`) run in extraction's media stage (`framekit.frames.pixels`, with the media extra), after the budget; anchors are never dropped.
 - Every setting, check and default: [docs/settings.md](docs/settings.md) §5.2.
 
 ## Extraction
@@ -410,7 +410,7 @@ dataset.rows("annotations")          # dicts: lens, field, label, value, target,
 dataset.manifest.derivations         # what the derivation rules filled in, and from what
 ```
 
-- **Checked before any spend, every problem at once:** the files' structure and values, a model for every role (vision models where frames are sent, within their image limits), the vision profiles against each video's analysis copy, signal detectors, the provider keys, and governance. `--dry-run` stops after the checks with an upper-bound cost estimate.
+- **Checked before any spend, every problem at once:** the files' structure and values, a model for every role (vision models where frames are sent, within their image limits), the frame profiles against each video's analysis copy, signal detectors, the provider keys, and governance. `--dry-run` stops after the checks with an upper-bound cost estimate.
 - **Reruns are free where nothing changed:** every step is a task keyed by its inputs, stored in the work folder (default: `<out>.work`). Adding a lens reruns only lens passes and embeddings; `--rerun L3b` forces a stage. With `--cache-dir`, model replies are recorded and can be replayed (`--cache-mode replay`).
 - **Problems are flagged, never dropped:** an unusable reply is retried with what was wrong with it, then flagged; quality checks (times, names, vocabulary, the lens's validators, agreement between self-consistency runs) are written to the `qc` table.
 - **Datasets:** Parquet tables (`units`, `shots`, `scenes`, `beats`, `windows`, `signals`, `perception`, `frames_sent`, `annotations`, `phrasings`, `vectors`, `runs`, `qc`) plus `manifest.json`, which records the search space verbatim, the resolved plan, the models, every digest and the estimated cost. Frames are never stored: `frames_sent` holds their times and image digests.

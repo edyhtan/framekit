@@ -21,7 +21,7 @@ Fixes go into the latest release on the supported line, published as a new patch
 
 ## Scope
 
-In scope: the library code in this repository (`framekit.contracts`, `framekit.models`, `framekit.vision`, `framekit.extraction` and the `framekit` command), its packaging, and its CI workflows and dependency pins. Examples:
+In scope: the library code in this repository (`framekit.contracts`, `framekit.models`, `framekit.frames`, `framekit.extraction` and the `framekit` command), its packaging, and its CI workflows and dependency pins. Examples:
 
 - a way for a provider key to leak, for instance into logs, error messages or response-cache files;
 - unsafe handling of model responses or cache records (code execution, path traversal, deserialization);

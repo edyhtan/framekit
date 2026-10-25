@@ -1,6 +1,6 @@
 """L2 · Scene segmentation (DESIGN.md §3): a synopsis and scenes on the unit timeline.
 
-`segmentation.method: model`: the L2 model sees frames of the whole unit (its vision
+`segmentation.method: model`: the L2 model sees frames of the whole unit (its frame
 profile; excluded ranges left out) and proposes a synopsis and scenes, which are repaired
 into a clean cover of the processable parts (snapped to cuts, too-short scenes merged,
 too-long ones split; each repair noted). An unusable reply after the allowed attempts falls
@@ -26,7 +26,7 @@ from framekit.extraction.stages.context import (
     retry_prompt,
     signals_for,
 )
-from framekit.vision import ResolvedProfile, plan_frames
+from framekit.frames import ResolvedProfile, plan_frames
 
 
 def frame_rows(

@@ -1,4 +1,4 @@
-"""Built-in strategies, version 1. Registered when `framekit.vision` is imported.
+"""Built-in strategies, version 1. Registered when `framekit.frames` is imported.
 
 Every number is a setting with no default unless only one choice exists, so a missing
 setting fails at load time instead of being guessed (DESIGN.md §2.3). Allocation windows
@@ -11,8 +11,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from framekit.vision.registry import Strategy, register_strategy
-from framekit.vision.signals import Signals, Span
+from framekit.frames.registry import Strategy, register_strategy
+from framekit.frames.signals import Signals, Span
 
 # shot_based "last": this far before the cut, which falls inside the shot's last frame
 # whatever the frame rate. Planning works in whole milliseconds and only merges times in

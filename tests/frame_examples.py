@@ -1,8 +1,8 @@
-"""Vision parameter examples shared by the vision tests, as plain data."""
+"""Frame parameter examples shared by the frame tests, as plain data."""
 
 import copy
 
-# docs/settings.md §5.2, the vision part of plan.yaml, verbatim (YAML → Python).
+# docs/settings.md §5.2, the frames part of plan.yaml, verbatim (YAML → Python).
 SETTINGS_EXAMPLE = {
     "vision_profiles": {
         "scene_overview": {

@@ -6,8 +6,8 @@
   checked, never guessed: nothing is silently resampled or dropped (DESIGN.md §0.2).
 
 Both return a list of problems (`path: message`), empty when all is well; raise
-`VisionParamsError(problems)` to stop. The model catalog doesn't declare vision
-capabilities yet, so callers describe a model with `ModelVisionCaps`.
+`FrameParamsError(problems)` to stop. Callers describe a model with `ModelVisionCaps`;
+extraction fills it from the model's catalog entry (`max_images`, `max_image_side_px`).
 """
 
 import math
@@ -15,10 +15,10 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from numbers import Integral, Real
 
-from framekit.vision.params import VisionParams, VisionProfile
-from framekit.vision.resolve import (
+from framekit.frames.params import FrameParams, FrameProfile
+from framekit.frames.resolve import (
+    ResolvedFrameParams,
     ResolvedProfile,
-    ResolvedVisionParams,
     resolve,
     resolve_profile,
 )
@@ -72,27 +72,27 @@ class ModelVisionCaps:
         _whole("ModelVisionCaps", "max_image_side_px", self.max_image_side_px, optional=True)
 
 
-Profiles = VisionParams | ResolvedVisionParams | VisionProfile | ResolvedProfile
+Profiles = FrameParams | ResolvedFrameParams | FrameProfile | ResolvedProfile
 ONE_PROFILE = (
-    "takes one profile, a VisionProfile or a ResolvedProfile (for a whole block, check the "
+    "takes one profile, a FrameProfile or a ResolvedProfile (for a whole block, check the "
     "profile of each stage: resolve(params).for_stage(stage))"
 )
 
 
-def _profiles(params: Profiles) -> Iterator[tuple[str, VisionProfile]]:
+def _profiles(params: Profiles) -> Iterator[tuple[str, FrameProfile]]:
     """(path prefix, resolved profile) pairs: checks see the defaults that will apply."""
-    if isinstance(params, VisionParams):
+    if isinstance(params, FrameParams):
         params = resolve(params)
-    if isinstance(params, VisionProfile):
+    if isinstance(params, FrameProfile):
         params = resolve_profile(params)
-    if isinstance(params, ResolvedVisionParams):
+    if isinstance(params, ResolvedFrameParams):
         for name, resolved in params.profiles.items():
             yield f"vision_profiles.{name}.", resolved.profile
     elif isinstance(params, ResolvedProfile):
         yield (f"vision_profiles.{params.name}." if params.name else ""), params.profile
     else:
         raise TypeError(
-            "expected VisionParams, ResolvedVisionParams, VisionProfile or ResolvedProfile, "
+            "expected FrameParams, ResolvedFrameParams, FrameProfile or ResolvedProfile, "
             f"got {type(params).__name__}"
         )
 
@@ -123,7 +123,7 @@ def check_against_source(params: Profiles, source: SourceLimits) -> list[str]:
     return problems
 
 
-def frame_cap(profile: VisionProfile) -> int | None:
+def frame_cap(profile: FrameProfile) -> int | None:
     """The most frames one planned span can send, or None when nothing bounds it."""
     if profile.delivery.mode == "native_video":
         return None
@@ -144,13 +144,13 @@ def frame_cap(profile: VisionProfile) -> int | None:
 
 
 def check_against_model(
-    profile: VisionProfile | ResolvedProfile, caps: ModelVisionCaps
+    profile: FrameProfile | ResolvedProfile, caps: ModelVisionCaps
 ) -> list[str]:
     """Problems if the model can't take what the profile sends: native video on a model
     without it, more images than it accepts (from the profile's own frame cap), or images
     larger than it accepts. A storyboard tile is one frame of `image.max_side_px`, so a grid
     image's long side is that times the larger grid dimension."""
-    if not isinstance(profile, VisionProfile | ResolvedProfile):
+    if not isinstance(profile, FrameProfile | ResolvedProfile):
         raise TypeError(f"check_against_model {ONE_PROFILE}, got {type(profile).__name__}")
     if not isinstance(caps, ModelVisionCaps):
         raise TypeError(f"check_against_model needs ModelVisionCaps, got {type(caps).__name__}")

@@ -1,4 +1,4 @@
-"""Pixel-free planning: the timestamps a vision profile selects for one span.
+"""Pixel-free planning: the timestamps a frame profile selects for one span.
 
 `plan_frames(profile, span, signals)` runs everything that needs no pixels: candidates,
 anchors, pixel-free filters, the budget and views. Filters that need pixels (`dedupe`,
@@ -46,10 +46,10 @@ from typing import Any, Literal
 
 from pydantic import BaseModel
 
-from framekit.vision.params import StrategyRef, VisionProfile, thaw
-from framekit.vision.registry import Strategy, StrategyKind, get_strategy
-from framekit.vision.resolve import ResolvedProfile, resolve_profile
-from framekit.vision.signals import Signals, Span
+from framekit.frames.params import FrameProfile, StrategyRef, thaw
+from framekit.frames.registry import Strategy, StrategyKind, get_strategy
+from framekit.frames.resolve import ResolvedProfile, resolve_profile
+from framekit.frames.signals import Signals, Span
 
 INF = math.inf
 Window = tuple[int, int]  # [start, end) in milliseconds
@@ -268,7 +268,7 @@ def _peaks(
 
 
 def plan_frames(
-    profile: VisionProfile | ResolvedProfile, span: Span, signals: Signals | None = None
+    profile: FrameProfile | ResolvedProfile, span: Span, signals: Signals | None = None
 ) -> FramePlan:
     """The frames `profile` selects in `span` (seconds on the unit timeline, end excluded),
     from the L1 `signals`. See the module docstring for the rules."""
