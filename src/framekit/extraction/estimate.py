@@ -1,4 +1,4 @@
-"""The cost estimate shown before a run (`dry_run=True`).
+"""The cost estimate shown before a run (`dry_run=True`, `framekit extract --dry-run`).
 
 An upper-bound estimate from the probed units, the plan and the catalog prices: scenes are
 counted at the target length, outputs at their full `max_tokens`, images at the number of
