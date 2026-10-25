@@ -1,4 +1,5 @@
-"""The extraction schemas: A (`SearchSpace`), V (`Corpus`), the plan (`ExtractionPlan`), lens
+"""The extraction schemas: A (`SearchSpace`), V (`Corpus`), the plan (`ExtractionPlan`, made
+of five components: `Observation`, `Structure`, `Interpretation`, `Models`, `Policy`), lens
 specs (`LensSpec`), the gold set (`GoldSet`) and the dataset manifest (`DatasetManifest`).
 
 Pydantic models, strict and read-only once parsed. Each loads from a YAML or JSON file
@@ -19,21 +20,30 @@ from framekit.extraction.schemas.gold import GoldMatch, GoldMoment, GoldQuery, G
 from framekit.extraction.schemas.lens import FieldSpec, LensPrompts, LensSpec, LensValidator
 from framekit.extraction.schemas.manifest import SCHEMA_VERSION, DatasetManifest
 from framekit.extraction.schemas.plan import (
+    COMPONENTS,
     DEFAULT_FRAMES,
     MODEL_ROLES,
     TABLES,
+    Component,
     ExtractionPlan,
+    Interpretation,
+    Models,
+    Observation,
+    Policy,
     RoleModel,
+    Structure,
 )
 from framekit.extraction.schemas.space import LensRef, SearchSpace
 
 __all__ = [
+    "COMPONENTS",
     "DEFAULT_FRAMES",
     "MODEL_ROLES",
     "MODULES",
     "SCHEMA_VERSION",
     "TABLES",
     "AlignmentSegment",
+    "Component",
     "ConfigError",
     "Corpus",
     "CorpusProfile",
@@ -44,13 +54,18 @@ __all__ = [
     "GoldMoment",
     "GoldQuery",
     "GoldSet",
+    "Interpretation",
     "LensPrompts",
     "LensRef",
     "LensSpec",
     "LensValidator",
     "ManifestEntry",
+    "Models",
+    "Observation",
+    "Policy",
     "RoleModel",
     "SearchSpace",
+    "Structure",
     "UnitRef",
     "canonical_json",
     "digest",

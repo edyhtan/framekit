@@ -84,9 +84,15 @@ def test_runs_that_disagree_are_flagged_or_down_weighted(tmp_path, video):
         tmp_path,
         video,
         plan={
-            "lens_passes": {
-                "phrasings": {"count": 3},
-                "self_consistency": {"runs": 2, "seeds": [7, 8], "on_disagreement": "down_weight"},
+            "interpretation": {
+                "lens_passes": {
+                    "phrasings": {"count": 3},
+                    "self_consistency": {
+                        "runs": 2,
+                        "seeds": [7, 8],
+                        "on_disagreement": "down_weight",
+                    },
+                }
             }
         },
     )

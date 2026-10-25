@@ -307,13 +307,13 @@ assert again.cached and again.text == first.text and again.cost_usd == 0
 
 ## Frame parameters
 
-How a model sees video (which frames, at what size, delivered how) is structured, versioned data: named **frame profiles**, assigned per stage. `framekit.frames` checks them, records them in a canonical form with a digest, and plans frame timestamps from cheap signals (shot cuts, audio onsets, motion) without decoding any video. Not released yet: it's on `main`, after v0.1.0.
+Which frames a model sees, at what size, delivered how, is structured, versioned data: named **frame profiles**, assigned per stage (in a plan: `observation.frames`). `framekit.frames` checks them, records them in a canonical form with a digest, and plans frame timestamps from cheap signals (shot cuts, audio onsets, motion) without decoding any video. Not released yet: it's on `main`, after v0.1.0.
 
 ```python
 from framekit.frames import Signals, FrameParams, plan_frames, resolve
 
 params = FrameParams.from_mapping({                 # parse your YAML or JSON first
-    "vision_profiles": {
+    "profiles": {
         "detail": {
             "version": 1,
             "frame_selection": {
@@ -324,7 +324,7 @@ params = FrameParams.from_mapping({                 # parse your YAML or JSON fi
             "image": {"max_side_px": 768},
         },
     },
-    "stages": {"L3a": {"vision": "detail"}},
+    "stages": {"L3a": {"profile": "detail"}},
 })                                                    # FrameParamsError lists every problem
 resolved = resolve(params)                            # versions pinned, defaults filled
 print(resolved.digest)                                # same settings, same digest
@@ -373,15 +373,19 @@ corpus:
   units:
     - {unit_id: v001, path: /media/v001.mkv}
 
-# plan.yaml: how A is realized. Optional, except that models are never defaulted.
+# plan.yaml: how A is realized, in five components (observation, structure, interpretation,
+# models, policy). Optional, except that models are never defaulted.
 plan:
+  version: 2
   models:
     L2:  {model_id: claude-haiku-4-5}     # scenes, from frames of the whole video
     L3a: {model_id: claude-haiku-4-5}     # observable facts per scene, from frames
     L3b: {model_id: deepseek-ai/deepseek-v4.1-flash}   # lens passes, text only
-  embedding: {text: null}                 # or models.embed_text: a model that serves embeddings
-  governance: {model_inputs: provider_transient}       # byo_media: say whether frames may go to a provider
-  budget: {max_cost_usd: 5}
+  interpretation:
+    embedding: {text: null}               # or models.embed_text: a model that serves embeddings
+  policy:
+    governance: {model_inputs: provider_transient}     # byo_media: say whether frames may go to a provider
+    budget: {max_cost_usd: 5}
 ```
 
 ```bash
@@ -423,7 +427,7 @@ framekit bench --corpus corpus.yaml --plan plan.yaml --gold gold/queries.yaml \
                --space raw=space-raw.yaml --space llm=space-llm.yaml --out reports/aug-1
 ```
 
-**Not built yet:** native video input (needs a `video_understand` port), image embeddings, a built-in speech model or audio tagger (register a detector), chunked long units (units over `long_units.enabled_over_s` are excluded with the reason), aligning a file to a reference timeline, and a distributed runner.
+**Not built yet:** native video input (needs a `video_understand` port), image embeddings, a built-in speech model or audio tagger (register a detector), chunked long units (units over `observation.long_units.enabled_over_s` are excluded with the reason), aligning a file to a reference timeline, and a distributed runner.
 
 ## Development
 

@@ -55,7 +55,7 @@ def _split(start: float, end: float, max_s: float, cuts: Sequence[float]) -> lis
 
 
 def group_shots(span: Span, cuts: Sequence[float], length: SceneLength) -> list[Span]:
-    """Scenes for `segmentation.method: shot_groups`: consecutive shots grouped until a
+    """Scenes for `structure.segmentation.method: shot_groups`: consecutive shots grouped until a
     scene reaches the target length, never past the max (a longer shot is split evenly),
     and a short remainder merged into the scene before it when that stays within the max."""
     start, end = span

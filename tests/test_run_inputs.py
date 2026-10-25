@@ -4,14 +4,16 @@ set, as checked schemas."""
 import copy
 
 import pytest
-from extraction_helpers import COLOUR_LENS, base_plan, write_yaml
+from extraction_helpers import COLOUR_LENS, base_plan, merged, write_yaml
 
 from framekit.extraction import (
     ConfigError,
     Corpus,
     ExtractionPlan,
     GoldSet,
+    Observation,
     SearchSpace,
+    Structure,
 )
 from framekit.extraction.schemas.gold import overlapping_queries
 
@@ -120,49 +122,110 @@ def test_the_corpus_digest_leaves_paths_out(tmp_path):
 
 def test_the_default_plan_needs_no_file():
     plan = ExtractionPlan()
-    assert plan.segmentation.method == "model" and plan.models.L3a is None
-    assert set(plan.vision.stages) == {"L2", "L3a"}
+    assert plan.version == 2
+    assert plan.structure.segmentation.method == "model" and plan.models.L3a is None
+    assert set(plan.observation.frames.stages) == {"L2", "L3a"}
 
 
 def test_a_plan_overrides_defaults_group_by_group():
-    plan = ExtractionPlan.from_mapping({"plan": {"normalize": {"fps": 8}}})
-    assert plan.normalize.fps == 8 and plan.normalize.height_px == 720
+    plan = ExtractionPlan.from_mapping({"plan": {"observation": {"normalize": {"fps": 8}}}})
+    assert plan.observation.normalize.fps == 8 and plan.observation.normalize.height_px == 720
+    assert plan.observation.signals == Observation().signals  # the rest of the group: defaults
 
 
 def test_frame_profiles_in_a_plan_replace_the_defaults():
     plan = ExtractionPlan.from_mapping(base_plan())
-    assert set(plan.vision.vision_profiles) == {"overview", "detail"}
-    assert plan.vision.stages["L3a"].vision == "detail"
+    assert set(plan.observation.frames.profiles) == {"overview", "detail"}
+    assert plan.observation.frames.stages["L3a"].profile == "detail"
+    stages_only = {"frames": {"stages": {"L3a": {"profile": "scene_overview"}}}}
+    plan = ExtractionPlan.from_mapping({"observation": stages_only})
+    assert set(plan.observation.frames.profiles) == {"scene_overview", "scene_detail"}  # kept
+    assert set(plan.observation.frames.stages) == {"L3a"}  # replaced
 
 
 def test_plan_problems_are_listed_with_their_paths():
-    data = base_plan() | {
-        "normalize": {"fps": "12"},
-        "bogus": 1,
-        "stages": {"L3a": {"vision": "nope"}},
-    }
+    data = merged(
+        base_plan(),
+        {
+            "observation": {
+                "normalize": {"fps": "12"},
+                "frames": {"stages": {"L3a": {"profile": "nope"}}},
+            },
+            "bogus": 1,
+        },
+    )
     with pytest.raises(ConfigError) as info:
         ExtractionPlan.from_mapping(data)
     problems = info.value.problems
-    assert any(p.startswith("stages.L3a.vision") for p in problems)
-    assert "normalize.fps: Input should be a valid number" in problems
+    assert any(p.startswith("observation.frames.stages.L3a.profile") for p in problems)
+    assert "observation.normalize.fps: Input should be a valid number" in problems
     assert "bogus: Extra inputs are not permitted" in problems
 
 
 def test_cross_setting_checks():
-    data = base_plan() | {
-        "segmentation": {"mode": "fixed_windows"},
-        "lens_passes": {"self_consistency": {"runs": 3, "seeds": [1, 2]}},
-        "formatting": {"tables": ["scenes"]},
-        "embedding": {"text": {"template": "no placeholder"}},
-    }
+    data = merged(
+        base_plan(),
+        {
+            "structure": {"segmentation": {"mode": "fixed_windows"}},
+            "interpretation": {
+                "lens_passes": {"self_consistency": {"runs": 3, "seeds": [1, 2]}},
+                "embedding": {"text": {"template": "no placeholder"}},
+            },
+            "policy": {"formatting": {"tables": ["scenes"]}},
+        },
+    )
     with pytest.raises(ConfigError) as info:
         ExtractionPlan.from_mapping(data)
     problems = "\n".join(info.value.problems)
-    assert "fixed_windows alone" in problems
-    assert "3 runs need 3 seeds" in problems
-    assert "formatting.tables: units is needed" in problems
-    assert "must contain {text}" in problems
+    assert "structure.segmentation.mode: fixed_windows alone" in problems
+    assert "interpretation.lens_passes.self_consistency.seeds: 3 runs need 3 seeds" in problems
+    assert "policy.formatting.tables: units is needed" in problems
+    assert "interpretation.embedding.text.template: must contain {text}" in problems
+
+
+def test_a_version_1_plan_is_refused_with_where_each_key_moved():
+    old = {"plan": {"version": 1, "normalize": {"fps": 8}, "vision_profiles": {}, "perception": {}}}
+    with pytest.raises(ConfigError) as info:
+        ExtractionPlan.from_mapping(old)
+    problems = info.value.problems
+    assert problems[0].startswith("version: this is a version 1 plan")
+    assert "normalize: now observation.normalize" in problems
+    assert any(p.startswith("vision_profiles: now observation.frames.profiles") for p in problems)
+    assert any(p.startswith("perception: now interpretation.perception") for p in problems)
+
+
+def test_beats_belong_to_the_structure():
+    plan = ExtractionPlan.from_mapping({"structure": {"beats": {"min_s": 1.0, "max_s": 3.0}}})
+    assert plan.structure.beats.max_s == 3.0
+    with pytest.raises(ConfigError, match="structure.beats: min_s is more than max_s"):
+        ExtractionPlan.from_mapping({"structure": {"beats": {"min_s": 4.0, "max_s": 3.0}}})
+    with pytest.raises(ConfigError, match="interpretation.perception.beats: Extra inputs"):
+        ExtractionPlan.from_mapping({"interpretation": {"perception": {"beats": {}}}})
+
+
+def test_a_component_loads_and_checks_on_its_own(tmp_path):
+    frames = {"stages": {"L3a": {"profile": "scene_overview"}}}
+    data = {"observation": {"normalize": {"fps": 8}, "frames": frames}}
+    observation = Observation.load(write_yaml(tmp_path / "observation.yaml", data))
+    assert observation.normalize.fps == 8
+    assert observation.frames.stages["L3a"].profile == "scene_overview"
+    assert set(observation.frames.profiles) == {"scene_overview", "scene_detail"}
+    with pytest.raises(ConfigError) as info:
+        Structure.from_mapping({"segmentation": {"mode": "fixed_windows"}})
+    assert info.value.what == "the structure component"
+    assert info.value.problems[0].startswith("segmentation.mode: fixed_windows alone")
+
+
+def test_component_digests_show_which_component_differs():
+    one = ExtractionPlan.from_mapping(base_plan())
+    two = ExtractionPlan.from_mapping(
+        merged(base_plan(), {"observation": {"normalize": {"fps": 6}}})
+    )
+    a, b = one.component_digests(), two.component_digests()
+    assert list(a) == ["observation", "structure", "interpretation", "models", "policy"]
+    assert [name for name in a if a[name] != b[name]] == ["observation"]
+    alone = Observation.from_mapping(base_plan()["observation"])
+    assert alone.digest == one.observation.digest  # the same settings, loaded on its own
 
 
 # --- the gold set ----------------------------------------------------------------------

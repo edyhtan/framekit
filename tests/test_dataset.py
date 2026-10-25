@@ -14,7 +14,7 @@ from framekit.extraction.dataset import (
     write_manifest,
     write_tables,
 )
-from framekit.extraction.schemas.manifest import DatasetManifest
+from framekit.extraction.schemas.manifest import SCHEMA_VERSION, DatasetManifest
 
 
 def test_tables_have_fixed_schemas():
@@ -26,7 +26,7 @@ def test_tables_have_fixed_schemas():
 
 def manifest(**extra):
     fields = {
-        "schema_version": 1,
+        "schema_version": SCHEMA_VERSION,
         "dataset_id": "ds_x",
         "created_at": "now",
         "framekit_version": "0",

@@ -1,6 +1,6 @@
 """L2 · Scene segmentation (DESIGN.md §3): a synopsis and scenes on the unit timeline.
 
-`segmentation.method: model`: the L2 model sees frames of the whole unit (its frame
+`structure.segmentation.method: model`: the L2 model sees frames of the whole unit (its frame
 profile; excluded ranges left out) and proposes a synopsis and scenes, which are repaired
 into a clean cover of the processable parts (snapped to cuts, too-short scenes merged,
 too-long ones split; each repair noted). An unusable reply after the allowed attempts falls
@@ -80,7 +80,7 @@ async def segment(
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     """(output, run record or None when no model ran). The output holds `method`,
     `synopsis`, `scenes` ([start, end, summary]), `notes`, `frames` and `status`."""
-    settings = ctx.run.plan.segmentation
+    settings = ctx.run.plan.structure.segmentation
     length = settings.scene_length_s
     spans = processable_spans(media.copy.duration_s, media.unit.excluded_ranges)
     cuts = signals.get("shots", [])
@@ -109,7 +109,7 @@ async def segment(
 
     binding = ctx.run.roles["L2"]
     profile = ctx.run.profile("L2")
-    max_attempts = ctx.run.plan.quality_control.invalid_output.max_attempts
+    max_attempts = ctx.run.plan.policy.quality_control.invalid_output.max_attempts
     inputs = {
         "version": SEGMENT_PROMPT,
         "copy": media.copy_fingerprint,

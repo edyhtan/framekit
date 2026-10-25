@@ -102,6 +102,9 @@ def test_extract_writes_a_complete_dataset(tmp_path, video):
     assert manifest.governance["stays_local"] is True
     assert manifest.models["L3a"]["model_id"] == "seer-1"
     assert manifest.search_space["verbatim"]["intent"] == "test patterns"
+    components = manifest.plan["components"]
+    assert list(components) == ["observation", "structure", "interpretation", "models", "policy"]
+    assert manifest.frames_digest and manifest.schema_version == 2
     assert manifest.tools["ffmpeg"].startswith("ffmpeg version")
     assert dataset.verify() == []
     assert (tmp_path / "dataset" / ".gitignore").read_text() == "*\n"
@@ -157,7 +160,9 @@ def test_an_unusable_reply_is_retried_with_its_problems(tmp_path, video):
 def test_after_the_allowed_attempts_a_scene_is_flagged_never_dropped(tmp_path, video):
     ScriptedAdapter.fail_first = {"L3a"}
     files = write_inputs(
-        tmp_path, video, plan={"quality_control": {"invalid_output": {"max_attempts": 1}}}
+        tmp_path,
+        video,
+        plan={"policy": {"quality_control": {"invalid_output": {"max_attempts": 1}}}},
     )
     dataset = run(tmp_path, files)
     assert [p["status"] for p in dataset.rows("perception")] == ["flagged"] * 3
@@ -168,9 +173,11 @@ def test_after_the_allowed_attempts_a_scene_is_flagged_never_dropped(tmp_path, v
 
 def test_shot_groups_need_no_segmentation_model(tmp_path, video):
     plan = {
-        "segmentation": {
-            "method": "shot_groups",
-            "scene_length_s": {"min": 4, "target": 8, "max": 12},
+        "structure": {
+            "segmentation": {
+                "method": "shot_groups",
+                "scene_length_s": {"min": 4, "target": 8, "max": 12},
+            }
         }
     }
     dataset = run(tmp_path, write_inputs(tmp_path, video, plan=plan))
@@ -179,7 +186,8 @@ def test_shot_groups_need_no_segmentation_model(tmp_path, video):
 
 
 def test_windows_are_written_when_asked_for(tmp_path, video):
-    plan = {"segmentation": {"mode": "both", "scene_length_s": {"min": 4, "target": 8, "max": 12}}}
+    lengths = {"min": 4, "target": 8, "max": 12}
+    plan = {"structure": {"segmentation": {"mode": "both", "scene_length_s": lengths}}}
     dataset = run(tmp_path, write_inputs(tmp_path, video, plan=plan))
     windows = dataset.rows("windows")
     assert windows[0]["start"] == 1.0 and windows[0]["end"] == 4.0  # 3 s: the shortest moment
@@ -188,7 +196,7 @@ def test_windows_are_written_when_asked_for(tmp_path, video):
 
 
 def test_a_budget_stops_model_work(tmp_path, video):
-    plan = {"budget": {"max_cost_usd": 0.000001, "on_exceed": "stop"}}
+    plan = {"policy": {"budget": {"max_cost_usd": 0.000001, "on_exceed": "stop"}}}
     dataset = run(tmp_path, write_inputs(tmp_path, video, plan=plan))
     assert not dataset.manifest.complete
     assert dataset.manifest.units[0].status in ("partial", "failed")
@@ -198,7 +206,7 @@ def test_a_budget_stops_model_work(tmp_path, video):
 def test_a_byo_media_corpus_needs_an_explicit_frames_policy(tmp_path, video):
     files = write_inputs(tmp_path, video)
     data = yaml.safe_load(files["plan"].read_text())
-    del data["plan"]["governance"]
+    del data["plan"]["policy"]["governance"]
     write_yaml(files["plan"], data)
     with pytest.raises(ConfigError, match="governance.model_inputs: required for a byo_media"):
         run(tmp_path, files)
@@ -208,7 +216,10 @@ def test_a_missing_key_stops_the_run_before_any_work(tmp_path, video, monkeypatc
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     models = dict(base_plan()["models"], L3a={"model_id": "claude-haiku-4-5"})
     files = write_inputs(
-        tmp_path, video, plan={"models": models, "governance": {}}, rights_mode="hosted"
+        tmp_path,
+        video,
+        plan={"models": models, "policy": {"governance": {"model_inputs": None}}},
+        rights_mode="hosted",
     )
     estimate = run(tmp_path, files, dry_run=True)
     assert "a real run would stop here: models.L3a: ANTHROPIC_API_KEY" in str(estimate)
@@ -225,12 +236,17 @@ def test_a_folder_holding_another_dataset_is_refused(tmp_path, video):
 
 
 def test_frame_profiles_are_checked_against_the_analysis_copy(tmp_path, video):
-    profiles = base_plan()["vision_profiles"]
+    profiles = base_plan()["observation"]["frames"]["profiles"]
     profiles["detail"]["image"]["max_side_px"] = 400
     files = write_inputs(
         tmp_path,
         video,
-        plan={"normalize": {"fps": 8, "height_px": 120}, "vision_profiles": profiles},
+        plan={
+            "observation": {
+                "normalize": {"fps": 8, "height_px": 120},
+                "frames": {"profiles": profiles},
+            }
+        },
     )
     with pytest.raises(ConfigError, match="analysis copy's long side"):
         run(tmp_path, files)  # 400 px frames from a 214 x 120 copy would be upscaled

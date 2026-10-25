@@ -22,7 +22,7 @@ async def embed_texts(
     ctx: StageContext, unit_id: str, items: list[tuple[str, str, str]]
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Vectors for (target_type, target_id, text) items: (`vectors` rows, run records)."""
-    settings = ctx.run.plan.embedding
+    settings = ctx.run.plan.interpretation.embedding
     text_settings = settings.text
     if text_settings is None or not items:
         return [], []

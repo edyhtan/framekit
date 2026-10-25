@@ -32,7 +32,7 @@ from framekit.extraction.runner import LocalRunner, atomic_write, ensure_private
 from framekit.extraction.schemas.common import ConfigError
 from framekit.extraction.schemas.corpus import Corpus
 from framekit.extraction.schemas.gold import GoldSet, overlapping_queries
-from framekit.extraction.schemas.plan import ExtractionPlan
+from framekit.extraction.schemas.plan import COMPONENTS, ExtractionPlan
 from framekit.extraction.schemas.space import SearchSpace
 from framekit.models import ModelSource
 from framekit.models.cache import CacheSettings
@@ -142,6 +142,7 @@ class VariantResult:
     cost: dict[str, Any] = field(default_factory=dict)
     complete: bool = False
     error: str | None = None
+    components: dict[str, str] = field(default_factory=dict)  # plan component digests
 
 
 @dataclass
@@ -152,6 +153,7 @@ class Report:
     scorer: str
     pinned_digest: str
     variants: list[VariantResult]
+    varying_components: tuple[str, ...] = ()  # plan components whose digests differ
 
     def to_mapping(self) -> dict[str, Any]:
         return dataclasses.asdict(self)
@@ -175,11 +177,13 @@ class Report:
 
     def write(self, folder: str | Path) -> None:
         folder = ensure_private_dir(Path(folder))
+        varying = ", ".join(self.varying_components) or "none"
         atomic_write(folder / "report.json", json.dumps(self.to_mapping(), indent=1))
         atomic_write(
             folder / "report.md",
             f"# Benchmark: {self.kind}\n\nCorpus `{self.corpus}`, scorer `{self.scorer}`, "
-            f"gold `{self.gold_digest[:12]}`, pinned `{self.pinned_digest[:12]}`.\n\n"
+            f"gold `{self.gold_digest[:12]}`, pinned `{self.pinned_digest[:12]}`. Plan "
+            f"components that differ between variants: {varying}.\n\n"
             + self.table()
             + "\n",
         )
@@ -262,7 +266,7 @@ async def benchmark_async(
     )
     results = []
     for label, s, p in pairs:
-        result = VariantResult(label, None)
+        result = VariantResult(label, None, components=dict(resolved[label].component_digests))
         try:
             dataset = await extract_async(
                 s,
@@ -292,6 +296,11 @@ async def benchmark_async(
         except Exception as exc:
             result.error = f"scoring: {type(exc).__name__}: {exc}"
         results.append(result)
+    varying = tuple(
+        name
+        for name in COMPONENTS
+        if len({r.component_digests.get(name) for r in resolved.values()}) > 1
+    )
     report = Report(
         kind=kind,
         corpus=corpus.profile.name,
@@ -299,6 +308,7 @@ async def benchmark_async(
         scorer=getattr(scorer, "name", type(scorer).__name__),
         pinned_digest=pinned,
         variants=results,
+        varying_components=varying,
     )
     report.write(out)
     return report

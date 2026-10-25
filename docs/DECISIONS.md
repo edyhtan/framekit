@@ -382,6 +382,21 @@ These were decided in short_extract (dates are from its journal) and bind this e
 - **Supersedes:** the names in 2026-10-23 19:24 and 2026-10-24 03:16; the decisions themselves stand.
 - **Recorded in:** `src/framekit/frames/` (moved from `src/framekit/vision/`) and every module importing it; `tests/test_frame_params.py`, `tests/test_frame_planning.py`, `tests/frame_examples.py` (renamed); `pyproject.toml` (import contracts); DESIGN.md §0.1, §2, §2.3, §2.4, §3, §6.2, §7, §9; ARCHITECTURE.md status, §1, §2, §2.1, §3, §4, §5; settings.md status, §5.1–§5.3, §8; README.md module table, "Frame parameters", "Extraction"; CLAUDE.md "Project", "Architecture rule", "Key decisions", "Current milestone"; SECURITY.md "Scope".
 
+### 15:53 — Plan v2: five components (observation, structure, interpretation, models, policy)
+- **Decision** (owner approved the proposal: "the change looks good to me"): the plan's parameter sets are grouped into five components that follow the six questions of settings.md §1, each one an individual component:
+  - `observation` (how the video is looked at): `normalize`, `signals`, `frames` (the frame parameters, renamed in the previous step), `long_units`;
+  - `structure` (what one data point is): `segmentation` and `beats` (moved from `perception`: how long a beat may be is a granularity choice, though L3a writes the beats);
+  - `interpretation` (what is written about each data point): `perception`, `lens_passes`, `embedding`;
+  - `models` (who writes it): one model per role, and the defaults;
+  - `policy` (what rules apply): `quality_control`, `budget`, `formatting`, `governance`.
+- **A component** has its own `version` (1), its own checks (paths inside the component; the plan puts the component's name in front), and a digest of its settings as given. Each loads on its own (`Observation.load(path)`, `.from_mapping(data)`), with every problem reported at once. Stage input hashes stay as precise as before: each stage hashes exactly the settings it reads, which is finer than a component.
+- **Plan version 2.** The file nests each group under its component; `observation.frames` holds `profiles` and `stages` (a stage names its profile with `profile:`, was `vision:`), each part given replacing its default. A version 1 plan is refused with one problem per key saying where it moved; nothing released read version 1, so there's no converter.
+- **Recorded:** the manifest records each component's digest (`plan.components`) and the frames digest as `frames_digest` (was `vision_digest`); the resolved plan follows the new layout. Both change what a dataset's manifest holds, so the dataset schema version is 2 (`formatting.schema_version: 2`); a reader refuses version 1. The frame parameters' canonical form uses the new keys, so every frames digest changes (the pinned test digest is updated).
+- **Benchmarks:** each variant's component digests are in `report.json`, and the report names the components that differ between the variants, so a comparison of plans shows what was varied.
+- **Why:** "`vision` may sounds very misleading" (renamed in the previous step), and grouping the parameter sets into larger components makes a plan readable by question and lets a component be loaded, checked, compared and reused on its own.
+- **Supersedes:** the plan layout of 2026-10-24 14:45 (part 2) and the manifest fields of 14:50 (part 3); the settings themselves are unchanged.
+- **Recorded in:** `src/framekit/extraction/schemas/plan/` (new: the plan as a package, one module per component), `src/framekit/frames/` (the `profiles` and `profile` keys), `resolve.py`, `pipeline.py`, `estimate.py`, `bench.py`, the stages, `schemas/manifest.py`, the public exports; tests; settings.md §1, §5, §6, §7, §8; DESIGN.md §2.3, §2.4, §3, §9; ARCHITECTURE.md §3; README.md "Frame parameters", "Extraction"; CLAUDE.md "Project", "Key decisions"; SECURITY.md "Scope".
+
 ---
 
 ## Still open

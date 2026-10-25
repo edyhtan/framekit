@@ -7,7 +7,7 @@ pixels are in `framekit.frames.pixels` (numpy, the media extra); extraction's me
 reads the frames, runs them, and prepares and delivers the images.
 
     params = FrameParams.from_mapping(                  # FrameParamsError lists problems
-        {"vision_profiles": plan["vision_profiles"], "stages": plan["stages"]}
+        plan["observation"]["frames"]                    # {profiles: ..., stages: ...}
     )
     resolved = resolve(params)                           # pinned, defaults filled, digest
     problems = check_against_source(resolved, SourceLimits(fps=12, width_px=960,

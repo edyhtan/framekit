@@ -42,15 +42,15 @@ FRAME_ROLES = ("L2", "L3a")  # roles that send frames to their model
 # The plan's paths the derivation rules write: masked when the harness compares the plans
 # of different search spaces (only these may differ).
 DERIVED_PATHS = (
-    ("perception", "modules"),
-    ("perception", "beats"),
-    ("segmentation", "fixed_windows", "window_s"),
-    ("lens_passes", "lenses"),
-    ("lens_passes", "phrasings", "style"),
+    ("interpretation", "perception", "modules"),
+    ("structure", "beats"),
+    ("structure", "segmentation", "fixed_windows", "window_s"),
+    ("interpretation", "lens_passes", "lenses"),
+    ("interpretation", "lens_passes", "phrasings", "style"),
     ("scope",),
 )
 # Not part of what a run computes: masked from the content digest.
-NOT_CONTENT = (("budget",), ("governance",), ("formatting", "layout"))
+NOT_CONTENT = (("policy", "budget"), ("policy", "governance"), ("policy", "formatting", "layout"))
 
 
 @dataclass(frozen=True)
@@ -116,17 +116,18 @@ class ResolvedRun:
     style_examples: tuple[str, ...]  # phrasing style from the space; empty: the lens's style
     units: tuple[ScopedUnit, ...]
     roles: Mapping[str, RoleBinding]
-    vision: ResolvedFrameParams
+    frames: ResolvedFrameParams
     derivations: tuple[dict[str, Any], ...]
     resolved_plan: dict[str, Any]
     plan_digest: str  # everything resolved
     content_digest: str  # without budget, governance and layout
     fairness_digest: str  # also without what the derivation rules wrote
     model_inputs: str  # provider_transient | local_only
+    component_digests: Mapping[str, str] = field(default_factory=dict)  # as given
     notes: tuple[str, ...] = field(default=())
 
     def profile(self, stage: str) -> ResolvedProfile:
-        return self.vision.for_stage(stage)
+        return self.frames.for_stage(stage)
 
     @property
     def space_digest(self) -> str:
@@ -187,6 +188,9 @@ def resolve_run(
     problem. `router` is the ConversationRouter the run will use (its sources and registry
     say which models exist and where they're served)."""
     plan = plan if plan is not None else ExtractionPlan()
+    # The plan's components, by the names the checks and messages use.
+    observation, structure = plan.observation, plan.structure
+    interpretation, policy = plan.interpretation, plan.policy
     problems: list[str] = []
     problems += [f"plan: {p}" for p in plan.problems()]
     problems += [f"corpus: {p}" for p in corpus.problems()]
@@ -246,14 +250,15 @@ def resolve_run(
     by_lens = {lens.name: sorted(lens.requires_modules) for lens in lenses}
     for needed in by_lens.values():
         derived |= set(needed)
-    explicit = () if plan.perception.modules == "derived" else plan.perception.modules
+    asked = interpretation.perception.modules
+    explicit = () if asked == "derived" else asked
     modules = tuple(
         m for m in ("core", "camera", "timing", "sound", "speech") if m in derived | set(explicit)
     )
     derivations.append(
         {
             "rule": "modules",
-            "target": "perception.modules",
+            "target": "interpretation.perception.modules",
             "value": list(modules),
             "from": {
                 "evidence": list(space.evidence.modules),
@@ -262,51 +267,52 @@ def resolve_run(
             },
         }
     )
-    if "speech" in modules and plan.signals.speech is None:
+    if "speech" in modules and observation.signals.speech is None:
         problems.append(
-            "plan: perception.modules: speech needs a speech detector in signals.speech "
+            "plan: interpretation.perception.modules: speech needs a speech detector in "
+            "observation.signals.speech "
             "(none is built in; register one)"
         )
 
     # --- beats and windows from the resolution ---------------------------------------
     moment = space.resolution.moment_length_s
     beat_max = (
-        plan.perception.beats.max_s if plan.perception.beats.max_s is not None else moment.max
+        structure.beats.max_s if structure.beats.max_s is not None else moment.max
     )
     beat_min = (
-        plan.perception.beats.min_s
-        if plan.perception.beats.min_s is not None
+        structure.beats.min_s
+        if structure.beats.min_s is not None
         else min(DEFAULT_BEAT_MIN_S, beat_max)
     )
     if beat_max > moment.max:
         problems.append(
-            f"plan: perception.beats.max_s: {beat_max:g} s is longer than the search space's "
+            f"plan: structure.beats.max_s: {beat_max:g} s is longer than the search space's "
             f"longest moment ({moment.max:g} s)"
         )
     if beat_min > beat_max:
-        problems.append("plan: perception.beats: min_s is more than max_s")
+        problems.append("plan: structure.beats: min_s is more than max_s")
     derivations.append(
         {
             "rule": "beats",
-            "target": "perception.beats",
+            "target": "structure.beats",
             "value": {"min_s": beat_min, "max_s": beat_max},
-            "from": {"moment_length_s": plain(moment), "plan": plain(plan.perception.beats)},
+            "from": {"moment_length_s": plain(moment), "plan": plain(structure.beats)},
         }
     )
     windows = None
-    if plan.segmentation.mode == "both":
-        fixed = plan.segmentation.fixed_windows
+    if structure.segmentation.mode == "both":
+        fixed = structure.segmentation.fixed_windows
         window_s = fixed.window_s if fixed.window_s is not None else moment.min
         if not moment.min <= window_s <= moment.max:
             problems.append(
-                f"plan: segmentation.fixed_windows.window_s: {window_s:g} s is outside the "
-                f"search space's moment length ({moment.min:g}-{moment.max:g} s)"
+                f"plan: structure.segmentation.fixed_windows.window_s: {window_s:g} s is "
+                f"outside the search space's moment length ({moment.min:g}-{moment.max:g} s)"
             )
         windows = (window_s, fixed.stride_s)
         derivations.append(
             {
                 "rule": "windows",
-                "target": "segmentation.fixed_windows",
+                "target": "structure.segmentation.fixed_windows",
                 "value": {"window_s": window_s, "stride_s": fixed.stride_s},
                 "from": {"moment_length_s": plain(moment)},
             }
@@ -316,24 +322,25 @@ def resolve_run(
     derivations.append(
         {
             "rule": "lenses",
-            "target": "lens_passes.lenses",
+            "target": "interpretation.lens_passes.lenses",
             "value": [{"name": s.name, "version": s.version, "digest": s.digest} for s in lenses],
             "from": "search_space.lenses",
         }
     )
     examples = space.query_style.examples
-    from_space = plan.lens_passes.phrasings.style == "from_space" and bool(examples)
+    from_space = interpretation.lens_passes.phrasings.style == "from_space" and bool(examples)
     style_examples = tuple(examples) if from_space else ()
     derivations.append(
         {
             "rule": "phrasing_style",
-            "target": "lens_passes.phrasings.style",
+            "target": "interpretation.lens_passes.phrasings.style",
             "value": "space_examples" if from_space else "lens_style",
-            "from": {"plan": plan.lens_passes.phrasings.style, "examples": len(examples)},
+            "from": {"plan": interpretation.lens_passes.phrasings.style, "examples": len(examples)},
         }
     )
-    if "beat" in plan.lens_passes.targets and not any("beat" in s.targets for s in lenses):
-        notes.append("lens_passes.targets has beat, but no lens annotates beats")
+    lens_targets = interpretation.lens_passes.targets
+    if "beat" in lens_targets and not any("beat" in s.targets for s in lenses):
+        notes.append("interpretation.lens_passes.targets has beat, but no lens annotates beats")
 
     # --- signal detectors ------------------------------------------------------------
     try:
@@ -344,53 +351,52 @@ def resolve_run(
             "is missing)"
         )
     else:
+        signals = observation.signals
         wanted = [
-            ("shots", plan.signals.shots.detector, "signals.shots.detector"),
-            ("audio", plan.signals.audio.onsets.method, "signals.audio.onsets.method"),
-            ("motion", plan.signals.motion.method, "signals.motion.method"),
+            ("shots", signals.shots.detector, "shots.detector"),
+            ("audio", signals.audio.onsets.method, "audio.onsets.method"),
+            ("motion", signals.motion.method, "motion.method"),
         ]
-        if plan.signals.speech is not None:
-            wanted.append(("speech", plan.signals.speech.model, "signals.speech.model"))
-        if plan.signals.audio.tagger is not None:
-            wanted.append(
-                ("audio_tags", plan.signals.audio.tagger.model, "signals.audio.tagger.model")
-            )
+        if signals.speech is not None:
+            wanted.append(("speech", signals.speech.model, "speech.model"))
+        if signals.audio.tagger is not None:
+            wanted.append(("audio_tags", signals.audio.tagger.model, "audio.tagger.model"))
         for kind, reference, path in wanted:
             try:
                 get_detector(kind, reference)
             except (LookupError, ValueError) as exc:
-                problems.append(f"plan: {path}: {exc}")
+                problems.append(f"plan: observation.signals.{path}: {exc}")
 
     # --- frame profiles -------------------------------------------------------------
-    vision = resolve(plan.vision)
-    frame_roles = [r for r in FRAME_ROLES if r == "L3a" or plan.segmentation.method == "model"]
+    frames = resolve(observation.frames)
+    frame_roles = [r for r in FRAME_ROLES if r == "L3a" or structure.segmentation.method == "model"]
     for role in frame_roles:
-        if role not in vision.stages:
+        if role not in frames.stages:
             problems.append(
-                f"plan: stages.{role}: {role} sends frames, so it needs a frame profile"
+                f"plan: observation.frames.stages.{role}: {role} sends frames, so it needs a "
+                "frame profile"
             )
             continue
-        profile = vision.for_stage(role)
+        profile = frames.for_stage(role)
         if profile.profile.delivery.mode == "native_video":
             problems.append(
-                f"plan: vision_profiles.{profile.name}.delivery.mode: native video needs the "
-                "video_understand port, which isn't built yet (use images or storyboard)"
+                f"plan: observation.frames.profiles.{profile.name}.delivery.mode: native video "
+                "needs the video_understand port, which isn't built yet (use images or "
+                "storyboard)"
             )
-        problems += [
-            f"plan: {p}"
-            for p in check_against_source(profile, SourceLimits(plan.normalize.fps, 16384, 16384))
-        ]
+        limits = SourceLimits(observation.normalize.fps, 16384, 16384)
+        problems += [f"plan: observation.frames.{p}" for p in check_against_source(profile, limits)]
 
     # --- models ----------------------------------------------------------------------
     needed_roles = ["L3a", "L3b"]
-    if plan.segmentation.method == "model":
+    if structure.segmentation.method == "model":
         needed_roles.insert(0, "L2")
-    if plan.embedding.text is not None:
+    if interpretation.embedding.text is not None:
         needed_roles.append("embed_text")
-    if plan.embedding.image is not None:
+    if interpretation.embedding.image is not None:
         problems.append(
-            "plan: embedding.image: image embeddings need an embed_image port, which isn't "
-            "built yet (set embedding.image to null)"
+            "plan: interpretation.embedding.image: image embeddings need an embed_image port, "
+            "which isn't built yet (set interpretation.embedding.image to null)"
         )
     if plan.models.L2_merge is not None:
         notes.append("models.L2_merge is for chunked long units, which aren't built yet: unused")
@@ -400,9 +406,9 @@ def resolve_run(
         chosen_model: RoleModel | None = plan.models.role(role)
         if chosen_model is None:
             hint = (
-                " (or set segmentation.method: shot_groups for scenes without a model)"
+                " (or set structure.segmentation.method: shot_groups for scenes without a model)"
                 if role == "L2"
-                else " (or set embedding.text: null for no vectors)"
+                else " (or set interpretation.embedding.text: null for no vectors)"
                 if role == "embed_text"
                 else ""
             )
@@ -442,7 +448,7 @@ def resolve_run(
                 f"plan: models.{role}: {adapter.__name__} (provider {config.name}) serves no "
                 "embeddings"
             )
-        if role in frame_roles and role in vision.stages:
+        if role in frame_roles and role in frames.stages:
             if not spec.vision:
                 problems.append(
                     f"plan: models.{role}: {spec.model_id} doesn't take images (its catalog "
@@ -453,24 +459,25 @@ def resolve_run(
                     max_images=spec.max_images, max_image_side_px=spec.max_image_side_px
                 )
                 problems += [
-                    f"plan: {p} (model {spec.model_id})"
-                    for p in check_against_model(vision.for_stage(role), caps)
+                    f"plan: observation.frames.{p} (model {spec.model_id})"
+                    for p in check_against_model(frames.for_stage(role), caps)
                 ]
 
     # --- governance ------------------------------------------------------------------
     rights = corpus.profile.rights_mode
-    governance = plan.governance
+    governance = policy.governance
     model_inputs = governance.model_inputs
     if rights == "byo_media":
         for setting in ("image_vectors", "training_use"):
             if getattr(governance, setting) != "local_only":
                 problems.append(
-                    f"plan: governance.{setting}: a byo_media corpus keeps this local_only "
+                    f"plan: policy.governance.{setting}: a byo_media corpus keeps this local_only "
                     "(a plan can only make governance stricter)"
                 )
         if model_inputs is None and any(r in roles for r in frame_roles):
             problems.append(
-                "plan: governance.model_inputs: required for a byo_media corpus, because this "
+                "plan: policy.governance.model_inputs: required for a byo_media corpus, because "
+                "this "
                 "run sends frames to models ("
                 + ", ".join(r for r in frame_roles if r in roles)
                 + "). Set provider_transient to allow sending frames to the model provider "
@@ -484,7 +491,7 @@ def resolve_run(
             binding = roles.get(role)
             if binding is not None and not _is_local(binding.provider):
                 problems.append(
-                    f"plan: governance.model_inputs is local_only, but models.{role} "
+                    f"plan: policy.governance.model_inputs is local_only, but models.{role} "
                     f"({binding.spec.model_id}) is served by {binding.provider.name}, which "
                     "isn't a local or private address"
                 )
@@ -494,18 +501,21 @@ def resolve_run(
 
     # --- the resolved plan, recorded ----------------------------------------------------
     resolved = plan.model_dump(mode="json")
-    resolved["vision"] = vision.mapping
-    resolved["perception"]["modules"] = list(modules)
-    resolved["perception"]["beats"] = {"min_s": beat_min, "max_s": beat_max}
+    resolved["observation"]["frames"] = frames.mapping
+    resolved["interpretation"]["perception"]["modules"] = list(modules)
+    resolved["structure"]["beats"] = {"min_s": beat_min, "max_s": beat_max}
     if windows is not None:
-        resolved["segmentation"]["fixed_windows"] = {"window_s": windows[0], "stride_s": windows[1]}
-    resolved["lens_passes"]["lenses"] = [
+        resolved["structure"]["segmentation"]["fixed_windows"] = {
+            "window_s": windows[0],
+            "stride_s": windows[1],
+        }
+    resolved["interpretation"]["lens_passes"]["lenses"] = [
         {"name": s.name, "version": s.version, "digest": s.digest} for s in lenses
     ]
-    resolved["lens_passes"]["phrasings"]["style"] = (
+    resolved["interpretation"]["lens_passes"]["phrasings"]["style"] = (
         {"examples": list(style_examples)} if style_examples else "from_lens"
     )
-    resolved["governance"]["model_inputs"] = model_inputs
+    resolved["policy"]["governance"]["model_inputs"] = model_inputs
     resolved["models"] = {role: b.identity() for role, b in roles.items()}
     resolved["scope"] = {"units": chosen}
     content = _mask(resolved, NOT_CONTENT)
@@ -520,13 +530,14 @@ def resolve_run(
         style_examples=style_examples,
         units=tuple(units),
         roles=roles,
-        vision=vision,
+        frames=frames,
         derivations=tuple(derivations),
         resolved_plan=resolved,
         plan_digest=digest(resolved),
         content_digest=digest(content),
         fairness_digest=digest(_mask(content, DERIVED_PATHS)),
         model_inputs=model_inputs,
+        component_digests=plan.component_digests(),
         notes=tuple(notes),
     )
 

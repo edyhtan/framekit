@@ -16,10 +16,10 @@ An extraction run is described by the answers to six questions, plus how it runs
 |---|---|---|
 | **1. What should people be able to find?** | search space | the topics (lenses), how short a moment can be, which parts of the videos count, how people will phrase searches |
 | **2. Which videos?** | corpus | the files (pointed to, never copied), which edition, metadata, the entities to recognize, usage rights |
-| **3. How is the video looked at?** | observation | the analysis copy; cheap signals (cuts, sounds, speech, motion); which frames each model sees; long videos in chunks |
-| **4. What is one data point?** | structure | scenes, beats inside them, or fixed time windows |
-| **5. What is written about each data point, and by which models?** | interpretation, models | observable facts → lens labels and query-like phrasings → vectors; one model per role |
-| **6. What rules apply?** | policy, formatting, governance | quality checks, budget, table format, what may leave the machine |
+| **3. How is the video looked at?** | `observation` | the analysis copy; cheap signals (cuts, sounds, speech, motion); which frames each model sees; long videos in chunks |
+| **4. What is one data point?** | `structure` | scenes, beats inside them, or fixed time windows |
+| **5. What is written about each data point, and by which models?** | `interpretation`, `models` | observable facts → lens labels and query-like phrasings → vectors; one model per role |
+| **6. What rules apply?** | `policy` | quality checks, budget, table format, what may leave the machine |
 | *How does it run?* | execution | parallelism, rate limits, cache, folders; never changes the result |
 
 ```mermaid
@@ -63,10 +63,10 @@ Extraction run: emotional moments, test corpus (5 units)
 | Search space | verbatim, with its hash | yes, per affected stage | a different search space: new versions of affected rows |
 | Corpus | yes (units, releases, alignment) | yes, per unit | a different dataset for those units |
 | Plan: observation, structure, interpretation, models | fully resolved | yes, per affected stage | new versions of affected rows |
-| Plan: quality control | yes | yes (it decides flags and retries) | same values, different flags |
-| Plan: formatting | yes | `schema_version` and `tables`: yes; `layout`: no | layout changes rewrite files without model calls |
-| Plan: budget | yes | no | only whether and when the run completes |
-| Plan: governance | yes | no; **enforced**, never overridden | what may leave the machine, never what's computed |
+| Plan: `policy.quality_control` | yes | yes (it decides flags and retries) | same values, different flags |
+| Plan: `policy.formatting` | yes | `schema_version` and `tables`: yes; `layout`: no | layout changes rewrite files without model calls |
+| Plan: `policy.budget` | yes | no | only whether and when the run completes |
+| Plan: `policy.governance` | yes | no; **enforced**, never overridden | what may leave the machine, never what's computed |
 | Execution | logged only | no | the same dataset, faster or slower |
 
 ---
@@ -264,99 +264,106 @@ corpus:
 
 ## 5. Plan: `plan.yaml`
 
-How the search space is realized. Optional: documented defaults, your overrides (a group given in part keeps the defaults of the rest), and **derivation rules** from the search space (DESIGN.md §2.4). The groups follow the six questions. **Models are never defaulted:** every role the run uses names its model.
+How the search space is realized, in **five components** that follow the six questions: `observation` (§5.2), `structure` (§5.3), `interpretation` and `models` (§5.4), and `policy` (§5.5). Optional: documented defaults, your overrides (a group given in part keeps the defaults of the rest), and **derivation rules** from the search space (DESIGN.md §2.4). **Models are never defaulted:** every role the run uses names its model.
+
+**Components** [built]: each has its own `version` (1), its own checks, and a digest of its settings. Each loads on its own (`Observation.load(path)` or `.from_mapping(data)`, with or without the `observation:` key; the same for `Structure`, `Interpretation`, `Models`, `Policy`) and reports every problem at once. The manifest records each component's digest (`plan.components`), and a benchmark that compares plans names the components that differ (§6).
 
 ### 5.1 Derivation rules
 
 ```yaml
 plan:
-  version: 1
+  version: 2                                       # [built] the five components
   derivation_rules: v1                             # [built] each rule applied is recorded
 ```
+
+A version 1 plan (every group at the top level) is refused, with one problem per key saying where it moved.
 
 Rules v1 [built]. Each is deterministic, and the manifest records every one applied with its inputs (`manifest.derivations`):
 
 | Rule | From the search space | Into the plan | Override |
 |---|---|---|---|
-| `modules` | `evidence.modules` + each lens's `requires_modules` | `perception.modules` (always with `core`) | the plan may **add** modules, never remove a required one |
-| `beats` | `resolution.moment_length_s` | `perception.beats`: `max_s` = the longest moment, `min_s` = 0.5 s (or `max_s` if shorter) | explicit values; `max_s` may not exceed the longest moment |
-| `windows` | `resolution.moment_length_s` | `segmentation.fixed_windows.window_s` = the shortest moment (when `mode: both`) | explicit values within the moment length |
-| `phrasing_style` | `query_style.examples` | the phrasing prompt shows the examples as the style | `phrasings.style: from_lens`; with no examples, each lens's `phrasing_style` |
+| `modules` | `evidence.modules` + each lens's `requires_modules` | `interpretation.perception.modules` (always with `core`) | the plan may **add** modules, never remove a required one |
+| `beats` | `resolution.moment_length_s` | `structure.beats`: `max_s` = the longest moment, `min_s` = 0.5 s (or `max_s` if shorter) | explicit values; `max_s` may not exceed the longest moment |
+| `windows` | `resolution.moment_length_s` | `structure.segmentation.fixed_windows.window_s` = the shortest moment (when `mode: both`) | explicit values within the moment length |
+| `phrasing_style` | `query_style.examples` | the phrasing prompt shows the examples as the style | `interpretation.lens_passes.phrasings.style: from_lens`; with no examples, each lens's `phrasing_style` |
 | `scope` | `scope` (units, excluded ranges) | the units and ranges processed | **none**: the plan can't widen the scope |
-| `lenses` | `lenses` (with versions and digests) | `lens_passes.lenses` | none |
+| `lenses` | `lenses` (with versions and digests) | `interpretation.lens_passes.lenses` | none |
 
 The frame profiles aren't derived from the resolution: they're explicit, so nothing adapts them behind your back.
 
 ### 5.2 Observation: how the video is looked at (question 3)
 
 ```yaml
-  normalize:                                       # [built] L0: the analysis copy
-    fps: 12                                        #   constant frame rate
-    height_px: 720                                 #   480–720 typical; never upscaled
-    aspect: preserve                               # [fixed] never crop or stretch (square pixels)
-    audio: {sample_rate_hz: 32000, channels: 1}
-    encoding: {codec: h264, crf: 23, preset: veryfast}   # keyframes every 2 s
-    deinterlace: auto                              #   auto: only frames flagged interlaced
-    color: {normalize: auto}                       #   auto: 8-bit 4:2:0
+  observation:                                     # [built] component, version 1
+    version: 1
+    normalize:                                     # [built] L0: the analysis copy
+      fps: 12                                      #   constant frame rate
+      height_px: 720                               #   480–720 typical; never upscaled
+      aspect: preserve                             # [fixed] never crop or stretch (square pixels)
+      audio: {sample_rate_hz: 32000, channels: 1}
+      encoding: {codec: h264, crf: 23, preset: veryfast}  # keyframes every 2 s
+      deinterlace: auto                            #   auto: only frames flagged interlaced
+      color: {normalize: auto}                     #   auto: 8-bit 4:2:0
 
-  vision_profiles:                                 # [built] DESIGN.md §2.3; these are the defaults
-    scene_overview:                                #   L2: the whole unit, as storyboards
-      version: 1
-      frame_selection:
-        candidates: {strategy: uniform, fps: 0.5}
-        budget: {max_frames_per_scene: 36, min_gap_s: 1.0}
-      image: {max_side_px: 384, format: jpeg, quality: 85}
-      delivery: {mode: storyboard, storyboard: {rows: 3, cols: 3}}
-    scene_detail:                                  #   L3a: up to 16 frames per scene
-      version: 1
-      frame_selection:
-        candidates: {strategy: uniform, fps: 4}    #   dense pool to choose from
-        anchors: [shot_boundaries]                 #   from L1; never dropped
-        filters:
-          - dedupe: {method: phash, max_distance: 6}
-          - sharpness: {keep: best_per_window, window_s: 0.5}
-        budget:
-          max_frames_per_scene: 16
-          allocate_by: [motion, audio_onsets]      #   from L1
-          min_gap_s: 0.25
-      image: {max_side_px: 768, format: jpeg, quality: 85}
-      delivery: {mode: images}                     # images | storyboard | native_video [not built]
-    # Views (several looks per segment) are built too:
-    #   views: {mode: overview_plus_detail, overview: {fps: 1, max_frames: 6},
-    #           detail: {around: [motion, audio_onsets], span_s: 3, max_views: 2, max_frames: 5}}
-    # (split_by_budget and per_module: checked and recorded; their planning is [open]).
+    frames:                                        # [built] which frames each model sees, DESIGN.md §2.3
+      profiles:                                    #   these are the defaults
+        scene_overview:                            #   L2: the whole unit, as storyboards
+          version: 1
+          frame_selection:
+            candidates: {strategy: uniform, fps: 0.5}
+            budget: {max_frames_per_scene: 36, min_gap_s: 1.0}
+          image: {max_side_px: 384, format: jpeg, quality: 85}
+          delivery: {mode: storyboard, storyboard: {rows: 3, cols: 3}}
+        scene_detail:                              #   L3a: up to 16 frames per scene
+          version: 1
+          frame_selection:
+            candidates: {strategy: uniform, fps: 4}  #   dense pool to choose from
+            anchors: [shot_boundaries]             #   from L1; never dropped
+            filters:
+              - dedupe: {method: phash, max_distance: 6}
+              - sharpness: {keep: best_per_window, window_s: 0.5}
+            budget:
+              max_frames_per_scene: 16
+              allocate_by: [motion, audio_onsets]  #   from L1
+              min_gap_s: 0.25
+          image: {max_side_px: 768, format: jpeg, quality: 85}
+          delivery: {mode: images}                 # images | storyboard | native_video [not built]
+        # Views (several looks per segment) are built too:
+        #   views: {mode: overview_plus_detail, overview: {fps: 1, max_frames: 6},
+        #           detail: {around: [motion, audio_onsets], span_s: 3, max_views: 2, max_frames: 5}}
+        # (split_by_budget and per_module: checked and recorded; their planning is [open]).
 
-  stages:                                          # [built] which profile each frame-sending stage uses
-    L2:  {vision: scene_overview}
-    L3a: {vision: scene_detail}
-  # Given in a plan, `vision_profiles` and `stages` each replace their default.
+      stages:                                      #   which profile each frame-sending stage uses
+        L2:  {profile: scene_overview}
+        L3a: {profile: scene_detail}
+    # Given in a plan, `frames.profiles` and `frames.stages` each replace their default.
 
-  signals:                                         # [built] L1, deterministic, no AI model
-    shots:
-      detector: ffmpeg_scene                       #   a registered detector, `name` or `name@1`
-      threshold: 0.3                               #   ffmpeg's scene score, 0–1
-      min_shot_s: 0.3                              #   closer cuts compete: the stronger stays
-    audio:
-      onsets: {method: spectral_flux, sensitivity: 0.5}   # 0–1: higher finds more onsets
-      loudness: {window_s: 0.1}                    #   RMS in dBFS
-      tagger: null                                 #   {model: <registered>, labels, threshold}
-    speech: null                                   #   {model: <registered>, language, vad}: no
+    signals:                                       # [built] L1, deterministic, no AI model
+      shots:
+        detector: ffmpeg_scene                     #   a registered detector, `name` or `name@1`
+        threshold: 0.3                             #   ffmpeg's scene score, 0–1
+        min_shot_s: 0.3                            #   closer cuts compete: the stronger stays
+      audio:
+        onsets: {method: spectral_flux, sensitivity: 0.5}  # 0–1: higher finds more onsets
+        loudness: {window_s: 0.1}                  #   RMS in dBFS
+        tagger: null                               #   {model: <registered>, labels, threshold}
+      speech: null                                 #   {model: <registered>, language, vad}: no
                                                    #   built-in speech model [open]: register one
-    motion: {method: frame_difference, rate_hz: 1} #   one value per second
+      motion: {method: frame_difference, rate_hz: 1} #   one value per second
 
-  long_units:                                      # chunked processing [not built], DESIGN.md §5.3
-    chunk_s: 600
-    overlap_s: 90
-    snap_to: shot_boundaries
-    enabled_over_s: 900                            #   a longer unit is excluded, with the reason;
-    merge: {role: L2_merge}                        #   raise this to process it in one pass
+    long_units:                                    # chunked processing [not built], DESIGN.md §5.3
+      chunk_s: 600
+      overlap_s: 90
+      snap_to: shot_boundaries
+      enabled_over_s: 900                          #   a longer unit is excluded, with the reason;
+      merge: {role: L2_merge}                      #   raise this to process it in one pass
 ```
 
 **Detectors** [built] are named, versioned code like frame strategies, and their keys go into L1's input hash: `ffmpeg_scene@1` (cuts where ffmpeg's scene score, on frames 160 px wide, exceeds `threshold`), `spectral_flux@1` (peaks of the spectral flux of the mono 16 kHz audio, Hann frames of 64 ms every 16 ms, above the surrounding 0.5 s mean plus `(1 − sensitivity) × 2` standard deviations, at least 50 ms apart; loudness per window), `frame_difference@1` (mean absolute difference of consecutive 64 px gray frames, four samples per value). `register_detector(Detector(kind, name, version, run))` adds others (kinds `shots`, `audio`, `motion`, `speech`, `audio_tags`); a plan naming one that isn't registered fails at load time.
 
 **Strategies** [built] are referenced three ways, all meaning the same: a name (`shot_boundaries`, or `shot_boundaries@1` with its version), a single-key mapping (`{dedupe: {method: phash, max_distance: 6}}`) or inline (`{strategy: uniform, fps: 4}`). Version 1 has: candidates `uniform` (`fps`) and `shot_based` (`pick: first | middle | last`); anchors `shot_boundaries` and `audio_onsets`; filters `dedupe` (`method: phash`, `max_distance`) and `sharpness` (`keep: best_per_window`, `window_s`), which need pixels, so planning returns them as pending and the media stage runs them on the planned frames (below); allocation signals `motion` and `audio_onsets` (`window_s`). A changed algorithm gets a new version, never a changed meaning.
 
-**Load-time checks** [built], before any spend. One `FrameParamsError` lists every problem with its path (`vision_profiles.scene_overview.frame_selection.filters: not allowed with native_video delivery …`). Problems with the structure and with the rules below come together: a rule is skipped only where a setting it reads has a problem of its own, which is listed instead.
+**Load-time checks** [built], before any spend. One `FrameParamsError` lists every problem with its path (`profiles.scene_overview.frame_selection.filters: not allowed with native_video delivery …`; in a plan, the path starts with `observation.frames.`). Problems with the structure and with the rules below come together: a rule is skipped only where a setting it reads has a problem of its own, which is listed instead.
 - unknown keys anywhere; unknown strategies or versions; a strategy in the wrong slot (a filter as candidates); settings that fail the strategy's own schema. Missing settings fail: nothing is guessed (only a setting with a single possible value, such as `dedupe.method`, defaults to it);
 - values are strict: a number must be a number (`true` or `"4"` fails; a whole number is fine where a decimal is expected) and finite; a list setting must be a list;
 - `native_video` takes only uniform candidates, `image.max_side_px` and `image.aspect`: no anchors, filters, budget, views, `format` or `quality`. The clip range is given when the stage runs, not in the profile;
@@ -396,11 +403,9 @@ from framekit.frames import (
     check_against_model, check_against_source, plan_frames, resolve,
 )
 
-params = FrameParams.from_mapping(
-    {"vision_profiles": plan["vision_profiles"], "stages": plan["stages"]}
-)                                                   # raises FrameParamsError: every problem
+params = FrameParams.from_mapping(plan["observation"]["frames"])   # FrameParamsError: every problem
 resolved = resolve(params)                          # pinned, defaults filled
-resolved.digest                                     # the manifest's vision digest
+resolved.digest                                     # the manifest's frames_digest
 detail = resolved.for_stage("L3a")                  # detail.digest: L3a's input hash
 problems = check_against_source(resolved, SourceLimits(fps=12, width_px=960, height_px=720))
 problems += check_against_model(detail, ModelVisionCaps(max_images=20, max_image_side_px=1024))
@@ -411,98 +416,106 @@ frames.timestamps, frames.pending_filters, frames.notes
 ### 5.3 Structure: what one data point is (question 4)
 
 ```yaml
-  segmentation:                                    # [built] L2
-    mode: scenes                                   #   scenes | both (scenes + fixed windows);
+  structure:                                       # [built] component, version 1
+    version: 1
+    segmentation:                                  # [built] L2
+      mode: scenes                                 #   scenes | both (scenes + fixed windows);
                                                    #   fixed_windows alone: refused (nothing to perceive)
-    method: model                                  #   model (the L2 role) | shot_groups (no model)
-    scene_length_s: {min: 30, target: 45, max: 60}
-    snap_to: shot_boundaries                       #   shot_boundaries | none
-    snap_tolerance_s: 2.0
-    fixed_windows: {window_s: null, stride_s: 1}  # null: derived; pure arithmetic, no model
+      method: model                                #   model (the L2 role) | shot_groups (no model)
+      scene_length_s: {min: 30, target: 45, max: 60}
+      snap_to: shot_boundaries                     #   shot_boundaries | none
+      snap_tolerance_s: 2.0
+      fixed_windows: {window_s: null, stride_s: 1}  # null: derived; pure arithmetic, no model
+    beats: {min_s: null, max_s: null}              # null: derived (§5.1); L3a writes the beats
 ```
 
 - **`method: model`:** the L2 model sees frames of the whole unit (its frame profile, the excluded ranges left out), the cuts, the names and hints, and returns a synopsis and scenes. framekit repairs them into a clean cover of each processable span: ordered and contiguous, boundaries snapped to a cut within the tolerance, scenes under `min` merged into a neighbour (when the result stays within `max`), scenes over `max` split near even points (at a cut when one is close). Every repair is a note in the manifest. An unusable reply after the allowed attempts falls back to shot groups, flagged.
 - **`method: shot_groups`:** consecutive shots grouped until a scene reaches `target`, never past `max` (a longer shot is split evenly). No synopsis.
+- **`beats`:** how long a beat inside a scene may be. L3a writes the beats (§5.4); unset values come from the search space's moment lengths (§5.1).
 - Excluded ranges aren't a setting here: they come from the search space's scope with no override. Scene ids are `<unit>_s000`, beat ids `<scene>_b000`, window ids `<unit>_w00000`.
 
 ### 5.4 Interpretation and models: what is written, by whom (question 5)
 
 ```yaml
-  perception:                                      # [built] L3a (frames: stages.L3a)
-    modules: derived                               # core + evidence + lens needs (§5.1); or a list to add
-    beats: {min_s: null, max_s: null}              # null: derived from the resolution
-    context:
-      synopsis: true
-      signals: [shots, audio]                      # shots | audio | motion | speech
-      neighbors: 0                                 # adjacent scenes' summaries, 0–3
-    entities: {source: corpus_profile, unknown: mark_unknown}   # or allow
-    record_schema: 1
-    prompt_version: 1
+  interpretation:                                  # [built] component, version 1
+    version: 1
+    perception:                                    # [built] L3a (frames: observation.frames.stages.L3a)
+      modules: derived                             # core + evidence + lens needs (§5.1); or a list to add
+      context:
+        synopsis: true
+        signals: [shots, audio]                    # shots | audio | motion | speech
+        neighbors: 0                               # adjacent scenes' summaries, 0–3
+      entities: {source: corpus_profile, unknown: mark_unknown}  # or allow
+      record_schema: 1
+      prompt_version: 1
 
-  lens_passes:                                     # [built] L3b, text only
-    lenses: from_space                             # every lens and version in the search space
-    targets: [scene, beat]                         # windows aren't annotated
-    phrasings: {count: 8, style: from_space}       # from_space | from_lens; 0–20
-    self_consistency:
-      runs: 2
-      seeds: [7, 8]                                # one per run: distinct requests and cache keys
-      on_disagreement: flag                        # flag | down_weight
-    input: perception_records                      # [fixed] lenses read facts, never each other
+    lens_passes:                                   # [built] L3b, text only
+      lenses: from_space                           # every lens and version in the search space
+      targets: [scene, beat]                       # windows aren't annotated
+      phrasings: {count: 8, style: from_space}     # from_space | from_lens; 0–20
+      self_consistency:
+        runs: 2
+        seeds: [7, 8]                              # one per run: distinct requests and cache keys
+        on_disagreement: flag                      # flag | down_weight
+      input: perception_records                    # [fixed] lenses read facts, never each other
 
-  embedding:                                       # [built]
-    text:                                          #   null: no vectors
-      role: embed_text
-      inputs: [scene_summary, phrasings]
-      template: "{text}"
-      batch_size: 64
-    image: null                                    # [not built]: needs an embed_image port
-    normalize: true                                # unit length
+    embedding:                                     # [built]
+      text:                                        #   null: no vectors
+        role: embed_text
+        inputs: [scene_summary, phrasings]
+        template: "{text}"
+        batch_size: 64
+      image: null                                  # [not built]: needs an embed_image port
+      normalize: true                              # unit length
 
-  models:                                          # [built] a model per role; never defaulted
+  models:                                          # [built] component: a model per role, never defaulted
+    version: 1
     defaults:
       reasoning: false                             #   reasoning is billed: off unless asked
       temperature: 0.2
       structured_method: catalog                   #   the catalog's method per model
-    L2:          {model_id: <vision-model>, max_tokens: 4096}   # needed with segmentation.method: model
+    L2:          {model_id: <vision-model>, max_tokens: 4096}   # needed with structure.segmentation.method: model
     L3a:         {model_id: <vision-model>, max_tokens: 2048}   # always needed
     L3b:         {model_id: <text-model>, max_tokens: 1024}     # seeds: self_consistency
     L2_merge:    {model_id: <text-model>}          # accepted, unused until long units [not built]
-    embed_text:  {model_id: <embedding-model>}     # needed with embedding.text
+    embed_text:  {model_id: <embedding-model>}     # needed with interpretation.embedding.text
     embed_image: {model_id: <image-embedding-model>}   # [not built]
 ```
 
 - **The perception record** (schema 1): `summary`, `setting`, `entities`, `props`, `beats` (`t: [start, end]`, `who: [names]`, `action`, `audio` or null), plus the `camera`, `timing` and `sound` modules the run needs; `speech` comes from the L1 speech detector, never from the model. Times are on the unit timeline.
 - **A role's model** is a model id from the catalog (or your registry) or the name of one of your `ModelSource`s; `max_tokens` defaults per role as above, `temperature` and `reasoning` default from `defaults`, `seed` is unset unless given. Frame-sending roles (L2 with `method: model`, L3a) need a model whose catalog entry has `vision: true`, and their profiles must fit its `max_images` and `max_image_side_px`. `embed_text` needs a provider whose adapter serves embeddings (the OpenAI-compatible one does; Anthropic's doesn't).
-- **Retries:** a reply that isn't usable (no JSON, a schema or vocabulary problem, cut off at `max_tokens`) is retried as a new request carrying what was wrong, up to `quality_control.invalid_output.max_attempts`, then flagged. A flagged task is kept like a finished one, so a rerun doesn't pay for it again; `--rerun L3a` (or a changed prompt, model or setting) tries it anew.
+- **Retries:** a reply that isn't usable (no JSON, a schema or vocabulary problem, cut off at `max_tokens`) is retried as a new request carrying what was wrong, up to `policy.quality_control.invalid_output.max_attempts`, then flagged. A flagged task is kept like a finished one, so a rerun doesn't pay for it again; `--rerun L3a` (or a changed prompt, model or setting) tries it anew.
 
 ### 5.5 Policy, formatting, governance: what rules apply (question 6)
 
 ```yaml
-  quality_control:                                 # [built] L4
-    checks: [timestamps_in_scene, timestamps_ordered, entities_in_profile,
-             modules_complete, vocabulary, schema, validators, agreement]
-    invalid_output: {max_attempts: 2, then: flag}  # flag | down_weight; rows are never dropped
-    thresholds: {agreement_min: 0.6}               # mean Jaccard of labels across runs
-    # Annotation gold sets (~10 hand-annotated scenes per corpus × lens) come from each
-    # lens spec (`gold`), not from the plan; scoring them is [not built].
+  policy:                                          # [built] component, version 1
+    version: 1
+    quality_control:                               # [built] L4
+      checks: [timestamps_in_scene, timestamps_ordered, entities_in_profile,
+               modules_complete, vocabulary, schema, validators, agreement]
+      invalid_output: {max_attempts: 2, then: flag}  # flag | down_weight; rows are never dropped
+      thresholds: {agreement_min: 0.6}             # mean Jaccard of labels across runs
+      # Annotation gold sets (~10 hand-annotated scenes per corpus × lens) come from each
+      # lens spec (`gold`), not from the plan; scoring them is [not built].
 
-  budget:                                          # [built]; not in any input hash
-    max_cost_usd: null                             # estimated USD for this run; null: no cap
-    per_stage_usd: {L2: 5, L3a: 15, L3b: 4, embed: 1}
-    on_exceed: finish_unit_then_stop               # stop | finish_unit_then_stop
+    budget:                                        # [built]; not in any input hash
+      max_cost_usd: null                           # estimated USD for this run; null: no cap
+      per_stage_usd: {L2: 5, L3a: 15, L3b: 4, embed: 1}
+      on_exceed: finish_unit_then_stop             # stop | finish_unit_then_stop
 
-  formatting:                                      # [built]
-    schema_version: 1                              # content: hashed
-    tables: [units, shots, scenes, beats, windows, signals, perception, frames_sent,
-             annotations, phrasings, vectors, runs, qc]   # hashed; units, scenes, runs, qc required
-    layout: {partition_by: unit_id, compression: zstd}   # unit_id | none; zstd | snappy | none
+    formatting:                                    # [built]
+      schema_version: 2                            # the dataset's; content: hashed
+      tables: [units, shots, scenes, beats, windows, signals, perception, frames_sent,
+               annotations, phrasings, vectors, runs, qc]  # hashed; units, scenes, runs, qc required
+      layout: {partition_by: unit_id, compression: zstd}  # unit_id | none; zstd | snappy | none
 
-  governance:                                      # [built] inherited from the corpus
-    rights_mode: inherited                         # [fixed] read-only; stricter only
-    image_vectors: local_only                      # [fixed] for byo_media
-    training_use: local_only                       # [fixed] for byo_media
-    annotation_pack: false                         # recorded; exporting one is [not built]
-    model_inputs: null                             # provider_transient | local_only
+    governance:                                    # [built] inherited from the corpus
+      rights_mode: inherited                       # [fixed] read-only; stricter only
+      image_vectors: local_only                    # [fixed] for byo_media
+      training_use: local_only                     # [fixed] for byo_media
+      annotation_pack: false                       # recorded; exporting one is [not built]
+      model_inputs: null                           # provider_transient | local_only
 ```
 
 - **Budget:** spend is the adapters' cost estimate from the catalog prices, checked before every model call, so a run overshoots by at most the calls in flight. When a cap is reached no new unit starts; `stop` also fails the next call of every unit in progress (those units end partial), `finish_unit_then_stop` lets them finish. The manifest marks partial and skipped units.
@@ -531,7 +544,7 @@ gold:
 
 The baseline scorer (`baseline_retriever`) embeds each gold query with the dataset's own text-embedding model (every variant must use the same one), ranks scenes by their best cosine similarity over their summary and phrasing vectors, and reports `recall@1`, `recall@5`, `recall@10`, `mrr`, `median_rank`, `not_found` and `queries_scored`. [built] A scorer of your own is an async callable `(dataset, gold, context) -> metrics`, where `context.embed(texts)` embeds with the dataset's model.
 
-**Fairness** [built]: comparing search spaces, every resolved plan must be identical except where the derivation rules wrote (`plan.fairness_digest`); comparing plans, the search space is one object. Every variant shares the work folder, so tasks with the same inputs run once.
+**Fairness** [built]: comparing search spaces, every resolved plan must be identical except where the derivation rules wrote (`plan.fairness_digest`); comparing plans, the search space is one object, and the report names the plan components that differ between the variants (each variant's component digests are in `report.json`). Every variant shares the work folder, so tasks with the same inputs run once.
 
 ---
 
@@ -561,13 +574,13 @@ The baseline scorer (`baseline_retriever`) embeds each gold query with the datas
 | `runs` | per task | `run_id`, `stage`, `unit_id`, `target_id`, `input_hash`, `status`, `attempts`, `model_id`, `provider`, `adapter_version`, `started_at`, `finished_at`, `latency_ms`, tokens, `cost_usd` (estimated), `cached`, `reused`, `lens`, `run_index` |
 | `qc` | per check and target | `check`, `target_type`, `target_id`, `unit_id`, `scene_id`, `lens`, `run_index`, `status` (pass, flag, down_weight), `detail` |
 
-**The manifest** [built] records: the dataset id (from the search space, corpus and plan digests, so a rerun keeps it); the search space verbatim with its digest; the corpus name, digest, rights mode and each unit's content fingerprint; the resolved plan (defaults filled in, strategy versions pinned, derived values in place) with its digest, `content_digest` (without budget, governance and layout) and `fairness_digest`; the derivation rules applied; lens versions and digests; the model of each role; the vision digest; governance; each unit's status and reason; every table file with its row count and sha256; the estimated cost (this run, total, per stage) and tasks computed or reused; the ffmpeg version and execution options; notes (repairs, dropped frames, unused settings); and the benchmark label when made by the harness. `Dataset.open(path, verify=True)` checks every file against it.
+**The manifest** [built] records: the dataset id (from the search space, corpus and plan digests, so a rerun keeps it); the search space verbatim with its digest; the corpus name, digest, rights mode and each unit's content fingerprint; the resolved plan (defaults filled in, strategy versions pinned, derived values in place) with its digest, `content_digest` (without budget, governance and layout), `fairness_digest` and each component's digest (`components`); the derivation rules applied; lens versions and digests; the model of each role; the frames digest (`frames_digest`); governance; each unit's status and reason; every table file with its row count and sha256; the estimated cost (this run, total, per stage) and tasks computed or reused; the ffmpeg version and execution options; notes (repairs, dropped frames, unused settings); and the benchmark label when made by the harness. `Dataset.open(path, verify=True)` checks every file against it. The schema version is 2 (plan v2's grouped resolved plan, `frames_digest`); a reader refuses a version it doesn't know.
 
 ---
 
 ## 8. Open decisions
 
-1. **Frames to cloud models** for a bring-your-own corpus: decided 2026-10-24 as "the plan must say" (`governance.model_inputs`, §5.5). Whether one answer should become the project default stays the owner's call.
+1. **Frames to cloud models** for a bring-your-own corpus: decided 2026-10-24 as "the plan must say" (`policy.governance.model_inputs`, §5.5). Whether one answer should become the project default stays the owner's call.
 2. ~~The response cache and repeated runs~~: done 2026-10-24. `temperature` and `seed` are in `ConversationRequest` and, when set, in the cache key, so each self-consistency run can have its own seed.
 3. **Dropped rows.** Rows are flagged, never dropped, per DESIGN.md §3 L4. Should a "drop" ever exist, meaning excluded from the main tables but kept with its reason in `qc`?
 4. **Default numbers** for every placeholder above, from benchmark sweeps (frame profiles first).

@@ -105,13 +105,13 @@ def _images(profile: ResolvedProfile, frames: int, copy: tuple[int, int]) -> tup
 def estimate(run: ResolvedRun, probes: dict[str, MediaInfo]) -> CostEstimate:
     """The estimate for the units that probed (their facts in `probes`)."""
     plan = run.plan
-    target = plan.segmentation.scene_length_s.target
+    target = plan.structure.segmentation.scene_length_s.target
     result = CostEstimate(units=len(probes), seconds=0.0, scenes=0)
     stage_names = [r for r in ("L2", "L3a", "L3b") if r in run.roles]
     if "embed_text" in run.roles:
         stage_names.append("embed")
     result.stages = {name: StageEstimate() for name in stage_names}
-    lens_runs = len(run.lenses) * plan.lens_passes.self_consistency.runs
+    lens_runs = len(run.lenses) * plan.interpretation.lens_passes.self_consistency.runs
     for unit in run.units:
         info = probes.get(unit.unit_id)
         if info is None:
@@ -121,7 +121,7 @@ def estimate(run: ResolvedRun, probes: dict[str, MediaInfo]) -> CostEstimate:
         result.seconds += seconds
         scenes = sum(max(1, math.ceil((b - a) / target)) for a, b in spans)
         result.scenes += scenes
-        copy = copy_size(info, plan.normalize.height_px)
+        copy = copy_size(info, plan.observation.normalize.height_px)
         if "L2" in result.stages:
             images, tokens = _images(run.profile("L2"), _frames(run.profile("L2"), seconds), copy)
             stage = result.stages["L2"]
@@ -143,8 +143,9 @@ def estimate(run: ResolvedRun, probes: dict[str, MediaInfo]) -> CostEstimate:
         )
         stage.output_tokens += scenes * lens_runs * run.roles["L3b"].max_tokens
         if "embed" in result.stages:
-            texts = scenes * (1 + lens_runs * plan.lens_passes.phrasings.count)
-            batch = plan.embedding.text.batch_size if plan.embedding.text else 64
+            texts = scenes * (1 + lens_runs * plan.interpretation.lens_passes.phrasings.count)
+            text_settings = plan.interpretation.embedding.text
+            batch = text_settings.batch_size if text_settings else 64
             stage = result.stages["embed"]
             stage.calls += math.ceil(texts / batch)
             stage.input_tokens += texts * TOKENS_PER_TEXT
@@ -155,12 +156,12 @@ def estimate(run: ResolvedRun, probes: dict[str, MediaInfo]) -> CostEstimate:
     missing = [u.unit_id for u in run.units if u.unit_id not in probes]
     if missing:
         result.notes.append(f"not estimated (couldn't be read): {', '.join(missing)}")
-    if plan.budget.max_cost_usd is not None and result.total_usd > Decimal(
-        str(plan.budget.max_cost_usd)
+    if plan.policy.budget.max_cost_usd is not None and result.total_usd > Decimal(
+        str(plan.policy.budget.max_cost_usd)
     ):
         result.notes.append(
-            f"the estimate exceeds budget.max_cost_usd (${plan.budget.max_cost_usd:g}); "
-            f"on_exceed: {plan.budget.on_exceed}"
+            f"the estimate exceeds policy.budget.max_cost_usd "
+            f"(${plan.policy.budget.max_cost_usd:g}); on_exceed: {plan.policy.budget.on_exceed}"
         )
     return result
 

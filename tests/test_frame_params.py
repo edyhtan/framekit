@@ -82,7 +82,7 @@ def test_resolution_fills_defaults_the_example_leaves_out():
 def test_the_old_native_video_example_fails_with_a_precise_message():
     problems = problems_of(OLD_NATIVE_VIDEO_EXAMPLE)
 
-    prefix = "vision_profiles.scene_overview."
+    prefix = "profiles.scene_overview."
     assert [p.split(":")[0] for p in problems] == [
         prefix + "frame_selection.filters",
         prefix + "frame_selection.budget",
@@ -126,14 +126,14 @@ def test_a_malformed_strategy_reference_fails(bad):
     problems = problems_of_profile(frame_selection={"candidates": bad})
 
     assert len(problems) == 1
-    assert problems[0].startswith("vision_profiles.p.frame_selection.candidates")
+    assert problems[0].startswith("profiles.p.frame_selection.candidates")
 
 
 def test_an_unknown_strategy_fails_with_the_known_names():
     (problem,) = problems_of_profile(frame_selection={"candidates": {"strategy": "unifrom"}})
 
     assert problem == (
-        "vision_profiles.p.frame_selection.candidates: unknown candidates strategy 'unifrom' "
+        "profiles.p.frame_selection.candidates: unknown candidates strategy 'unifrom' "
         "(known: shot_based, uniform)"
     )
 
@@ -153,11 +153,11 @@ def test_a_strategy_in_the_wrong_slot_fails():
     })
 
     assert problems == [
-        "vision_profiles.p.frame_selection.candidates: 'dedupe' is a filter, not a candidates "
+        "profiles.p.frame_selection.candidates: 'dedupe' is a filter, not a candidates "
         "strategy (known: shot_based, uniform)",
-        "vision_profiles.p.frame_selection.anchors[0]: 'motion' is an allocation signal, not "
+        "profiles.p.frame_selection.anchors[0]: 'motion' is an allocation signal, not "
         "an anchor (known: audio_onsets, shot_boundaries)",
-        "vision_profiles.p.frame_selection.filters[0]: 'shot_boundaries' is an anchor, not a "
+        "profiles.p.frame_selection.filters[0]: 'shot_boundaries' is an anchor, not a "
         "filter (known: dedupe, sharpness)",
     ]
 
@@ -170,12 +170,12 @@ def test_strategy_settings_are_checked_against_the_strategy():
     })
 
     assert problems == [
-        "vision_profiles.p.frame_selection.candidates.pick: Field required (shot_based@1)",
-        "vision_profiles.p.frame_selection.filters[0].dedupe.max_distance: Input should be "
+        "profiles.p.frame_selection.candidates.pick: Field required (shot_based@1)",
+        "profiles.p.frame_selection.filters[0].dedupe.max_distance: Input should be "
         "greater than or equal to 0 (dedupe@1)",
-        "vision_profiles.p.frame_selection.filters[0].dedupe.methd: Extra inputs are not "
+        "profiles.p.frame_selection.filters[0].dedupe.methd: Extra inputs are not "
         "permitted (dedupe@1)",
-        "vision_profiles.p.frame_selection.budget.allocate_by[0].motion.window_s: Input "
+        "profiles.p.frame_selection.budget.allocate_by[0].motion.window_s: Input "
         "should be greater than 0 (motion@1)",
     ]
 
@@ -184,7 +184,7 @@ def test_a_missing_required_setting_fails():
     (problem,) = problems_of_profile(frame_selection={"candidates": "uniform"})
 
     assert problem == (
-        "vision_profiles.p.frame_selection.candidates.fps: Field required (uniform@1)"
+        "profiles.p.frame_selection.candidates.fps: Field required (uniform@1)"
     )
 
 
@@ -196,8 +196,8 @@ def test_anchors_and_allocation_signals_may_not_repeat():
     })
 
     assert problems == [
-        "vision_profiles.p.frame_selection.anchors[1]: anchor 'shot_boundaries' is listed twice",
-        "vision_profiles.p.frame_selection.budget.allocate_by[1]: allocation signal 'motion' "
+        "profiles.p.frame_selection.anchors[1]: anchor 'shot_boundaries' is listed twice",
+        "profiles.p.frame_selection.budget.allocate_by[1]: allocation signal 'motion' "
         "is listed twice",
     ]
 
@@ -218,8 +218,8 @@ def test_filters_may_repeat_and_keep_their_order():
 
 def test_extra_keys_are_rejected_everywhere():
     data = settings_example()
-    data["profiles"] = {}
-    detail = data["vision_profiles"]["scene_detail"]
+    data["profile"] = {}
+    detail = data["profiles"]["scene_detail"]
     detail["image"]["qualty"] = 90
     detail["frame_selection"]["anchor"] = ["shot_boundaries"]
     detail["views"]["detail"]["spans"] = 2
@@ -228,27 +228,27 @@ def test_extra_keys_are_rejected_everywhere():
     problems = problems_of(data)
 
     assert sorted(p.split(":")[0] for p in problems) == [
-        "profiles",
+        "profile",
+        "profiles.scene_detail.frame_selection.anchor",
+        "profiles.scene_detail.image.qualty",
+        "profiles.scene_detail.views.detail.spans",
         "stages.L2.model",
-        "vision_profiles.scene_detail.frame_selection.anchor",
-        "vision_profiles.scene_detail.image.qualty",
-        "vision_profiles.scene_detail.views.detail.spans",
     ]
     assert all(p.endswith("Extra inputs are not permitted") for p in problems)
 
 
 def test_one_error_lists_problems_from_every_profile_and_stage():
     data = settings_example()
-    data["vision_profiles"]["keyframes"]["image"]["max_side_px"] = 0  # structural
-    data["vision_profiles"]["scene_overview"]["frame_selection"]["anchors"] = ["shot_boundaries"]
-    data["stages"]["L3b"] = {"vision": "missing"}
+    data["profiles"]["keyframes"]["image"]["max_side_px"] = 0  # structural
+    data["profiles"]["scene_overview"]["frame_selection"]["anchors"] = ["shot_boundaries"]
+    data["stages"]["L3b"] = {"profile": "missing"}
 
     problems = problems_of(data)
 
     assert [p.split(":")[0] for p in problems] == [
-        "vision_profiles.scene_overview.frame_selection.anchors",
-        "vision_profiles.keyframes.image.max_side_px",
-        "stages.L3b.vision",
+        "profiles.scene_overview.frame_selection.anchors",
+        "profiles.keyframes.image.max_side_px",
+        "stages.L3b.profile",
     ]
 
 
@@ -261,28 +261,28 @@ def test_one_error_lists_structural_and_rule_problems_of_the_same_profile():
     )
 
     assert problems == [
-        "vision_profiles.p.frame_selection.candidates: 'dedupe' is a filter, not a candidates "
+        "profiles.p.frame_selection.candidates: 'dedupe' is a filter, not a candidates "
         "strategy (known: shot_based, uniform)",
-        "vision_profiles.p.frame_selection.anchors[0]: 'motion' is an allocation signal, not "
+        "profiles.p.frame_selection.anchors[0]: 'motion' is an allocation signal, not "
         "an anchor (known: audio_onsets, shot_boundaries)",
-        "vision_profiles.p.frame_selection.filters[0].sharpness.window_s: Input should be "
+        "profiles.p.frame_selection.filters[0].sharpness.window_s: Input should be "
         "greater than 0 (sharpness@1)",
-        "vision_profiles.p.image.max_side_px: Input should be greater than 0",
-        "vision_profiles.p.image.fromat: Extra inputs are not permitted",
-        "vision_profiles.p.image.quality: png is lossless; quality applies to jpeg and webp",
-        "vision_profiles.p.delivery.storyboard: a grid applies only to mode storyboard",
+        "profiles.p.image.max_side_px: Input should be greater than 0",
+        "profiles.p.image.fromat: Extra inputs are not permitted",
+        "profiles.p.image.quality: png is lossless; quality applies to jpeg and webp",
+        "profiles.p.delivery.storyboard: a grid applies only to mode storyboard",
     ]
 
 
 def test_a_typo_does_not_hide_the_native_video_rules():
     data = settings_example()
-    overview = data["vision_profiles"]["scene_overview"]
+    overview = data["profiles"]["scene_overview"]
     overview["image"]["qualty"] = 80
     overview["frame_selection"]["filters"] = [{"dedupe": {"max_distance": 6}}]
 
     assert [p.split(":")[0] for p in problems_of(data)] == [
-        "vision_profiles.scene_overview.frame_selection.filters",
-        "vision_profiles.scene_overview.image.qualty",
+        "profiles.scene_overview.frame_selection.filters",
+        "profiles.scene_overview.image.qualty",
     ]
 
 
@@ -292,11 +292,11 @@ def test_a_rule_is_skipped_where_a_setting_it_reads_has_a_problem_of_its_own():
     assert problems_of_profile(  # the views rules depend on the delivery mode
         frame_selection=capped(10), delivery={"mode": "native-video"}, views=overflowing_views,
     ) == [
-        "vision_profiles.p.delivery.mode: Input should be 'images', 'storyboard' or "
+        "profiles.p.delivery.mode: Input should be 'images', 'storyboard' or "
         "'native_video'"
     ]
     assert problems_of_profile(image={"max_side_px": 512, "format": "gif", "quality": 3}) == [
-        "vision_profiles.p.image.format: Input should be 'jpeg', 'png' or 'webp'"
+        "profiles.p.image.format: Input should be 'jpeg', 'png' or 'webp'"
     ]
 
 
@@ -304,7 +304,7 @@ def test_aspect_is_always_preserve():
     (problem,) = problems_of_profile(image={"max_side_px": 512, "aspect": "crop"})
 
     assert problem == (
-        "vision_profiles.p.image.aspect: aspect is always 'preserve' (frames are never "
+        "profiles.p.image.aspect: aspect is always 'preserve' (frames are never "
         "cropped or stretched), got 'crop'"
     )
     assert FrameParams.from_mapping(params_with(p=profile(
@@ -315,7 +315,7 @@ def test_png_takes_no_quality():
     (problem,) = problems_of_profile(image={"max_side_px": 512, "format": "png", "quality": 90})
 
     assert problem == (
-        "vision_profiles.p.image.quality: png is lossless; quality applies to jpeg and webp"
+        "profiles.p.image.quality: png is lossless; quality applies to jpeg and webp"
     )
     assert FrameParams.from_mapping(params_with(p=profile(
         image={"max_side_px": 512, "format": "webp", "quality": 90})))
@@ -325,14 +325,14 @@ def test_a_storyboard_grid_needs_storyboard_delivery():
     (problem,) = problems_of_profile(delivery={"mode": "images", "storyboard": {"rows": 3}})
 
     assert problem == (
-        "vision_profiles.p.delivery.storyboard: a grid applies only to mode storyboard"
+        "profiles.p.delivery.storyboard: a grid applies only to mode storyboard"
     )
     assert FrameParams.from_mapping(params_with(p=profile(
         delivery={"mode": "storyboard", "storyboard": {"rows": 3, "cols": 4}})))
 
 
 def test_the_input_must_be_a_mapping():
-    assert problems_of(["vision_profiles"]) == [
+    assert problems_of(["profiles"]) == [
         "(root): Input should be a valid dictionary or instance of FrameParams"
     ]
 
@@ -348,7 +348,7 @@ def test_a_single_profile_can_be_loaded_on_its_own():
 
 def test_direct_construction_runs_the_same_checks():
     with pytest.raises(ValidationError, match="not allowed with native_video"):
-        FrameProfile.model_validate(OLD_NATIVE_VIDEO_EXAMPLE["vision_profiles"]["scene_overview"])
+        FrameProfile.model_validate(OLD_NATIVE_VIDEO_EXAMPLE["profiles"]["scene_overview"])
 
 
 def test_to_mapping_round_trips():
@@ -356,7 +356,7 @@ def test_to_mapping_round_trips():
     again = FrameParams.from_mapping(params.to_mapping())
 
     assert again == params
-    detail = params.to_mapping()["vision_profiles"]["scene_detail"]["frame_selection"]
+    detail = params.to_mapping()["profiles"]["scene_detail"]["frame_selection"]
     assert detail["candidates"] == {"strategy": "uniform", "fps": 4.0}
     assert detail["anchors"] == ["shot_boundaries"]
 
@@ -386,7 +386,7 @@ def test_to_mapping_round_trips():
     ],
 )
 def test_numbers_must_be_numbers_not_booleans_or_strings(part, path, message):
-    assert problems_of_profile(**part) == [f"vision_profiles.p.{path}: {message}"]
+    assert problems_of_profile(**part) == [f"profiles.p.{path}: {message}"]
 
 
 @pytest.mark.parametrize("bad", [float("nan"), float("inf")])
@@ -395,9 +395,9 @@ def test_numbers_must_be_finite(bad):
         "candidates": {"strategy": "uniform", "fps": bad}, "budget": {"min_gap_s": bad}})
 
     assert problems == [
-        "vision_profiles.p.frame_selection.candidates.fps: Input should be a finite number "
+        "profiles.p.frame_selection.candidates.fps: Input should be a finite number "
         "(uniform@1)",
-        "vision_profiles.p.frame_selection.budget.min_gap_s: Input should be a finite number",
+        "profiles.p.frame_selection.budget.min_gap_s: Input should be a finite number",
     ]
 
 
@@ -407,7 +407,7 @@ def test_a_reference_keeps_its_checked_settings_and_resolution_fills_the_rest():
         "filters": [{"dedupe": {"max_distance": 4}}],
     })))
 
-    fs = params.to_mapping()["vision_profiles"]["p"]["frame_selection"]
+    fs = params.to_mapping()["profiles"]["p"]["frame_selection"]
     assert fs["candidates"] == {"strategy": "uniform", "fps": 4.0}
     assert type(fs["candidates"]["fps"]) is float
     assert fs["filters"] == [{"dedupe": {"max_distance": 4}}]
@@ -418,7 +418,7 @@ def test_a_reference_keeps_its_checked_settings_and_resolution_fills_the_rest():
 def test_list_settings_must_be_lists():
     assert problems_of_profile(frame_selection={
         "candidates": {"strategy": "uniform", "fps": 2}, "anchors": "shot_boundaries"}) == [
-        "vision_profiles.p.frame_selection.anchors: Input should be a valid list"
+        "profiles.p.frame_selection.anchors: Input should be a valid list"
     ]
 
 
@@ -427,12 +427,12 @@ def test_list_settings_must_be_lists():
 
 def test_parsed_parameters_are_read_only():
     params = FrameParams.from_mapping(settings_example())
-    detail = params.vision_profiles["scene_detail"]
+    detail = params.profiles["scene_detail"]
 
     with pytest.raises(TypeError, match="read-only"):
         detail.frame_selection.candidates.params["fps"] = 1
     with pytest.raises(TypeError, match="read-only"):
-        params.vision_profiles["other"] = detail
+        params.profiles["other"] = detail
     with pytest.raises(AttributeError):
         detail.frame_selection.anchors.append("audio_onsets")  # type: ignore[attr-defined]
     with pytest.raises(ValidationError, match="frozen"):
@@ -444,14 +444,14 @@ def test_parsed_and_resolved_parameters_are_hashable():
 
     assert hash(params) == hash(FrameParams.from_mapping(settings_example()))
     assert hash(resolve(params).for_stage("L3a")) == hash(resolve(params).for_stage("L3a"))
-    assert len(set(params.vision_profiles["scene_detail"].frame_selection.filters)) == 2
+    assert len(set(params.profiles["scene_detail"].frame_selection.filters)) == 2
 
 
 def test_changing_the_resolved_mapping_changes_nothing_recorded():
     resolved = resolve(settings_example())
     text, digest = resolved.canonical_json(), resolved.digest
 
-    resolved.mapping["vision_profiles"]["keyframes"]["version"] = 99
+    resolved.mapping["profiles"]["keyframes"]["version"] = 99
     detail = resolved.for_stage("L3a")
     detail.mapping["frame_selection"]["candidates"]["fps"] = 1
 
@@ -480,13 +480,13 @@ def test_native_video_rejects_other_candidates_anchors_and_views():
     )
 
     assert [p.split(":")[0] for p in problems] == [
-        "vision_profiles.p.frame_selection.candidates",
-        "vision_profiles.p.frame_selection.anchors",
-        "vision_profiles.p.frame_selection.budget",
-        "vision_profiles.p.views",
+        "profiles.p.frame_selection.candidates",
+        "profiles.p.frame_selection.anchors",
+        "profiles.p.frame_selection.budget",
+        "profiles.p.views",
     ]
     assert problems[0].startswith(
-        "vision_profiles.p.frame_selection.candidates: 'shot_based' not allowed with native_video"
+        "profiles.p.frame_selection.candidates: 'shot_based' not allowed with native_video"
     )
 
 
@@ -511,7 +511,7 @@ def test_views_must_fit_in_the_scene_budget():
     (problem,) = problems_of_profile(views=views(6, 2, 6), frame_selection=capped(16))
 
     assert problem == (
-        "vision_profiles.p.views: overview (6) + detail (2 x 6) = 18 frames, more than "
+        "profiles.p.views: overview (6) + detail (2 x 6) = 18 frames, more than "
         "frame_selection.budget.max_frames_per_scene (16)"
     )
 
@@ -523,7 +523,7 @@ def test_views_must_fit_the_tighter_of_the_two_caps():
     (problem,) = problems_of_profile(views=views(6, 2, 5), frame_selection=budget)
 
     assert problem == (
-        "vision_profiles.p.views: overview (6) + detail (2 x 5) = 16 frames, more than "
+        "profiles.p.views: overview (6) + detail (2 x 5) = 16 frames, more than "
         "frame_selection.budget.max_frames (10)"
     )
 
@@ -533,7 +533,7 @@ def test_detail_views_need_at_least_one_signal():
     no_signals["detail"]["around"] = []
 
     assert problems_of_profile(views=no_signals) == [
-        "vision_profiles.p.views.detail.around: at least one signal is needed"
+        "profiles.p.views.detail.around: at least one signal is needed"
     ]
 
 
@@ -542,7 +542,7 @@ def test_a_detail_span_is_at_least_a_millisecond():
     tiny["detail"]["span_s"] = 0.0004
 
     assert problems_of_profile(views=tiny) == [
-        "vision_profiles.p.views.detail.span_s: Input should be greater than or equal to 0.001"
+        "profiles.p.views.detail.span_s: Input should be greater than or equal to 0.001"
     ]
 
 
@@ -559,8 +559,8 @@ def test_overview_plus_detail_needs_both_parts():
     problems = problems_of_profile(views={"mode": "overview_plus_detail"})
 
     assert problems == [
-        "vision_profiles.p.views.overview: required for mode overview_plus_detail",
-        "vision_profiles.p.views.detail: required for mode overview_plus_detail",
+        "profiles.p.views.overview: required for mode overview_plus_detail",
+        "profiles.p.views.detail: required for mode overview_plus_detail",
     ]
 
 
@@ -568,8 +568,8 @@ def test_other_view_modes_take_no_overview_or_detail():
     problems = problems_of_profile(views=views(mode="single"))
 
     assert problems == [
-        "vision_profiles.p.views.overview: applies only to mode overview_plus_detail",
-        "vision_profiles.p.views.detail: applies only to mode overview_plus_detail",
+        "profiles.p.views.overview: applies only to mode overview_plus_detail",
+        "profiles.p.views.detail: applies only to mode overview_plus_detail",
     ]
     for mode in ("single", "split_by_budget", "per_module"):
         assert FrameParams.from_mapping(params_with(p=profile(views={"mode": mode})))
@@ -582,7 +582,7 @@ def test_detail_signals_are_checked_like_allocation_signals():
     (problem,) = problems_of_profile(views=bad)
 
     assert problem.startswith(
-        "vision_profiles.p.views.detail.around[0]: 'shot_boundaries' is an anchor, not an "
+        "profiles.p.views.detail.around[0]: 'shot_boundaries' is an anchor, not an "
         "allocation signal"
     )
 
@@ -592,10 +592,10 @@ def test_detail_signals_are_checked_like_allocation_signals():
 
 def test_stages_must_name_an_existing_profile():
     data = settings_example()
-    data["stages"]["L3a"] = {"vision": "scene_detial"}
+    data["stages"]["L3a"] = {"profile": "scene_detial"}
 
     assert problems_of(data) == [
-        "stages.L3a.vision: no frame profile named 'scene_detial' "
+        "stages.L3a.profile: no frame profile named 'scene_detial' "
         "(profiles: keyframes, scene_detail, scene_overview)"
     ]
 
@@ -621,10 +621,10 @@ def test_the_same_input_gives_the_same_digest():
 def test_key_order_and_spelling_do_not_change_the_digest():
     reordered = settings_example()
     reordered = {"stages": dict(reversed(reordered["stages"].items())),
-                 "vision_profiles": dict(reversed(reordered["vision_profiles"].items()))}
-    detail = reordered["vision_profiles"]["scene_detail"]
-    reordered["vision_profiles"]["scene_detail"] = dict(reversed(detail.items()))
-    detail = reordered["vision_profiles"]["scene_detail"]
+                 "profiles": dict(reversed(reordered["profiles"].items()))}
+    detail = reordered["profiles"]["scene_detail"]
+    reordered["profiles"]["scene_detail"] = dict(reversed(detail.items()))
+    detail = reordered["profiles"]["scene_detail"]
     detail["frame_selection"]["candidates"] = {"fps": 4.0, "strategy": "uniform@1"}
     detail["frame_selection"]["budget"]["allocate_by"] = [
         {"audio_onsets": {"window_s": 1}}, "motion@1"]
@@ -637,13 +637,13 @@ def test_the_digest_of_the_documented_example_is_pinned():
     # Manifests and stage input hashes compare digests across runs and machines. If this
     # changes, every recorded digest changes: that needs a DECISIONS entry.
     assert resolve(settings_example()).digest == (
-        "4a5fc49ed5766dfc32968f6aa61ffe08f2a2f4a8f243d6640dc8f030b613d36b"
+        "b5a76d732ffec037cf5beb22dcd2cd1b22e6c627676cba44dd4ae5253ecb5532"
     )
 
 
 def test_a_changed_setting_changes_the_digest_of_its_profile_only():
     changed = settings_example()
-    changed["vision_profiles"]["scene_detail"]["frame_selection"]["budget"]["min_gap_s"] = 0.3
+    changed["profiles"]["scene_detail"]["frame_selection"]["budget"]["min_gap_s"] = 0.3
 
     before, after = resolve(settings_example()), resolve(changed)
 
@@ -654,7 +654,7 @@ def test_a_changed_setting_changes_the_digest_of_its_profile_only():
 
 def test_filter_order_is_part_of_the_digest():
     swapped = settings_example()
-    filters = swapped["vision_profiles"]["scene_detail"]["frame_selection"]["filters"]
+    filters = swapped["profiles"]["scene_detail"]["frame_selection"]["filters"]
     filters.reverse()
 
     assert resolve(swapped).digest != resolve(settings_example()).digest
@@ -662,8 +662,8 @@ def test_filter_order_is_part_of_the_digest():
 
 def test_a_profile_digest_ignores_the_profile_name():
     data = settings_example()
-    data["vision_profiles"]["renamed"] = data["vision_profiles"].pop("keyframes")
-    data["stages"]["embed_image"] = {"vision": "renamed"}
+    data["profiles"]["renamed"] = data["profiles"].pop("keyframes")
+    data["stages"]["embed_image"] = {"profile": "renamed"}
 
     renamed, original = resolve(data), resolve(settings_example())
 
@@ -691,7 +691,7 @@ def test_the_canonical_json_is_sorted_and_has_no_nulls():
 def test_a_profile_resolves_on_its_own_with_the_same_digest():
     params = FrameParams.from_mapping(settings_example())
 
-    alone = resolve_profile(params.vision_profiles["scene_detail"])
+    alone = resolve_profile(params.profiles["scene_detail"])
 
     assert alone.digest == resolve(params).profiles["scene_detail"].digest
 
@@ -711,9 +711,9 @@ def test_the_source_check_rejects_more_fps_or_pixels_than_the_copy_has():
     problems = check_against_source(resolve(settings_example()), copy)
 
     assert problems == [
-        "vision_profiles.scene_detail.frame_selection.candidates.fps: 4 fps is more than "
+        "profiles.scene_detail.frame_selection.candidates.fps: 4 fps is more than "
         "the analysis copy's 3 fps",
-        "vision_profiles.scene_detail.image.max_side_px: 768 px is more than the analysis "
+        "profiles.scene_detail.image.max_side_px: 768 px is more than the analysis "
         "copy's long side (720 px)",
     ]
 
@@ -759,13 +759,13 @@ def test_native_video_needs_a_model_that_takes_video():
     overview = resolve(settings_example()).for_stage("L2")
 
     assert check_against_model(overview, ModelVisionCaps(native_video=False)) == [
-        "vision_profiles.scene_overview.delivery.mode: the model takes no native video; "
+        "profiles.scene_overview.delivery.mode: the model takes no native video; "
         "use images or storyboard delivery"
     ]
 
 
 def test_more_frames_than_the_model_accepts_fail():
-    detail = FrameParams.from_mapping(settings_example()).vision_profiles["scene_detail"]
+    detail = FrameParams.from_mapping(settings_example()).profiles["scene_detail"]
 
     assert check_against_model(detail, ModelVisionCaps(max_images=10)) == [
         "frame_selection.budget: up to 16 images per request, but the model accepts at most 10"
@@ -808,7 +808,7 @@ def test_images_larger_than_the_model_accepts_fail():
     detail = resolve(settings_example()).profiles["scene_detail"]
 
     assert check_against_model(detail, ModelVisionCaps(max_image_side_px=512)) == [
-        "vision_profiles.scene_detail.image.max_side_px: image.max_side_px is 768 px, but "
+        "profiles.scene_detail.image.max_side_px: image.max_side_px is 768 px, but "
         "the model accepts at most 512 px"
     ]
 

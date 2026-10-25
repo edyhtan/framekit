@@ -87,9 +87,9 @@ def _profiles(params: Profiles) -> Iterator[tuple[str, FrameProfile]]:
         params = resolve_profile(params)
     if isinstance(params, ResolvedFrameParams):
         for name, resolved in params.profiles.items():
-            yield f"vision_profiles.{name}.", resolved.profile
+            yield f"profiles.{name}.", resolved.profile
     elif isinstance(params, ResolvedProfile):
-        yield (f"vision_profiles.{params.name}." if params.name else ""), params.profile
+        yield (f"profiles.{params.name}." if params.name else ""), params.profile
     else:
         raise TypeError(
             "expected FrameParams, ResolvedFrameParams, FrameProfile or ResolvedProfile, "

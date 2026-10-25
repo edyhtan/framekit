@@ -407,7 +407,7 @@ def test_native_video_returns_nominal_uniform_timestamps_with_a_note():
 
 def test_a_profile_and_its_resolved_form_plan_the_same():
     params = FrameParams.from_mapping(settings_example())
-    raw = params.vision_profiles["scene_detail"]
+    raw = params.profiles["scene_detail"]
 
     assert plan_frames(raw, (0.0, 45.0), PEAKS) == plan_frames(
         resolve(params).for_stage("L3a"), (0.0, 45.0), PEAKS)

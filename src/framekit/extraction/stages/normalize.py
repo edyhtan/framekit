@@ -27,7 +27,7 @@ async def probe_source(ctx: StageContext, unit: ScopedUnit) -> tuple[MediaInfo, 
 async def normalize(
     ctx: StageContext, unit: ScopedUnit, source: MediaInfo, fingerprint: str
 ) -> tuple[UnitMedia, dict[str, Any]]:
-    settings = ctx.run.plan.normalize
+    settings = ctx.run.plan.observation.normalize
     media_dir = ctx.media_dir
     inputs = {"version": NORMALIZE_VERSION, "source": fingerprint, "settings": plain(settings)}
 

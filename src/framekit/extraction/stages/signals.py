@@ -38,7 +38,7 @@ def _segments(values: Any, keys: tuple[str, ...]) -> list[dict[str, Any]]:
 
 async def detect(ctx: StageContext, media: UnitMedia) -> tuple[dict[str, Any], dict[str, Any]]:
     """Every configured detector over the analysis copy; their outputs checked and sorted."""
-    settings = ctx.run.plan.signals
+    settings = ctx.run.plan.observation.signals
     chosen = {
         "shots": (get_detector("shots", settings.shots.detector), settings.shots),
         "audio": (get_detector("audio", settings.audio.onsets.method), settings.audio),
