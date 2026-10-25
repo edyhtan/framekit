@@ -1,4 +1,4 @@
-"""Resolution: vision parameters in the canonical form the manifest records.
+"""Resolution: frame parameters in the canonical form the manifest records.
 
 `resolve(params)` pins every strategy to `name@version`, fills every default (strategy
 settings, delivery, image encoding, storyboard grid) and computes a stable SHA-256 digest
@@ -21,22 +21,22 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Final
 
-from framekit.vision.params import (
+from framekit.frames.params import (
     Budget,
     Delivery,
     DetailView,
+    FrameParams,
+    FrameProfile,
     FrameSelection,
     FrozenDict,
     ImagePrep,
     StoryboardGrid,
     StrategyRef,
     Views,
-    VisionParams,
-    VisionProfile,
     profile_mapping,
     thaw,
 )
-from framekit.vision.registry import StrategyKind, get_strategy
+from framekit.frames.registry import StrategyKind, get_strategy
 
 # Image encoding when a profile leaves it unset (not for native_video, where the provider
 # decodes the clip). Placeholders like every default until a benchmark sweep sets them.
@@ -47,7 +47,7 @@ DEFAULT_QUALITY: Final = 85  # jpeg and webp
 @dataclass(frozen=True)
 class ResolvedProfile:
     name: str
-    profile: VisionProfile  # every strategy pinned, every default filled
+    profile: FrameProfile  # every strategy pinned, every default filled
     canonical: str  # the canonical JSON
     digest: str  # its sha256
 
@@ -62,8 +62,8 @@ class ResolvedProfile:
 
 
 @dataclass(frozen=True)
-class ResolvedVisionParams:
-    params: VisionParams  # resolved: every profile pinned and filled
+class ResolvedFrameParams:
+    params: FrameParams  # resolved: every profile pinned and filled
     profiles: Mapping[str, ResolvedProfile]  # read-only
     stages: Mapping[str, str]  # stage → profile name, read-only
     canonical: str  # the canonical JSON of the whole block, for the manifest
@@ -83,7 +83,7 @@ class ResolvedVisionParams:
 
     def for_stage(self, stage: str) -> ResolvedProfile:
         if stage not in self.stages:
-            raise KeyError(f"no vision profile assigned to stage {stage!r}")
+            raise KeyError(f"no frame profile assigned to stage {stage!r}")
         return self.profiles[self.stages[stage]]
 
 
@@ -111,7 +111,7 @@ def _pin_set(refs: tuple[StrategyRef, ...], kind: StrategyKind) -> tuple[Strateg
     return tuple(sorted((pin(ref, kind) for ref in refs), key=lambda ref: (ref.name, ref.version)))
 
 
-def resolve_profile(profile: VisionProfile, name: str = "") -> ResolvedProfile:
+def resolve_profile(profile: FrameProfile, name: str = "") -> ResolvedProfile:
     fs = profile.frame_selection
     frame_selection = FrameSelection(
         candidates=pin(fs.candidates, "candidates"),
@@ -148,7 +148,7 @@ def resolve_profile(profile: VisionProfile, name: str = "") -> ResolvedProfile:
                 max_frames=detail.max_frames,
             ),
         )
-    resolved = VisionProfile(
+    resolved = FrameProfile(
         version=profile.version,
         frame_selection=frame_selection,
         image=image,
@@ -159,10 +159,10 @@ def resolve_profile(profile: VisionProfile, name: str = "") -> ResolvedProfile:
     return ResolvedProfile(name=name, profile=resolved, canonical=text, digest=digest(text))
 
 
-def resolve(params: VisionParams | Mapping[str, Any]) -> ResolvedVisionParams:
-    """Pins and fills every profile; plain data is checked first (VisionParamsError)."""
-    if not isinstance(params, VisionParams):
-        params = VisionParams.from_mapping(params)
+def resolve(params: FrameParams | Mapping[str, Any]) -> ResolvedFrameParams:
+    """Pins and fills every profile; plain data is checked first (FrameParamsError)."""
+    if not isinstance(params, FrameParams):
+        params = FrameParams.from_mapping(params)
     profiles = {
         name: resolve_profile(profile, name)
         for name, profile in sorted(params.vision_profiles.items())
@@ -176,11 +176,11 @@ def resolve(params: VisionParams | Mapping[str, Any]) -> ResolvedVisionParams:
             }
         )
     )
-    resolved_params = VisionParams(
+    resolved_params = FrameParams(
         vision_profiles={name: p.profile for name, p in profiles.items()},
         stages=params.stages,
     )
-    return ResolvedVisionParams(
+    return ResolvedFrameParams(
         params=resolved_params,
         profiles=FrozenDict(profiles),
         stages=FrozenDict(stages),

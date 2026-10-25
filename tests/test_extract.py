@@ -224,7 +224,7 @@ def test_a_folder_holding_another_dataset_is_refused(tmp_path, video):
         run(tmp_path, files)
 
 
-def test_vision_profiles_are_checked_against_the_analysis_copy(tmp_path, video):
+def test_frame_profiles_are_checked_against_the_analysis_copy(tmp_path, video):
     profiles = base_plan()["vision_profiles"]
     profiles["detail"]["image"]["max_side_px"] = 400
     files = write_inputs(

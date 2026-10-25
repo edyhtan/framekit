@@ -2,7 +2,7 @@
 
 Every setting that shapes an extraction run, in one place: what you give, what framekit decides, what comes out. It's the reference for the schemas in `framekit.extraction` (`SearchSpace`, `Corpus`, `ExtractionPlan`, `LensSpec`, `GoldSet`). Why it's shaped this way: [DESIGN.md](DESIGN.md) §2.3–§2.4; decisions: [DECISIONS.md](DECISIONS.md).
 
-> **Status:** built on `main` (2026-10-24), after v0.1.0: every setting below is in code, in `framekit.extraction` and `framekit.vision`, unless its tag says otherwise. Defaults are placeholders until a benchmark sweep sets them.
+> **Status:** built on `main` (2026-10-24), after v0.1.0: every setting below is in code, in `framekit.extraction` and `framekit.frames`, unless its tag says otherwise. Defaults are placeholders until a benchmark sweep sets them.
 
 **Tags:** **[built]** in code (v0.1.0, or on `main` since) · **[not built]** accepted or refused with a clear reason, but not implemented yet · **[open]** value or choice not decided · **[fixed]** a rule, not a setting. **Every number is a placeholder** until a benchmark sweep sets it.
 
@@ -285,7 +285,7 @@ Rules v1 [built]. Each is deterministic, and the manifest records every one appl
 | `scope` | `scope` (units, excluded ranges) | the units and ranges processed | **none**: the plan can't widen the scope |
 | `lenses` | `lenses` (with versions and digests) | `lens_passes.lenses` | none |
 
-The vision profiles aren't derived from the resolution: they're explicit, so nothing adapts them behind your back.
+The frame profiles aren't derived from the resolution: they're explicit, so nothing adapts them behind your back.
 
 ### 5.2 Observation: how the video is looked at (question 3)
 
@@ -352,11 +352,11 @@ The vision profiles aren't derived from the resolution: they're explicit, so not
     merge: {role: L2_merge}                        #   raise this to process it in one pass
 ```
 
-**Detectors** [built] are named, versioned code like vision strategies, and their keys go into L1's input hash: `ffmpeg_scene@1` (cuts where ffmpeg's scene score, on frames 160 px wide, exceeds `threshold`), `spectral_flux@1` (peaks of the spectral flux of the mono 16 kHz audio, Hann frames of 64 ms every 16 ms, above the surrounding 0.5 s mean plus `(1 − sensitivity) × 2` standard deviations, at least 50 ms apart; loudness per window), `frame_difference@1` (mean absolute difference of consecutive 64 px gray frames, four samples per value). `register_detector(Detector(kind, name, version, run))` adds others (kinds `shots`, `audio`, `motion`, `speech`, `audio_tags`); a plan naming one that isn't registered fails at load time.
+**Detectors** [built] are named, versioned code like frame strategies, and their keys go into L1's input hash: `ffmpeg_scene@1` (cuts where ffmpeg's scene score, on frames 160 px wide, exceeds `threshold`), `spectral_flux@1` (peaks of the spectral flux of the mono 16 kHz audio, Hann frames of 64 ms every 16 ms, above the surrounding 0.5 s mean plus `(1 − sensitivity) × 2` standard deviations, at least 50 ms apart; loudness per window), `frame_difference@1` (mean absolute difference of consecutive 64 px gray frames, four samples per value). `register_detector(Detector(kind, name, version, run))` adds others (kinds `shots`, `audio`, `motion`, `speech`, `audio_tags`); a plan naming one that isn't registered fails at load time.
 
 **Strategies** [built] are referenced three ways, all meaning the same: a name (`shot_boundaries`, or `shot_boundaries@1` with its version), a single-key mapping (`{dedupe: {method: phash, max_distance: 6}}`) or inline (`{strategy: uniform, fps: 4}`). Version 1 has: candidates `uniform` (`fps`) and `shot_based` (`pick: first | middle | last`); anchors `shot_boundaries` and `audio_onsets`; filters `dedupe` (`method: phash`, `max_distance`) and `sharpness` (`keep: best_per_window`, `window_s`), which need pixels, so planning returns them as pending and the media stage runs them on the planned frames (below); allocation signals `motion` and `audio_onsets` (`window_s`). A changed algorithm gets a new version, never a changed meaning.
 
-**Load-time checks** [built], before any spend. One `VisionParamsError` lists every problem with its path (`vision_profiles.scene_overview.frame_selection.filters: not allowed with native_video delivery …`). Problems with the structure and with the rules below come together: a rule is skipped only where a setting it reads has a problem of its own, which is listed instead.
+**Load-time checks** [built], before any spend. One `FrameParamsError` lists every problem with its path (`vision_profiles.scene_overview.frame_selection.filters: not allowed with native_video delivery …`). Problems with the structure and with the rules below come together: a rule is skipped only where a setting it reads has a problem of its own, which is listed instead.
 - unknown keys anywhere; unknown strategies or versions; a strategy in the wrong slot (a filter as candidates); settings that fail the strategy's own schema. Missing settings fail: nothing is guessed (only a setting with a single possible value, such as `dedupe.method`, defaults to it);
 - values are strict: a number must be a number (`true` or `"4"` fails; a whole number is fine where a decimal is expected) and finite; a list setting must be a list;
 - `native_video` takes only uniform candidates, `image.max_side_px` and `image.aspect`: no anchors, filters, budget, views, `format` or `quality`. The clip range is given when the stage runs, not in the profile;
@@ -364,7 +364,7 @@ The vision profiles aren't derived from the resolution: they're explicit, so not
 - `aspect` is always `preserve` [fixed]; `quality` only with jpeg or webp; a storyboard grid only with storyboard delivery; an anchor or allocation signal listed once;
 - every stage names an existing profile (unused profiles are fine).
 
-**When the facts are known** [built], two more checks return their problems (raise `VisionParamsError(problems)` to stop):
+**When the facts are known** [built], two more checks return their problems (raise `FrameParamsError(problems)` to stop):
 - `check_against_source`: no profile asks for more fps (candidates, the overview) or pixels than the analysis copy has (`max_side_px` against the copy's long side, per unit);
 - `check_against_model`: native video only on a model that takes it; no more images than the model accepts, counted from the profile's frame cap (a storyboard sends ⌈frames ÷ tiles⌉ images, each tile a frame of `max_side_px`); no larger images than it accepts. Extraction runs both before any spend: the model's limits from its catalog entry (`max_images`, `max_image_side_px`), the copy's size from probing each unit; outside extraction, describe a model with `ModelVisionCaps`.
 
@@ -391,14 +391,14 @@ The resolved form is canonical (sorted keys, no unset values, anchors and alloca
 In code [built] (YAML or JSON parsing is the caller's job):
 
 ```python
-from framekit.vision import (
-    ModelVisionCaps, Signals, SourceLimits, VisionParams,
+from framekit.frames import (
+    ModelVisionCaps, Signals, SourceLimits, FrameParams,
     check_against_model, check_against_source, plan_frames, resolve,
 )
 
-params = VisionParams.from_mapping(
+params = FrameParams.from_mapping(
     {"vision_profiles": plan["vision_profiles"], "stages": plan["stages"]}
-)                                                   # raises VisionParamsError: every problem
+)                                                   # raises FrameParamsError: every problem
 resolved = resolve(params)                          # pinned, defaults filled
 resolved.digest                                     # the manifest's vision digest
 detail = resolved.for_stage("L3a")                  # detail.digest: L3a's input hash
@@ -421,7 +421,7 @@ frames.timestamps, frames.pending_filters, frames.notes
     fixed_windows: {window_s: null, stride_s: 1}  # null: derived; pure arithmetic, no model
 ```
 
-- **`method: model`:** the L2 model sees frames of the whole unit (its vision profile, the excluded ranges left out), the cuts, the names and hints, and returns a synopsis and scenes. framekit repairs them into a clean cover of each processable span: ordered and contiguous, boundaries snapped to a cut within the tolerance, scenes under `min` merged into a neighbour (when the result stays within `max`), scenes over `max` split near even points (at a cut when one is close). Every repair is a note in the manifest. An unusable reply after the allowed attempts falls back to shot groups, flagged.
+- **`method: model`:** the L2 model sees frames of the whole unit (its frame profile, the excluded ranges left out), the cuts, the names and hints, and returns a synopsis and scenes. framekit repairs them into a clean cover of each processable span: ordered and contiguous, boundaries snapped to a cut within the tolerance, scenes under `min` merged into a neighbour (when the result stays within `max`), scenes over `max` split near even points (at a cut when one is close). Every repair is a note in the manifest. An unusable reply after the allowed attempts falls back to shot groups, flagged.
 - **`method: shot_groups`:** consecutive shots grouped until a scene reaches `target`, never past `max` (a longer shot is split evenly). No synopsis.
 - Excluded ranges aren't a setting here: they come from the search space's scope with no override. Scene ids are `<unit>_s000`, beat ids `<scene>_b000`, window ids `<unit>_w00000`.
 
@@ -570,7 +570,7 @@ The baseline scorer (`baseline_retriever`) embeds each gold query with the datas
 1. **Frames to cloud models** for a bring-your-own corpus: decided 2026-10-24 as "the plan must say" (`governance.model_inputs`, §5.5). Whether one answer should become the project default stays the owner's call.
 2. ~~The response cache and repeated runs~~: done 2026-10-24. `temperature` and `seed` are in `ConversationRequest` and, when set, in the cache key, so each self-consistency run can have its own seed.
 3. **Dropped rows.** Rows are flagged, never dropped, per DESIGN.md §3 L4. Should a "drop" ever exist, meaning excluded from the main tables but kept with its reason in `qc`?
-4. **Default numbers** for every placeholder above, from benchmark sweeps (vision profiles first).
+4. **Default numbers** for every placeholder above, from benchmark sweeps (frame profiles first).
 5. **Model choices** per role (video, vision, text, embeddings) and any L1 tools beyond the built-in detectors (speech, audio tags).
 6. ~~Schema details~~: decided 2026-10-24 (v1): the lens spec file format (§3.1) and the dataset layout (§7).
 7. **Not built yet:** native video (`video_understand`), image embeddings, chunked long units, file matching and alignment, annotation gold-set scoring, a distributed runner, refilling the frame budget after pixel filters.

@@ -15,8 +15,8 @@ from typing import Any
 from framekit.extraction.media.ffmpeg import MediaInfo, copy_size, scaled_size
 from framekit.extraction.resolve import ResolvedRun
 from framekit.extraction.segmenting import processable_spans
+from framekit.frames import ResolvedProfile, frame_cap
 from framekit.models.catalog import estimate_cost
-from framekit.vision import ResolvedProfile, frame_cap
 
 PATCH_PX = 28
 PROMPT_TOKENS = {"L2": 1500, "L3a": 1500, "L3b": 1200}

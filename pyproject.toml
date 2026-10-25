@@ -80,20 +80,20 @@ root_package = "framekit"
 include_external_packages = true
 
 [[tool.importlinter.contracts]]
-# vision and models are independent siblings: neither may import the other.
-name = "Layers: cli -> extraction -> vision | models -> contracts"
+# frames and models are independent siblings: neither may import the other.
+name = "Layers: cli -> extraction -> frames | models -> contracts"
 type = "layers"
 layers = [
     "framekit.cli",
     "framekit.extraction",
-    "framekit.vision | framekit.models",
+    "framekit.frames | framekit.models",
     "framekit.contracts",
 ]
 
 [[tool.importlinter.contracts]]
 name = "Tables and spec files only in extraction: no pyarrow or yaml below it"
 type = "forbidden"
-source_modules = ["framekit.contracts", "framekit.models", "framekit.vision"]
+source_modules = ["framekit.contracts", "framekit.models", "framekit.frames"]
 forbidden_modules = ["pyarrow", "yaml"]
 allow_indirect_imports = true
 
@@ -114,7 +114,7 @@ source_modules = [
     "framekit.models.sources",
     "framekit.models.router",
     "framekit.models.cache",
-    "framekit.vision",
+    "framekit.frames",
     "framekit.extraction",
     "framekit.cli",
 ]
@@ -146,13 +146,13 @@ type = "forbidden"
 source_modules = [
     "framekit.contracts",
     "framekit.models",
-    "framekit.vision.params",
-    "framekit.vision.planning",
-    "framekit.vision.resolve",
-    "framekit.vision.checks",
-    "framekit.vision.registry",
-    "framekit.vision.builtin",
-    "framekit.vision.signals",
+    "framekit.frames.params",
+    "framekit.frames.planning",
+    "framekit.frames.resolve",
+    "framekit.frames.checks",
+    "framekit.frames.registry",
+    "framekit.frames.builtin",
+    "framekit.frames.signals",
     "framekit.extraction.schemas",
     "framekit.extraction.resolve",
     "framekit.extraction.runner",

@@ -1,20 +1,20 @@
-"""Vision parameters: schema, load-time checks, resolution and digests, outside checks,
+"""Frame parameters: schema, load-time checks, resolution and digests, outside checks,
 and the strategy registry (docs/DESIGN.md §2.3, docs/settings.md §5.2)."""
 
 import json
 
 import pytest
+from frame_examples import OLD_NATIVE_VIDEO_EXAMPLE, params_with, profile, settings_example
 from pydantic import BaseModel, ValidationError
-from vision_examples import OLD_NATIVE_VIDEO_EXAMPLE, params_with, profile, settings_example
 
-from framekit.vision import (
+from framekit.frames import (
+    FrameParams,
+    FrameParamsError,
+    FrameProfile,
     ModelVisionCaps,
     SourceLimits,
     Strategy,
     UnknownStrategyError,
-    VisionParams,
-    VisionParamsError,
-    VisionProfile,
     check_against_model,
     check_against_source,
     get_strategy,
@@ -23,12 +23,12 @@ from framekit.vision import (
     resolve_profile,
     strategies,
 )
-from framekit.vision.builtin import NoParams
+from framekit.frames.builtin import NoParams
 
 
 def problems_of(data):
-    with pytest.raises(VisionParamsError) as caught:
-        VisionParams.from_mapping(data)
+    with pytest.raises(FrameParamsError) as caught:
+        FrameParams.from_mapping(data)
     return list(caught.value.problems)
 
 
@@ -40,7 +40,7 @@ def problems_of_profile(**parts):
 
 
 def test_the_settings_reference_example_parses_validates_and_resolves():
-    params = VisionParams.from_mapping(settings_example())
+    params = FrameParams.from_mapping(settings_example())
     resolved = resolve(params)
 
     assert set(resolved.profiles) == {"scene_overview", "scene_detail", "keyframes"}
@@ -94,11 +94,11 @@ def test_the_old_native_video_example_fails_with_a_precise_message():
 
 
 def test_the_error_message_lists_every_problem():
-    with pytest.raises(VisionParamsError) as caught:
-        VisionParams.from_mapping(OLD_NATIVE_VIDEO_EXAMPLE)
+    with pytest.raises(FrameParamsError) as caught:
+        FrameParams.from_mapping(OLD_NATIVE_VIDEO_EXAMPLE)
 
     message = str(caught.value)
-    assert message.startswith("4 problems in vision parameters:")
+    assert message.startswith("4 problems in frame parameters:")
     assert message.count("\n- ") == 4
     assert isinstance(caught.value, ValueError)
 
@@ -307,7 +307,7 @@ def test_aspect_is_always_preserve():
         "vision_profiles.p.image.aspect: aspect is always 'preserve' (frames are never "
         "cropped or stretched), got 'crop'"
     )
-    assert VisionParams.from_mapping(params_with(p=profile(
+    assert FrameParams.from_mapping(params_with(p=profile(
         image={"max_side_px": 512, "aspect": "preserve"})))
 
 
@@ -317,7 +317,7 @@ def test_png_takes_no_quality():
     assert problem == (
         "vision_profiles.p.image.quality: png is lossless; quality applies to jpeg and webp"
     )
-    assert VisionParams.from_mapping(params_with(p=profile(
+    assert FrameParams.from_mapping(params_with(p=profile(
         image={"max_side_px": 512, "format": "webp", "quality": 90})))
 
 
@@ -327,33 +327,33 @@ def test_a_storyboard_grid_needs_storyboard_delivery():
     assert problem == (
         "vision_profiles.p.delivery.storyboard: a grid applies only to mode storyboard"
     )
-    assert VisionParams.from_mapping(params_with(p=profile(
+    assert FrameParams.from_mapping(params_with(p=profile(
         delivery={"mode": "storyboard", "storyboard": {"rows": 3, "cols": 4}})))
 
 
 def test_the_input_must_be_a_mapping():
     assert problems_of(["vision_profiles"]) == [
-        "(root): Input should be a valid dictionary or instance of VisionParams"
+        "(root): Input should be a valid dictionary or instance of FrameParams"
     ]
 
 
 def test_a_single_profile_can_be_loaded_on_its_own():
-    loaded = VisionProfile.from_mapping(profile())
+    loaded = FrameProfile.from_mapping(profile())
     assert loaded.frame_selection.candidates.params == {"fps": 2}
 
-    with pytest.raises(VisionParamsError) as caught:
-        VisionProfile.from_mapping(profile(image={"max_side_px": 512, "format": "gif"}))
+    with pytest.raises(FrameParamsError) as caught:
+        FrameProfile.from_mapping(profile(image={"max_side_px": 512, "format": "gif"}))
     assert caught.value.problems == ("image.format: Input should be 'jpeg', 'png' or 'webp'",)
 
 
 def test_direct_construction_runs_the_same_checks():
     with pytest.raises(ValidationError, match="not allowed with native_video"):
-        VisionProfile.model_validate(OLD_NATIVE_VIDEO_EXAMPLE["vision_profiles"]["scene_overview"])
+        FrameProfile.model_validate(OLD_NATIVE_VIDEO_EXAMPLE["vision_profiles"]["scene_overview"])
 
 
 def test_to_mapping_round_trips():
-    params = VisionParams.from_mapping(settings_example())
-    again = VisionParams.from_mapping(params.to_mapping())
+    params = FrameParams.from_mapping(settings_example())
+    again = FrameParams.from_mapping(params.to_mapping())
 
     assert again == params
     detail = params.to_mapping()["vision_profiles"]["scene_detail"]["frame_selection"]
@@ -402,7 +402,7 @@ def test_numbers_must_be_finite(bad):
 
 
 def test_a_reference_keeps_its_checked_settings_and_resolution_fills_the_rest():
-    params = VisionParams.from_mapping(params_with(p=profile(frame_selection={
+    params = FrameParams.from_mapping(params_with(p=profile(frame_selection={
         "candidates": {"strategy": "uniform", "fps": 4},  # a whole number for a decimal
         "filters": [{"dedupe": {"max_distance": 4}}],
     })))
@@ -426,7 +426,7 @@ def test_list_settings_must_be_lists():
 
 
 def test_parsed_parameters_are_read_only():
-    params = VisionParams.from_mapping(settings_example())
+    params = FrameParams.from_mapping(settings_example())
     detail = params.vision_profiles["scene_detail"]
 
     with pytest.raises(TypeError, match="read-only"):
@@ -440,9 +440,9 @@ def test_parsed_parameters_are_read_only():
 
 
 def test_parsed_and_resolved_parameters_are_hashable():
-    params = VisionParams.from_mapping(settings_example())
+    params = FrameParams.from_mapping(settings_example())
 
-    assert hash(params) == hash(VisionParams.from_mapping(settings_example()))
+    assert hash(params) == hash(FrameParams.from_mapping(settings_example()))
     assert hash(resolve(params).for_stage("L3a")) == hash(resolve(params).for_stage("L3a"))
     assert len(set(params.vision_profiles["scene_detail"].frame_selection.filters)) == 2
 
@@ -467,7 +467,7 @@ def test_changing_the_resolved_mapping_changes_nothing_recorded():
 def test_native_video_accepts_uniform_candidates_and_a_size():
     native = profile(image={"max_side_px": 512, "aspect": "preserve"},
                      delivery={"mode": "native_video"})
-    assert VisionParams.from_mapping(params_with(p=native))
+    assert FrameParams.from_mapping(params_with(p=native))
 
 
 def test_native_video_rejects_other_candidates_anchors_and_views():
@@ -547,12 +547,12 @@ def test_a_detail_span_is_at_least_a_millisecond():
 
 
 def test_views_that_fill_the_budget_exactly_are_accepted():
-    assert VisionParams.from_mapping(params_with(p=profile(
+    assert FrameParams.from_mapping(params_with(p=profile(
         views=views(6, 2, 5), frame_selection=capped(16))))
 
 
 def test_views_without_a_scene_cap_are_not_summed():
-    assert VisionParams.from_mapping(params_with(p=profile(views=views(60, 10, 50))))
+    assert FrameParams.from_mapping(params_with(p=profile(views=views(60, 10, 50))))
 
 
 def test_overview_plus_detail_needs_both_parts():
@@ -572,7 +572,7 @@ def test_other_view_modes_take_no_overview_or_detail():
         "vision_profiles.p.views.detail: applies only to mode overview_plus_detail",
     ]
     for mode in ("single", "split_by_budget", "per_module"):
-        assert VisionParams.from_mapping(params_with(p=profile(views={"mode": mode})))
+        assert FrameParams.from_mapping(params_with(p=profile(views={"mode": mode})))
 
 
 def test_detail_signals_are_checked_like_allocation_signals():
@@ -595,7 +595,7 @@ def test_stages_must_name_an_existing_profile():
     data["stages"]["L3a"] = {"vision": "scene_detial"}
 
     assert problems_of(data) == [
-        "stages.L3a.vision: no vision profile named 'scene_detial' "
+        "stages.L3a.vision: no frame profile named 'scene_detial' "
         "(profiles: keyframes, scene_detail, scene_overview)"
     ]
 
@@ -604,7 +604,7 @@ def test_unused_profiles_are_allowed():
     data = settings_example()
     del data["stages"]["embed_image"]
 
-    resolved = resolve(VisionParams.from_mapping(data))
+    resolved = resolve(FrameParams.from_mapping(data))
 
     assert "keyframes" in resolved.profiles
     with pytest.raises(KeyError):
@@ -674,7 +674,7 @@ def test_a_profile_digest_ignores_the_profile_name():
 def test_the_resolved_form_loads_back_to_the_same_digest():
     resolved = resolve(settings_example())
 
-    again = resolve(VisionParams.from_mapping(resolved.to_mapping()))
+    again = resolve(FrameParams.from_mapping(resolved.to_mapping()))
 
     assert again.digest == resolved.digest
     assert again.mapping == resolved.mapping
@@ -689,7 +689,7 @@ def test_the_canonical_json_is_sorted_and_has_no_nulls():
 
 
 def test_a_profile_resolves_on_its_own_with_the_same_digest():
-    params = VisionParams.from_mapping(settings_example())
+    params = FrameParams.from_mapping(settings_example())
 
     alone = resolve_profile(params.vision_profiles["scene_detail"])
 
@@ -702,7 +702,7 @@ def test_a_profile_resolves_on_its_own_with_the_same_digest():
 def test_the_source_check_passes_when_the_copy_is_large_enough():
     copy = SourceLimits(fps=12, width_px=1280, height_px=720)
 
-    assert check_against_source(VisionParams.from_mapping(settings_example()), copy) == []
+    assert check_against_source(FrameParams.from_mapping(settings_example()), copy) == []
 
 
 def test_the_source_check_rejects_more_fps_or_pixels_than_the_copy_has():
@@ -722,7 +722,7 @@ def test_the_source_check_covers_the_overview_fps():
     data = profile(views=views(), frame_selection=capped(16))
     data["views"]["overview"]["fps"] = 30
 
-    problems = check_against_source(VisionProfile.from_mapping(data),
+    problems = check_against_source(FrameProfile.from_mapping(data),
                                     SourceLimits(fps=12, width_px=960, height_px=720))
 
     assert problems == ["views.overview.fps: 30 fps is more than the analysis copy's 12 fps"]
@@ -765,7 +765,7 @@ def test_native_video_needs_a_model_that_takes_video():
 
 
 def test_more_frames_than_the_model_accepts_fail():
-    detail = VisionParams.from_mapping(settings_example()).vision_profiles["scene_detail"]
+    detail = FrameParams.from_mapping(settings_example()).vision_profiles["scene_detail"]
 
     assert check_against_model(detail, ModelVisionCaps(max_images=10)) == [
         "frame_selection.budget: up to 16 images per request, but the model accepts at most 10"
@@ -773,7 +773,7 @@ def test_more_frames_than_the_model_accepts_fail():
 
 
 def test_a_profile_without_a_frame_cap_fails_on_a_limited_model():
-    assert check_against_model(VisionProfile.from_mapping(profile()),
+    assert check_against_model(FrameProfile.from_mapping(profile()),
                                ModelVisionCaps(max_images=10)) == [
         "frame_selection.budget: no frame cap, but the model accepts at most 10 images; "
         "set max_frames_per_scene"
@@ -781,14 +781,14 @@ def test_a_profile_without_a_frame_cap_fails_on_a_limited_model():
 
 
 def test_views_without_anchors_bound_the_frames_on_their_own():
-    bounded = VisionProfile.from_mapping(profile(views=views(6, 2, 5)))
+    bounded = FrameProfile.from_mapping(profile(views=views(6, 2, 5)))
 
     assert check_against_model(bounded, ModelVisionCaps(max_images=16)) == []
     assert check_against_model(bounded, ModelVisionCaps(max_images=15)) != []
 
 
 def test_a_storyboard_sends_fewer_but_larger_images():
-    board = VisionProfile.from_mapping(profile(
+    board = FrameProfile.from_mapping(profile(
         frame_selection=capped(16),
         delivery={"mode": "storyboard", "storyboard": {"rows": 2, "cols": 3}},
     ))
@@ -829,7 +829,7 @@ def test_model_limits_must_be_whole_numbers_of_at_least_one(caps, error, message
 
 
 def test_the_model_check_takes_one_profile():
-    params = VisionParams.from_mapping(settings_example())
+    params = FrameParams.from_mapping(settings_example())
 
     for block in (params, resolve(params)):
         with pytest.raises(TypeError, match="takes one profile.*for_stage"):

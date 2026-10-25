@@ -31,12 +31,12 @@ flowchart TB
         LS["lens specs<br/>vocabulary, schema, prompts, rubric"]
         CP["corpus profile<br/>unit definition, metadata, entities, rights"]
         MP["model profile<br/>role → model and settings"]
-        VP["vision profiles<br/>stage → frame selection, image, delivery"]
+        VP["frame profiles<br/>stage → frame selection, image, delivery"]
     end
     subgraph ENG["framekit (lens-free, corpus-free)"]
         EX["extraction<br/>schemas, stages L0–L4, runner, dataset writer, benchmarks, CLI"]
         MA["model access<br/>catalog, router, adapters, response cache"]
-        VI["vision<br/>frame selection strategies, image prep, delivery"]
+        VI["frames<br/>frame selection strategies, image prep, delivery"]
         CT["contracts<br/>ports, pure shared types"]
     end
     LS --> EX
@@ -116,7 +116,7 @@ dataset = extract(A, V, plan=plan, runner=LocalRunner(), out=path)
 |---|---|
 | **A**, the search space | **given input** describing what should become findable in this corpus (§2.4): intent text, lens specs (§4), target moment length, scope, example queries |
 | **V**, the corpus | the corpus profile (§1); the units as **references** to media files (paths or URIs), never copies |
-| **plan**, how A is realized | vision profiles (§2.3), segmentation, signals, perception and lens-pass settings, embedding, the model profile, quality control, budget, formatting (§2.4); optional: defaults apply, and anything set here overrides them |
+| **plan**, how A is realized | frame profiles (§2.3), segmentation, signals, perception and lens-pass settings, embedding, the model profile, quality control, budget, formatting (§2.4); optional: defaults apply, and anything set here overrides them |
 | **output: dataset** | see §2.1 |
 
 Execution options (runner, concurrency, cache, paths) are separate from both: they change speed and cost, never content.
@@ -202,7 +202,7 @@ erDiagram
 | **Benchmarks** | the benchmark harness (§6.2) compares datasets from different A's with a pinned plan (augmentation strategies), or different plans with a fixed A |
 | **Training experiments** | phrasing ↔ segment pairs, annotation labels and vectors as training data, read as plain Parquet / Arrow with any training stack; framekit installs as a normal library and never depends on a training framework (ARCHITECTURE.md §2); subject to the rights rule (§8) |
 
-### 2.3 Vision parameters (`vision_params`)
+### 2.3 Frame parameters
 
 **How a model sees video** (which frames, at what quality, delivered how) is its own structured, versioned parameter, separate from the model profile and the lens specs. It changes the dataset as much as the choice of model does: a 0.3 s impact can fall between frames at 2 fps, and frames sent are most of perception's cost.
 
@@ -219,7 +219,7 @@ flowchart LR
     BU -. "frame timestamps" .-> PR[("provenance")]
 ```
 
-**Shape.** A vision profile is a named, versioned block; the plan assigns one per stage that sends pictures to a model, the way the model profile assigns a model per role:
+**Shape.** A frame profile is a named, versioned block; the plan assigns one per stage that sends pictures to a model, the way the model profile assigns a model per role:
 
 ```yaml
 vision_profiles:
@@ -259,17 +259,17 @@ stages:
 | `delivery` | how frames reach the model | `images` (a list), `storyboard` (frames tiled into grids: fewer images, less detail), `native_video` (the provider samples: only uniform fps and a resolution apply; the clip range is given when the stage runs) |
 
 **Rules**
-- **Strategies are code, settings are data.** `uniform`, `shot_based`, `dedupe` (perceptual hash), `sharpness`, `motion` allocation and so on are named, versioned components in `framekit.vision`. A vision profile only picks and parameterizes them, so trying a new combination needs no code. A strategy whose algorithm changes gets a new version; a name never changes meaning, so `dedupe@1` datasets stay reproducible.
+- **Strategies are code, settings are data.** `uniform`, `shot_based`, `dedupe` (perceptual hash), `sharpness`, `motion` allocation and so on are named, versioned components in `framekit.frames`. A frame profile only picks and parameterizes them, so trying a new combination needs no code. A strategy whose algorithm changes gets a new version; a name never changes meaning, so `dedupe@1` datasets stay reproducible.
 - **Capabilities are checked, never guessed.** `native_video` with a non-uniform selection, or more images than a model accepts, is rejected at load time with the reason (§0.2). Nothing is silently resampled.
 - **Validated before any spend:** unknown strategies, missing settings, or settings beyond the analysis copy (more fps or pixels than L0 produced) fail at load time.
-- **Resolved and recorded:** the manifest stores every vision profile fully resolved (defaults filled in) with each strategy's version.
+- **Resolved and recorded:** the manifest stores every frame profile fully resolved (defaults filled in) with each strategy's version.
 - **Part of the input hash** of each stage that uses it: changing L3a's profile reruns L3a and later stages, never L0–L2.
 - **Selected frames are provenance:** each scene records the timestamps of the frames actually sent, so a missed moment can be traced to sampling or to the model.
 - **Corpus-neutral, with hints:** profiles carry no corpus vocabulary. A corpus profile's perception hints may suggest overrides (e.g. animation: dedupe aggressively, expect smear frames); the overrides land in the plan and the manifest like any other setting.
-- **Reusable outside extraction:** consumers use the same profiles and `framekit.vision` at query time (e.g. the search app's grounding samples densely on a few candidate scenes), so offline and online sampling are described the same way.
+- **Reusable outside extraction:** consumers use the same profiles and `framekit.frames` at query time (e.g. the search app's grounding samples densely on a few candidate scenes), so offline and online sampling are described the same way.
 - **Defaults come from a sweep**, not a guess: the benchmark harness compares profiles on the gold set at equal cost (§6.2). The values above are placeholders.
 
-**Built** (`framekit.vision`, 2026-10-24): the schema (`VisionParams`, `VisionProfile`; strict values, read-only once parsed), the strategy registry with the version-1 strategies named above, every load-time check (one error lists every problem), the checks against the analysis copy and against a model's limits (the catalog now declares them), resolution to the canonical recorded form with SHA-256 digests (per profile and for the whole block), and **pixel-free planning**: frame timestamps from candidates, anchors, the budget, allocation signals and overview-plus-detail views, using L1 signals only. **With extraction:** the planned frames are read from the analysis copy at the profile's size, the pixel filters (`dedupe`, `sharpness`; `framekit.vision.pixels`) run on them after the budget (anchors are never dropped, and version 1 doesn't refill the budget), and they're delivered as images or storyboard grids. `native_video` is refused at load time until a `video_understand` port exists. The schema lives in `framekit.vision`, not in `contracts`, because contracts stay free of Pydantic ([ARCHITECTURE.md](ARCHITECTURE.md) §2.1). Signatures: ARCHITECTURE.md §3; every setting, check and filled-in default: [settings.md](settings.md) §5.2.
+**Built** (`framekit.frames`, 2026-10-24): the schema (`FrameParams`, `FrameProfile`; strict values, read-only once parsed), the strategy registry with the version-1 strategies named above, every load-time check (one error lists every problem), the checks against the analysis copy and against a model's limits (the catalog now declares them), resolution to the canonical recorded form with SHA-256 digests (per profile and for the whole block), and **pixel-free planning**: frame timestamps from candidates, anchors, the budget, allocation signals and overview-plus-detail views, using L1 signals only. **With extraction:** the planned frames are read from the analysis copy at the profile's size, the pixel filters (`dedupe`, `sharpness`; `framekit.frames.pixels`) run on them after the budget (anchors are never dropped, and version 1 doesn't refill the budget), and they're delivered as images or storyboard grids. `native_video` is refused at load time until a `video_understand` port exists. The schema lives in `framekit.frames`, not in `contracts`, because contracts stay free of Pydantic ([ARCHITECTURE.md](ARCHITECTURE.md) §2.1). Signatures: ARCHITECTURE.md §3; every setting, check and filled-in default: [settings.md](settings.md) §5.2.
 
 The plan's other settings (segment granularity, L1 detector settings, phrasings per scene, self-consistency runs, embedding inputs; groups in §2.4; every one listed in [settings.md](settings.md)) follow the same pattern: named, resolved into the manifest, and part of the input hash of the stages they affect. Their schema is built (`ExtractionPlan`, 2026-10-24).
 
@@ -281,7 +281,7 @@ The plan's other settings (segment granularity, L1 detector settings, phrasings 
 |---|---|---|
 | **Dimensions**: what can be searched for | lens specs (vocabularies, schemas, phrasing styles) | lens passes, annotation fields, phrasings |
 | **Evidence**: what must be observed | perception modules the lenses require | L3a modules, signals |
-| **Resolution**: how fine a match can be | target moment length (e.g. 3–6 s) | segmentation, vision density |
+| **Resolution**: how fine a match can be | target moment length (e.g. 3–6 s) | segmentation, frame density |
 | **Scope**: which parts of the corpus count | unit subset, exclusions | units processed, excluded ranges |
 | **Query style**: how searches will be phrased | example queries | phrasing prompts, embedding inputs |
 
@@ -290,7 +290,7 @@ The plan's other settings (segment granularity, L1 detector settings, phrasings 
 | Plan group | Contains |
 |---|---|
 | **Source preparation** | `normalize` (the analysis copy) |
-| **Observation** | `vision` (§2.3), `signals`, `long_units` |
+| **Observation** | frame profiles (§2.3), `signals`, `long_units` |
 | **Structure** | `segmentation` |
 | **Interpretation** | `perception`, `lens_passes`, `embedding` |
 | **Models** | model and settings per role |
@@ -321,7 +321,7 @@ flowchart LR
 - **Strategies live outside framekit.** The harness takes the A's with a label per strategy and records the label in each manifest.
 - **Shared work is reused:** if A's differ only in lenses or phrasing style, L0–L3a run once and only lens passes and embedding rerun. Changing modules, resolution or scope reruns more, and the cost report says how much.
 - **The yardstick doesn't move:** gold queries and gold moments are fixed per corpus and never generated from A. Model randomness is pinned (temperature or seed in the plan) and shared calls replay from the response cache.
-- The same harness also runs the opposite comparison: a fixed A with different plans, e.g. a sweep of vision profiles.
+- The same harness also runs the opposite comparison: a fixed A with different plans, e.g. a sweep of frame profiles.
 
 ---
 
@@ -353,12 +353,12 @@ Detectors are named, versioned code, picked in the plan; the built-ins (version 
 - **Motion intensity:** built in, `frame_difference` (mean absolute difference between consecutive small gray frames, a cut included); optical-flow magnitude remains an option.
 
 ### L2 — Scene segmentation
-- A long-context video model gets the whole unit (frames chosen by L2's vision profile, §2.3; typically uniform ~1 fps, as images or storyboard grids until native video is built) and returns a **synopsis** plus **scene boundaries** (30–60 s), snapped to L1 shot cuts. framekit repairs the proposal into a clean cover of the unit's processable parts (ordered, contiguous, too-short scenes merged, too-long ones split), noting every repair; an unusable reply falls back to shot groups, flagged.
+- A long-context video model gets the whole unit (frames chosen by L2's frame profile, §2.3; typically uniform ~1 fps, as images or storyboard grids until native video is built) and returns a **synopsis** plus **scene boundaries** (30–60 s), snapped to L1 shot cuts. framekit repairs the proposal into a clean cover of the unit's processable parts (ordered, contiguous, too-short scenes merged, too-long ones split), noting every repair; an unusable reply falls back to shot groups, flagged.
 - `segmentation.method: shot_groups` makes scenes from consecutive shots without a model (and without a synopsis).
 - The synopsis is passed to later passes, because a scene's meaning depends on unit context.
 
 ### L3a — Perception (video → observable facts)
-- Input per scene: frames chosen by L3a's vision profile (§2.3; e.g. adaptive, a budget per scene, anchored on shot cuts), L1 signals, the synopsis, the entity reference list from the corpus profile.
+- Input per scene: frames chosen by L3a's frame profile (§2.3; e.g. adaptive, a budget per scene, anchored on shot cuts), L1 signals, the synopsis, the entity reference list from the corpus profile.
 - Output: a **core record** plus **optional modules**. No interpretation.
 
 | Part | Contents |
@@ -405,7 +405,7 @@ framekit stores both without understanding them.
 - QC results are part of the dataset's provenance; failing rows are flagged, not silently dropped.
 
 ### Cost
-- Perception (L2/L3a) is the expensive, video-bound part and runs once per corpus, model and vision profile (plus targeted module re-runs). Its cost scales mostly with the frames sent, so the vision profiles are the main cost lever.
+- Perception (L2/L3a) is the expensive, video-bound part and runs once per corpus, model and frame profile (plus targeted module re-runs). Its cost scales mostly with the frames sent, so the frame profiles are the main cost lever.
 - Lens passes are cheap text calls; adding or iterating a lens never touches video.
 - A cost estimate is shown before a run, and the budget in the plan caps it.
 
@@ -470,7 +470,7 @@ Per corpus × lens:
 **Library contract test:** framekit must run end to end with a second, minimal lens spec without code changes.
 
 ### 6.2 Benchmark harness
-- **Two kinds of comparison:** different A's with a pinned plan (augmentation strategies, §2.4), or a fixed A with different plans (models, vision profiles, prompts, lens versions).
+- **Two kinds of comparison:** different A's with a pinned plan (augmentation strategies, §2.4), or a fixed A with different plans (models, frame profiles, prompts, lens versions).
 - **Fairness checks:** the harness verifies that only the intended side varies (resolved plans or A hashes), and records each variant's label in its manifest.
 - **Scoring is a plug-in:** `score(dataset, gold) -> metrics`. framekit ships a **baseline retriever** as the default scorer: embed each gold query with a fixed embedding model, rank segments by similarity to their phrasings and summaries, and report recall@k and the rank of the gold moment. The baseline is neutral and the same for every variant, so it's a fair yardstick. It isn't the real search agent; consumers (e.g. short_extract) can plug in theirs.
 - **Gold set:** gold queries with gold moments `(unit_id, start, end)` per corpus, fixed for a comparison and independent of A. Annotation gold sets (§6.1) score extraction quality alongside.
@@ -497,7 +497,7 @@ flowchart LR
 
 **E1: first dataset (5 units of the test corpus)**
 - A, V and dataset schemas; lens spec format and loader. **Built (2026-10-24).**
-- Vision parameters (§2.3): schema, checks, resolution, planning, pixel filters, image preparation and delivery. **Built (2026-10-24).**
+- Frame parameters (§2.3): schema, checks, resolution, planning, pixel filters, image preparation and delivery. **Built (2026-10-24).**
 - L0–L4 + embed end to end with the corpus profile and modular perception; dataset writer and reader v1; CLI `extract`, `bench`, `cache`. **Built (2026-10-24)**, tested on generated test patterns with a scripted model; not yet run against a real provider.
 - Still to do: run it on 5 units with real models (the model choice is open, §9); the emotions & dynamics lens (Appendix B) with a ~10-scene gold set, plus a **minimal second lens** (e.g. comedy craft, ~10 labels) on the same scenes, purely to prove framekit has no lens leakage.
 
@@ -546,9 +546,9 @@ Users' copies of a corpus differ (releases, edits, frame rates). A dedicated mod
 - **Text model** for lens passes; **embedding models** (text + SigLIP).
 - **Frames to remote models for bring-your-own corpora:** no default; each plan says (`governance.model_inputs`), and `local_only` is enforced against each role's provider address (2026-10-24).
 - **A, V and plan schemas, the lens spec file format, the dataset layout:** built as v1 (2026-10-24; DECISIONS), revisitable. Still open from [settings.md](settings.md) §8: a drop policy for rows (today: flagged, never dropped).
-- **Vision:** refilling the frame budget after pixel filters drop frames; planning `split_by_budget` and `per_module` views; keeping `budget.max_frames` across the spans of a unit (planning applies it per span).
+- **Frames:** refilling the frame budget after pixel filters drop frames; planning `split_by_budget` and `per_module` views; keeping `budget.max_frames` across the spans of a unit (planning applies it per span).
 - **Baseline scorer details:** its fixed embedding model and metrics (§6.2); the gold-query set per corpus.
-- **Default vision profiles** per stage, from a benchmark sweep (§2.3, §6.2).
+- **Default frame profiles** per stage, from a benchmark sweep (§2.3, §6.2).
 - **A distribution name for PyPI,** if the library is ever published (`framekit` is taken there; [ARCHITECTURE.md](ARCHITECTURE.md) §8).
 - **Distributed runner** technology, when it's needed.
 - Per lens: see the lens appendix (e.g. base emotion taxonomy in Appendix B).

@@ -1,6 +1,7 @@
-"""Vision parameters (`vision_params`, DESIGN.md §2.3): how a model sees video, as data.
+"""Frame parameters (DESIGN.md §2.3): which frames a model sees, and how they're prepared
+and delivered, as data.
 
-A **vision profile** is a named, versioned block with four parts: `frame_selection`
+A **frame profile** is a named, versioned block with four parts: `frame_selection`
 (candidates, anchors, filters, budget), `image` (size and encoding), `delivery` (images,
 storyboard or native video) and optional `views` (several looks per segment). The plan
 assigns one profile per stage that sends pictures (`stages: {L3a: {vision: scene_detail}}`).
@@ -10,8 +11,8 @@ Strategies are referenced by name, as in the YAML of docs/settings.md §5.2:
 - a single-key mapping: `{dedupe: {method: phash, max_distance: 6}}`;
 - inline (the candidates shape): `{strategy: uniform, fps: 4}`.
 
-`VisionParams.from_mapping(data)` checks everything at load time and raises one
-`VisionParamsError` listing every problem with its path: the structure (unknown keys, types,
+`FrameParams.from_mapping(data)` checks everything at load time and raises one
+`FrameParamsError` listing every problem with its path: the structure (unknown keys, types,
 ranges), each strategy (known for its slot, settings valid for it) and the rules that tie
 settings together (native video, views, png quality, ...). A rule is skipped only where a
 setting it reads has a problem of its own, which is listed instead.
@@ -20,7 +21,7 @@ Values are strict: numbers must be numbers (not `true` or `"4"`) and finite; a w
 is fine where a decimal is expected. Parsed parameters are read-only all the way down, so
 what was checked and digested is what runs. Checks that need outside facts are separate
 functions: `check_against_source` (the analysis copy) and `check_against_model` (a model's
-vision limits), in `framekit.vision.checks`.
+vision limits), in `framekit.frames.checks`.
 """
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -40,7 +41,7 @@ from pydantic import (
 )
 from pydantic_core import ErrorDetails, PydanticCustomError
 
-from framekit.vision.registry import (
+from framekit.frames.registry import (
     KIND_LABELS,
     RESERVED_SETTING,
     StrategyKind,
@@ -59,7 +60,7 @@ REF_SHAPES = (
     "a strategy is a name ('uniform', 'uniform@1'), a single-key mapping "
     "({name: {settings}}) or an inline mapping ({strategy: name, settings...})"
 )
-PROBLEMS_ERROR = "vision_problems"  # our error type inside pydantic's ValidationError
+PROBLEMS_ERROR = "frame_problems"  # our error type inside pydantic's ValidationError
 
 Loc = tuple[str | int, ...]
 Problem = tuple[Loc, str]  # (path, message)
@@ -67,14 +68,14 @@ Problem = tuple[Loc, str]  # (path, message)
 Name = Annotated[str, StringConstraints(pattern=r"^[A-Za-z][A-Za-z0-9_-]*$")]
 
 
-class VisionParamsError(ValueError):
-    """Vision parameters that can't be used, with every problem and its path."""
+class FrameParamsError(ValueError):
+    """Frame parameters that can't be used, with every problem and its path."""
 
     def __init__(self, problems: Iterable[str]):
         self.problems: tuple[str, ...] = tuple(problems)
         count = len(self.problems)
         super().__init__(
-            f"{count} problem{'s' if count != 1 else ''} in vision parameters:\n"
+            f"{count} problem{'s' if count != 1 else ''} in frame parameters:\n"
             + "\n".join(f"- {p}" for p in self.problems)
         )
 
@@ -378,7 +379,7 @@ class Views(_Model):
     detail: DetailView | None = None
 
 
-class VisionProfile(_Model):
+class FrameProfile(_Model):
     version: int = Field(ge=1)
     frame_selection: FrameSelection
     image: ImagePrep
@@ -387,7 +388,7 @@ class VisionProfile(_Model):
 
     @model_validator(mode="wrap")
     @classmethod
-    def _check(cls, data: Any, handler: ValidatorFunctionWrapHandler) -> "VisionProfile":
+    def _check(cls, data: Any, handler: ValidatorFunctionWrapHandler) -> "FrameProfile":
         """Every problem at once: when the structure fails, the rules that tie settings
         together still run on the settings that parsed."""
         parts = list(cls.model_fields)
@@ -401,33 +402,33 @@ class VisionProfile(_Model):
         return profile
 
     @classmethod
-    def from_mapping(cls, data: Mapping[str, Any]) -> "VisionProfile":
-        """One profile from plain data; raises VisionParamsError listing every problem."""
+    def from_mapping(cls, data: Mapping[str, Any]) -> "FrameProfile":
+        """One profile from plain data; raises FrameParamsError listing every problem."""
         try:
             return cls.model_validate(thaw(data))
         except ValidationError as exc:
-            raise VisionParamsError(problems_from_validation(exc)) from None
+            raise FrameParamsError(problems_from_validation(exc)) from None
 
     def to_mapping(self) -> dict[str, Any]:
         """The YAML shape (docs/settings.md §5.2), without unset values."""
         return profile_mapping(self)
 
 
-class StageVision(_Model):
+class StageFrames(_Model):
     vision: Name
 
 
-class VisionParams(_Model):
+class FrameParams(_Model):
     """The plan's vision block: named profiles and the profile each stage uses."""
 
-    vision_profiles: Annotated[dict[Name, VisionProfile], AfterValidator(FrozenDict)] = (
+    vision_profiles: Annotated[dict[Name, FrameProfile], AfterValidator(FrozenDict)] = (
         FrozenDict()
     )
-    stages: Annotated[dict[Name, StageVision], AfterValidator(FrozenDict)] = FrozenDict()
+    stages: Annotated[dict[Name, StageFrames], AfterValidator(FrozenDict)] = FrozenDict()
 
     @model_validator(mode="wrap")
     @classmethod
-    def _check(cls, data: Any, handler: ValidatorFunctionWrapHandler) -> "VisionParams":
+    def _check(cls, data: Any, handler: ValidatorFunctionWrapHandler) -> "FrameParams":
         try:
             params = handler(data)
         except ValidationError as exc:
@@ -438,14 +439,14 @@ class VisionParams(_Model):
         return params
 
     @classmethod
-    def from_mapping(cls, data: Mapping[str, Any]) -> "VisionParams":
+    def from_mapping(cls, data: Mapping[str, Any]) -> "FrameParams":
         """Parses and checks the shape of docs/settings.md §5.2 (keys `vision_profiles` and
-        `stages`; YAML or JSON parsing is the caller's job). Raises one VisionParamsError
+        `stages`; YAML or JSON parsing is the caller's job). Raises one FrameParamsError
         listing every problem with its path."""
         try:
             return cls.model_validate(thaw(data))
         except ValidationError as exc:
-            raise VisionParamsError(problems_from_validation(exc)) from None
+            raise FrameParamsError(problems_from_validation(exc)) from None
 
     def to_mapping(self) -> dict[str, Any]:
         return _clean(
@@ -458,9 +459,9 @@ class VisionParams(_Model):
             }
         )
 
-    def profile_for(self, stage: str) -> VisionProfile:
+    def profile_for(self, stage: str) -> FrameProfile:
         if stage not in self.stages:
-            raise KeyError(f"no vision profile assigned to stage {stage!r}")
+            raise KeyError(f"no frame profile assigned to stage {stage!r}")
         return self.vision_profiles[self.stages[stage].vision]
 
 
@@ -642,7 +643,7 @@ def _stage_problems(s: _Settings) -> list[Problem]:
             problems.append(
                 (
                     ("stages", stage, "vision"),
-                    f"no vision profile named {name!r} (profiles: {', '.join(names) or 'none'})",
+                    f"no frame profile named {name!r} (profiles: {', '.join(names) or 'none'})",
                 )
             )
     return problems
@@ -651,7 +652,7 @@ def _stage_problems(s: _Settings) -> list[Problem]:
 # --- the YAML shape ---------------------------------------------------------------------
 
 
-def profile_mapping(profile: VisionProfile) -> dict[str, Any]:
+def profile_mapping(profile: FrameProfile) -> dict[str, Any]:
     fs = profile.frame_selection
     budget = fs.budget.model_dump(exclude={"allocate_by"})
     budget["allocate_by"] = [ref.to_mapping() for ref in fs.budget.allocate_by]

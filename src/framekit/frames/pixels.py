@@ -5,7 +5,7 @@ planned frames and runs them here, in the profile's order, after the budget. The
 remove frames: version 1 doesn't refill the budget with other candidates (DESIGN.md §9).
 **Anchors are never dropped.**
 
-Needs numpy (`pip install "framekit[media]"`); importing `framekit.vision` alone doesn't.
+Needs numpy (`pip install "framekit[media]"`); importing `framekit.frames` alone doesn't.
 Each filter is registered under its strategy's name and version, so `dedupe@1` keeps one
 meaning; a changed algorithm registers a new version, here and in the strategy registry.
 """
@@ -17,8 +17,8 @@ from typing import Any
 import numpy as np
 from pydantic import BaseModel
 
-from framekit.vision.params import StrategyRef, thaw
-from framekit.vision.registry import get_strategy
+from framekit.frames.params import StrategyRef, thaw
+from framekit.frames.registry import get_strategy
 
 HASH_SIDE = 32  # pHash: the frame is reduced to 32 x 32, its DCT kept at 8 x 8
 HASH_BITS = 8

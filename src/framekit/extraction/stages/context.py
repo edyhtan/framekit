@@ -12,9 +12,9 @@ from framekit.extraction.media.ffmpeg import FFmpeg, MediaInfo
 from framekit.extraction.records import parse_json_reply
 from framekit.extraction.resolve import ResolvedRun, RoleBinding, ScopedUnit
 from framekit.extraction.runner import CallRecord, Execution
-from framekit.vision import ResolvedProfile, Signals
-from framekit.vision.params import thaw
-from framekit.vision.registry import get_strategy
+from framekit.frames import ResolvedProfile, Signals
+from framekit.frames.params import thaw
+from framekit.frames.registry import get_strategy
 
 QUICK_CHUNK = 1 << 20  # 1 MiB
 

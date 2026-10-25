@@ -33,8 +33,8 @@ from framekit.extraction.schemas.plan import (
     NormalizeSettings,
     ShotSettings,
 )
-from framekit.vision import VisionProfile, resolve_profile
-from framekit.vision.pixels import (
+from framekit.frames import FrameProfile, resolve_profile
+from framekit.frames.pixels import (
     PixelFrame,
     apply_pixel_filters,
     hamming,
@@ -106,7 +106,7 @@ def test_sharpness_prefers_detail():
 
 
 def ref(name, **settings):
-    from framekit.vision.params import StrategyRef
+    from framekit.frames.params import StrategyRef
 
     return StrategyRef(name=name, version=1, params=settings)
 
@@ -215,7 +215,7 @@ def test_normalize_then_detect_cuts_onsets_and_motion(tmp_path, ffmpeg):
 def test_frames_are_read_at_the_profile_size_and_delivered(tmp_path, ffmpeg):
     source = make_video(tmp_path / "source.mp4", audio=False, duration=10, cuts=(5.0,))
     profile = resolve_profile(
-        VisionProfile.from_mapping(
+        FrameProfile.from_mapping(
             {
                 "version": 1,
                 "frame_selection": {"candidates": {"strategy": "uniform", "fps": 1}},

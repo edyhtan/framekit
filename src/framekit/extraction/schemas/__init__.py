@@ -3,8 +3,8 @@ specs (`LensSpec`), the gold set (`GoldSet`) and the dataset manifest (`DatasetM
 
 Pydantic models, strict and read-only once parsed. Each loads from a YAML or JSON file
 (`.load(path)`) or plain data (`.from_mapping(data)`) and raises one `ConfigError` listing
-every problem with its path. They live here, above `framekit.vision` and `framekit.models`,
-because `framekit.contracts` stays free of Pydantic and the plan embeds `VisionParams`.
+every problem with its path. They live here, above `framekit.frames` and `framekit.models`,
+because `framekit.contracts` stays free of Pydantic and the plan embeds `FrameParams`.
 """
 
 from framekit.extraction.schemas.common import MODULES, ConfigError, canonical_json, digest
@@ -19,7 +19,7 @@ from framekit.extraction.schemas.gold import GoldMatch, GoldMoment, GoldQuery, G
 from framekit.extraction.schemas.lens import FieldSpec, LensPrompts, LensSpec, LensValidator
 from framekit.extraction.schemas.manifest import SCHEMA_VERSION, DatasetManifest
 from framekit.extraction.schemas.plan import (
-    DEFAULT_VISION,
+    DEFAULT_FRAMES,
     MODEL_ROLES,
     TABLES,
     ExtractionPlan,
@@ -28,7 +28,7 @@ from framekit.extraction.schemas.plan import (
 from framekit.extraction.schemas.space import LensRef, SearchSpace
 
 __all__ = [
-    "DEFAULT_VISION",
+    "DEFAULT_FRAMES",
     "MODEL_ROLES",
     "MODULES",
     "SCHEMA_VERSION",

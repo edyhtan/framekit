@@ -1,6 +1,6 @@
 """L1 signal detectors (DESIGN.md §3 L1): deterministic, no AI model in the built-ins.
 
-A detector is named, versioned code, like a vision strategy: the plan picks it by name
+A detector is named, versioned code, like a frame strategy: the plan picks it by name
 (`signals.shots.detector: ffmpeg_scene`, or `ffmpeg_scene@1`), and its key goes into L1's
 input hash, so a changed algorithm gets a new version and old datasets stay reproducible.
 
@@ -26,7 +26,7 @@ from typing import Any, Literal, get_args
 import numpy as np
 
 from framekit.extraction.media.ffmpeg import FFmpeg, MediaInfo
-from framekit.vision.registry import split_reference
+from framekit.frames.registry import split_reference
 
 DetectorKind = Literal["shots", "audio", "motion", "speech", "audio_tags"]
 DETECTOR_KINDS: tuple[str, ...] = get_args(DetectorKind)
@@ -61,7 +61,7 @@ def register_detector(detector: Detector) -> Detector:
     """Add a detector. A kind, name and version can be registered once."""
     if detector.kind not in DETECTOR_KINDS:
         raise ValueError(f"unknown detector kind {detector.kind!r} ({', '.join(DETECTOR_KINDS)})")
-    split_reference(detector.name)  # the same naming rule as vision strategies
+    split_reference(detector.name)  # the same naming rule as frame strategies
     if detector.version < 1:
         raise ValueError(f"detector versions start at 1: {detector.key}")
     slot = (detector.kind, detector.name, detector.version)

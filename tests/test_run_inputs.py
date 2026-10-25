@@ -129,7 +129,7 @@ def test_a_plan_overrides_defaults_group_by_group():
     assert plan.normalize.fps == 8 and plan.normalize.height_px == 720
 
 
-def test_vision_profiles_in_a_plan_replace_the_defaults():
+def test_frame_profiles_in_a_plan_replace_the_defaults():
     plan = ExtractionPlan.from_mapping(base_plan())
     assert set(plan.vision.vision_profiles) == {"overview", "detail"}
     assert plan.vision.stages["L3a"].vision == "detail"

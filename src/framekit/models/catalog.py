@@ -116,7 +116,7 @@ class ModelSpec:
     # A request with images to a model without it fails before any call.
     vision: bool = False
     # Image limits per request, from the provider's documentation (None: not stated).
-    # Extraction checks vision profiles against them before any spend, so nothing is
+    # Extraction checks frame profiles against them before any spend, so nothing is
     # downscaled or rejected by the provider halfway through a run.
     max_images: int | None = None
     max_image_side_px: int | None = None  # the long edge the model reads without resizing

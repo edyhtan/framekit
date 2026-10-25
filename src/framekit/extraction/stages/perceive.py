@@ -1,6 +1,6 @@
 """L3a · Perception (DESIGN.md §3): observable facts per scene, lens-free and shared.
 
-Per scene: frames planned by L3a's vision profile (on the scene span, with the L1 signals),
+Per scene: frames planned by L3a's frame profile (on the scene span, with the L1 signals),
 read, filtered and delivered; the scene's signals, the synopsis, neighbouring summaries and
 the corpus profile's names and hints as context. The reply must match the record schema
 for the run's modules; an unusable reply is retried with its problems (as a new request),
@@ -32,7 +32,7 @@ from framekit.extraction.stages.context import (
     signals_for,
 )
 from framekit.extraction.stages.segment import frame_rows, grid_of
-from framekit.vision import plan_frames
+from framekit.frames import plan_frames
 
 MAX_ONSETS_IN_PROMPT = 60
 MOTION_PEAKS_IN_PROMPT = 5

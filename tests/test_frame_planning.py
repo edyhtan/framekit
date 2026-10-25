@@ -2,22 +2,22 @@
 unit timeline, deterministic."""
 
 import pytest
-from vision_examples import profile, settings_example
+from frame_examples import profile, settings_example
 
-from framekit.vision import (
+from framekit.frames import (
+    FrameParams,
+    FrameProfile,
     Signals,
     Strategy,
-    VisionParams,
-    VisionProfile,
     plan_frames,
     register_strategy,
     resolve,
 )
-from framekit.vision.builtin import NoParams
+from framekit.frames.builtin import NoParams
 
 
 def load(**parts):
-    return VisionProfile.from_mapping(profile(**parts))
+    return FrameProfile.from_mapping(profile(**parts))
 
 
 def selection(candidates, **rest):
@@ -406,7 +406,7 @@ def test_native_video_returns_nominal_uniform_timestamps_with_a_note():
 
 
 def test_a_profile_and_its_resolved_form_plan_the_same():
-    params = VisionParams.from_mapping(settings_example())
+    params = FrameParams.from_mapping(settings_example())
     raw = params.vision_profiles["scene_detail"]
 
     assert plan_frames(raw, (0.0, 45.0), PEAKS) == plan_frames(
