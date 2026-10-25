@@ -269,7 +269,7 @@ stages:
 - **Reusable outside extraction:** consumers use the same profiles and `framekit.vision` at query time (e.g. the search app's grounding samples densely on a few candidate scenes), so offline and online sampling are described the same way.
 - **Defaults come from a sweep**, not a guess: the benchmark harness compares profiles on the gold set at equal cost (§6.2). The values above are placeholders.
 
-**Built so far** (`framekit.vision`, 2026-10-24): the schema (`VisionParams`, `VisionProfile`; strict values, read-only once parsed), the strategy registry with the version-1 strategies named above, every load-time check (one error lists every problem), the checks against the analysis copy and against a model's limits, resolution to the canonical recorded form with SHA-256 digests (per profile and for the whole block), and **pixel-free planning**: frame timestamps from candidates, anchors, the budget, allocation signals and overview-plus-detail views, using L1 signals only. Filters that need pixels (`dedupe`, `sharpness`) are checked and recorded now; they run in the media stage, with image preparation and delivery (E1). The schema lives in `framekit.vision`, not in `contracts`, because contracts stay free of Pydantic ([ARCHITECTURE.md](ARCHITECTURE.md) §2.1). Signatures: ARCHITECTURE.md §3; every setting, check and filled-in default: [settings.md](settings.md) §5.2.
+**Built** (`framekit.vision`, 2026-10-24): the schema (`VisionParams`, `VisionProfile`; strict values, read-only once parsed), the strategy registry with the version-1 strategies named above, every load-time check (one error lists every problem), the checks against the analysis copy and against a model's limits (the catalog now declares them), resolution to the canonical recorded form with SHA-256 digests (per profile and for the whole block), and **pixel-free planning**: frame timestamps from candidates, anchors, the budget, allocation signals and overview-plus-detail views, using L1 signals only. **With extraction:** the planned frames are read from the analysis copy at the profile's size, the pixel filters (`dedupe`, `sharpness`; `framekit.vision.pixels`) run on them after the budget (anchors are never dropped, and version 1 doesn't refill the budget), and they're delivered as images or storyboard grids. `native_video` is refused at load time until a `video_understand` port exists. The schema lives in `framekit.vision`, not in `contracts`, because contracts stay free of Pydantic ([ARCHITECTURE.md](ARCHITECTURE.md) §2.1). Signatures: ARCHITECTURE.md §3; every setting, check and filled-in default: [settings.md](settings.md) §5.2.
 
 The plan's other settings (segment granularity, L1 detector settings, phrasings per scene, self-consistency runs, embedding inputs; groups in §2.4; every one listed in [settings.md](settings.md)) follow the same pattern: named, resolved into the manifest, and part of the input hash of the stages they affect. Their schema is built (`ExtractionPlan`, 2026-10-24).
 
@@ -347,9 +347,10 @@ Stages L0–L3a depend only on V, the perception modules and the model profile, 
 - Record the metadata fields the corpus profile declares; match each file to the manifest (§8.2).
 
 ### L1 — Deterministic signals (no LLM)
-- **Shot boundaries:** TransNetV2 or PySceneDetect AdaptiveDetector (tuned per corpus; animation smear frames cause false cuts). Snapping points for clean cuts.
-- **Audio:** librosa onsets and loudness peaks; an audio tagger (PANNs / BEATs); Whisper **with VAD** for speech (it hallucinates over music without VAD).
-- **Motion intensity:** optical-flow magnitude per second.
+Detectors are named, versioned code, picked in the plan; the built-ins (version 1) need only ffmpeg and numpy, and others are registered the same way (`register_detector`):
+- **Shot boundaries:** built in, `ffmpeg_scene` (ffmpeg's scene-change score over a threshold, cuts closer than `min_shot_s` competing). TransNetV2 or PySceneDetect AdaptiveDetector remain options as registered detectors (tuned per corpus; animation smear frames cause false cuts). Snapping points for clean cuts.
+- **Audio:** built in, `spectral_flux` (onsets: peaks of the spectral flux) and RMS loudness. An audio tagger (PANNs / BEATs) and speech (Whisper **with VAD**: it hallucinates over music without VAD) aren't built in; a plan that asks for them names a registered detector.
+- **Motion intensity:** built in, `frame_difference` (mean absolute difference between consecutive small gray frames, a cut included); optical-flow magnitude remains an option.
 
 ### L2 — Scene segmentation
 - A long-context video model gets the whole unit (frames chosen by L2's vision profile, §2.3; typically uniform ~1 fps) and returns a **synopsis** plus **scene boundaries** (30–60 s), snapped to L1 shot cuts.
@@ -495,7 +496,7 @@ flowchart LR
 
 **E1: first dataset (5 units of the test corpus)**
 - Lens spec format and loader, and the A and V schemas (search space, corpus, plan, gold set): **built (2026-10-24)**; the dataset schema next.
-- Vision parameters (§2.3): schema, checks, resolution and pixel-free planning **done (2026-10-24)**; frame extraction, pixel filters, image preparation and delivery come with the media stage.
+- Vision parameters (§2.3): schema, checks, resolution, planning, pixel filters, image preparation and delivery. **Built (2026-10-24).**
 - L0–L3a end to end with the corpus profile and modular perception.
 - Emotions & dynamics lens (Appendix B) with a ~10-scene gold set, plus a **minimal second lens** (e.g. comedy craft, ~10 labels) on the same scenes, purely to prove framekit has no lens leakage.
 - Dataset writer and reader v1; CLI `extract`.
@@ -545,7 +546,7 @@ Users' copies of a corpus differ (releases, edits, frame rates). A dedicated mod
 - **Text model** for lens passes; **embedding models** (text + SigLIP).
 - **Frames to remote models for bring-your-own corpora:** no default; each plan says (`governance.model_inputs`), and `local_only` is enforced against each role's provider address (2026-10-24).
 - **A, V and plan schemas, and the lens spec file format:** built as v1 (2026-10-24; DECISIONS), in `framekit.extraction.schemas`, revisitable. Every setting: [settings.md](settings.md); its §8 lists the open decisions they raised.
-- **Vision, after its first code** (§2.3): vision capabilities in the model catalog (callers describe a model with `ModelVisionCaps` until then); how the media stage feeds pixel-filter results back into the frame budget; planning `split_by_budget` and `per_module` views; keeping `budget.max_frames` across the spans of a unit (planning applies it per span).
+- **Vision:** refilling the frame budget after pixel filters drop frames; planning `split_by_budget` and `per_module` views; keeping `budget.max_frames` across the spans of a unit (planning applies it per span).
 - **Baseline scorer details:** its fixed embedding model and metrics (§6.2); the gold-query set per corpus.
 - **Default vision profiles** per stage, from a benchmark sweep (§2.3, §6.2).
 - **A distribution name for PyPI,** if the library is ever published (`framekit` is taken there; [ARCHITECTURE.md](ARCHITECTURE.md) §8).

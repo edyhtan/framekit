@@ -38,7 +38,15 @@ jobs:
           DEPS: ${{ matrix.deps }}
         run: |
           if [ "$DEPS" = "newest" ]; then uv sync --upgrade; else uv sync --locked; fi
+      # ffmpeg for the media and end-to-end extraction tests, which run on generated test
+      # patterns only. From the runner's Ubuntu archive, not a third-party action.
+      - name: Install ffmpeg
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends ffmpeg
       - name: Unit tests
+        env:
+          FRAMEKIT_REQUIRE_FFMPEG: "1"  # fail, never skip, the tests that need ffmpeg
         run: uv run pytest -q
       - name: Build wheel and sdist
         run: uv build
