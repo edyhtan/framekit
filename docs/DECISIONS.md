@@ -367,6 +367,12 @@ These were decided in short_extract (dates are from its journal) and bind this e
 - **E1's code is complete with this PR.** Not verified live: no provider key was set in the build environment, so no real model has seen a request (keys are never read from files); every run in the tests uses real ffmpeg and a scripted model through the real router, cache and adapter template. Still to do: the first real dataset (5 units, two lenses, a gold set), which needs the model choices.
 - **Recorded in:** `src/framekit/cli.py`, `src/framekit/extraction/bench.py` (new), `src/framekit/extraction/__init__.py` (the harness in the public API), `src/framekit/__init__.py`; `media/ffmpeg.py`, `estimate.py` and `src/framekit/models/cache/file_store.py` (messages and docstrings name the command); `tests/test_bench.py`, `tests/test_cli.py` (new); `pyproject.toml` (the `framekit` script; `cli` in the layers and provider-SDK contracts; the numpy contract names the harness); settings.md intro, status, tags, §2, §6, §8; DESIGN.md §7 (E1), §9; ARCHITECTURE.md status, §1, §2, §2.1, §3, §8; README.md module table, "Response cache", "Extraction"; SECURITY.md "Scope"; CLAUDE.md "Project", "Architecture rule", "Workflow", "Current milestone".
 
+### 19:51 — Merged branches are deleted automatically
+- **Decision** (owner: "create a rule that auto delete the branch when its successfully merge, so changes like this would restack back to main"): the repository setting "Automatically delete head branches" is on. When a PR merges, GitHub deletes its branch and changes the base of every open PR based on that branch to the merged PR's base, `main`.
+- **Why:** the extraction series is stacked at the owner's request, each PR based on the previous part's branch. #15 (part 3) was merged after #14, but its base was still #14's branch, so part 3 landed on that branch instead of `main`; it's reopened against `main` as #22. With the merged branch deleted, the next PR's base becomes `main` as soon as the PR below it merges.
+- **Still needed with squash merges:** a retargeted PR conflicts in `docs/DECISIONS.md` until its branch is rebased onto `main` (the squash re-creates the part below it as a new commit), so a stack is rebased after each merge. PRs above the bottom of a stack stay drafts, so none can be merged into a feature branch.
+- **Recorded in:** GitHub repository settings (changed directly, so recorded here afterwards); CLAUDE.md "Workflow"; README.md "Development".
+
 ---
 
 ## Still open
