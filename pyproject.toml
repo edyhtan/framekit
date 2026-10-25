@@ -149,6 +149,12 @@ source_modules = [
     "framekit.vision.builtin",
     "framekit.vision.signals",
     "framekit.extraction.schemas",
+    "framekit.extraction.resolve",
+    "framekit.extraction.runner",
+    "framekit.extraction.dataset",
+    "framekit.extraction.records",
+    "framekit.extraction.prompts",
+    "framekit.extraction.segmenting",
 ]
 forbidden_modules = ["numpy"]
 allow_indirect_imports = true

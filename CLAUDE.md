@@ -52,7 +52,7 @@ Layers: **contracts** (pure: ports, shared types) · **model access** (catalog, 
 - Supply chain (`docs/ARCHITECTURE.md` §2.2): pin every GitHub Action to a full commit SHA with a `# vX.Y.Z` comment, set `persist-credentials: false` on checkout, give every workflow and job least-privilege `permissions:`, and pin tool versions (uv, zizmor). Dependencies resolve with a 7-day release cooldown (`exclude-newer`); a newer security fix gets a narrow `exclude-newer-package` exception with a comment and a removal date. Fix ruff `S` findings, or keep one with an inline `# noqa: Sxxx` and the reason. No secrets in CI.
 
 ## Current milestone
-E0 done (v0.1.0: `contracts`, `models`). On `main` since: `vision` (schema, checks, resolution, pixel-free planning). Next, E1: first dataset on 5 units with two lenses (`docs/DESIGN.md` §7); it needs the video and embedding model choices first (ask).
+E0 done (v0.1.0: `contracts`, `models`). On `main` since: `vision`, and E1's extraction through L0–L3a (2026-10-24), tested on generated test patterns with a scripted model. Next: lens passes and vectors, the `framekit` command and the benchmark harness; then the first real dataset, 5 units with two lenses and a gold set (`docs/DESIGN.md` §7), which needs the model choices first (ask) and the provider keys.
 
 ## Open decisions
 See `docs/DESIGN.md` §9. Ask before picking models, changing the lens spec format or the dataset layout (both v1, 2026-10-24), picking a distributed runner, or a lens's base taxonomy.

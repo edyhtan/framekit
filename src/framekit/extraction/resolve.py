@@ -4,10 +4,10 @@
 - **Derivation rules v1** fill what the plan leaves to the search space, deterministically,
   and each one applied is recorded: perception modules, beat lengths, fixed windows, the
   phrasing style, the lenses, the units in scope.
-- **Checks**, every problem in one `ConfigError`: the units in scope, alignment, a model
-  for every role the run uses (vision models for frame-sending roles, checked against each
-  vision profile), frame rates against the analysis copy, and governance (what may leave
-  the machine).
+- **Checks**, every problem in one `ConfigError`: the units in scope, alignment, signal
+  detectors, a model for every role the run uses (vision models for frame-sending roles,
+  checked against each vision profile), frame rates against the analysis copy, and
+  governance (what may leave the machine).
 - **Recorded:** the resolved plan in canonical form with its digests, for the manifest and
   the benchmark harness's fairness check.
 """
@@ -329,6 +329,32 @@ def resolve_run(
     )
     if "beat" in plan.lens_passes.targets and not any("beat" in s.targets for s in lenses):
         notes.append("lens_passes.targets has beat, but no lens annotates beats")
+
+    # --- signal detectors ------------------------------------------------------------
+    try:
+        from framekit.extraction.media import get_detector
+    except ImportError as exc:
+        problems.append(
+            f'extraction needs the media extra: pip install "framekit[media]" ({exc.name} '
+            "is missing)"
+        )
+    else:
+        wanted = [
+            ("shots", plan.signals.shots.detector, "signals.shots.detector"),
+            ("audio", plan.signals.audio.onsets.method, "signals.audio.onsets.method"),
+            ("motion", plan.signals.motion.method, "signals.motion.method"),
+        ]
+        if plan.signals.speech is not None:
+            wanted.append(("speech", plan.signals.speech.model, "signals.speech.model"))
+        if plan.signals.audio.tagger is not None:
+            wanted.append(
+                ("audio_tags", plan.signals.audio.tagger.model, "signals.audio.tagger.model")
+            )
+        for kind, reference, path in wanted:
+            try:
+                get_detector(kind, reference)
+            except (LookupError, ValueError) as exc:
+                problems.append(f"plan: {path}: {exc}")
 
     # --- vision profiles -------------------------------------------------------------
     vision = resolve(plan.vision)
