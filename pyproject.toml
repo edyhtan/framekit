@@ -65,6 +65,8 @@ select = ["E", "F", "I", "B", "UP", "S"]
 # pytest asserts are how tests check results. Only S101 is relaxed: the hardcoded-secret
 # rules (S105-S107) stay on in tests too, so a real key pasted into a test is still caught.
 "tests/**" = ["S101"]
+# Prompt text is data: its paragraphs stay on one line each, as the model reads them.
+"src/framekit/extraction/prompts.py" = ["E501"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["framekit"]
