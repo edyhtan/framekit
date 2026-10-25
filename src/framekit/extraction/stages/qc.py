@@ -1,13 +1,14 @@
 """L4 · Quality control (DESIGN.md §3): results as `qc` rows, part of the provenance.
 
 Library checks (times inside the scene and ordered, names from the profile, modules
-complete) and the reply schema of each model call. A failing row is flagged (or
-down-weighted), never silently dropped; passes are recorded too, so a reader can see what
-was checked. The lens checks come with the lens passes.
+complete), lens checks (schema, vocabulary, the lens's validators) and self-consistency
+agreement. A failing row is flagged (or down-weighted), never silently dropped; passes
+are recorded too, so a reader can see what was checked.
 """
 
 from typing import Any
 
+from framekit.extraction.schemas.lens import LensSpec
 from framekit.extraction.stages.context import SceneRow
 
 RECORD_CHECKS = (
@@ -97,4 +98,70 @@ def perception_qc(
     return rows
 
 
-__all__ = ["perception_qc", "qc_row", "segmentation_qc"]
+def lens_qc(
+    scene: SceneRow,
+    lens: LensSpec,
+    run_index: int,
+    output: dict[str, Any],
+    enabled: tuple[str, ...],
+    then: str,
+) -> list[dict[str, Any]]:
+    common = {
+        "target_type": "scene",
+        "target_id": scene.scene_id,
+        "unit_id": scene.unit_id,
+        "scene_id": scene.scene_id,
+        "lens": lens.name,
+        "run_index": run_index,
+    }
+    rows = []
+    annotation = output.get("annotation")
+    problems = output.get("problems") or []
+    if annotation is None:
+        vocabulary = [p for p in problems if "vocabulary" in p]
+        if "schema" in enabled:
+            rows.append(qc_row("schema", status=then, detail=_detail(problems), **common))
+        if "vocabulary" in enabled:
+            rows.append(
+                qc_row(
+                    "vocabulary",
+                    status=then if vocabulary else "pass",
+                    detail=_detail(vocabulary),
+                    **common,
+                )
+            )
+        return rows
+    if "schema" in enabled:
+        rows.append(qc_row("schema", status="pass", **common))
+    if "vocabulary" in enabled:
+        rows.append(qc_row("vocabulary", status="pass", **common))
+    if "validators" in enabled and lens.validators:
+        broken = []
+        if "scene" in annotation:
+            broken += lens.check_rules(annotation["scene"], "scene")
+        for beat in annotation.get("beats") or ():
+            broken += lens.check_rules(beat, f"beats[{beat.get('index')}]")
+        rows.append(
+            qc_row(
+                "validators", status="flag" if broken else "pass", detail=_detail(broken), **common
+            )
+        )
+    return rows
+
+
+def agreement_qc(
+    scene: SceneRow, lens: LensSpec, score: float, threshold: float, on_disagreement: str
+) -> dict[str, Any]:
+    return qc_row(
+        "agreement",
+        target_type="scene",
+        target_id=scene.scene_id,
+        unit_id=scene.unit_id,
+        scene_id=scene.scene_id,
+        lens=lens.name,
+        status="pass" if score >= threshold else on_disagreement,
+        detail=f"agreement {score:.2f} (min {threshold:.2f})",
+    )
+
+
+__all__ = ["agreement_qc", "lens_qc", "perception_qc", "qc_row", "segmentation_qc"]

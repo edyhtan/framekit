@@ -2,11 +2,14 @@
 provider: no API calls. `ScriptedAdapter` answers every stage from the request itself, so
 requests go through the real router, response cache and adapter template."""
 
+import hashlib
 import json
+import math
 import re
 from decimal import Decimal
 from typing import Any, ClassVar
 
+from framekit.contracts import EmbeddingRequest, EmbeddingResult
 from framekit.models import ModelSource, ModelSpec, ProviderConfig
 from framekit.models.adapters import ExternalAIAdapterBase, Reply
 
@@ -91,6 +94,21 @@ def scripted_text(request: Any) -> str:
             if module in properties:
                 record[module] = example(properties[module], 0)
         return json.dumps(record)
+    if stage == "L3b":
+        answer = example(request.response_schema, request.seed or 0)
+        context = json.loads(request.prompt.split("\n\nReply with", 1)[0])
+        word = context["facts"]["summary"].split()[1]
+        if "phrasings" in answer:
+            answer["phrasings"] = [
+                f"looking for {word} moment {i}" for i in range(len(answer["phrasings"]))
+            ]
+        if "beats" in answer:
+            beats = context["facts"]["beats"]
+            item = request.response_schema["properties"]["beats"]["items"]
+            answer["beats"] = [
+                {**example(item, request.seed or 0), "index": beat["index"]} for beat in beats
+            ]
+        return json.dumps(answer)
     raise AssertionError(f"unexpected stage {stage!r}")
 
 
@@ -117,6 +135,28 @@ class ScriptedAdapter(ExternalAIAdapterBase):
         else:
             text = scripted_text(request)
         return Reply(text=text, stop_reason="stop", input_tokens=1000, output_tokens=200)
+
+    async def embed(self, spec: ModelSpec, request: EmbeddingRequest) -> EmbeddingResult:
+        vectors = tuple(bag_of_words(text) for text in request.texts)
+        return EmbeddingResult(
+            provider=self.config.name,
+            model_id=spec.model_id,
+            vectors=vectors,
+            dimension=len(vectors[0]) if vectors else 0,
+            input_tokens=10 * len(request.texts),
+            latency_ms=1,
+            cost_usd=Decimal("0.000001"),
+            adapter_version=self.adapter_version,
+        )
+
+
+def bag_of_words(text: str, size: int = 64) -> tuple[float, ...]:
+    vector = [0.0] * size
+    for word in re.findall(r"[a-z]+", text.lower()):
+        slot = int(hashlib.sha256(word.encode()).hexdigest(), 16) % size
+        vector[slot] += 1.0
+    norm = math.sqrt(sum(x * x for x in vector)) or 1.0
+    return tuple(x / norm for x in vector)
 
 
 LOCAL = ProviderConfig("scripted", "openai", base_url="http://127.0.0.1:9/v1")

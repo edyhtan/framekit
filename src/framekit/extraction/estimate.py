@@ -19,7 +19,8 @@ from framekit.models.catalog import estimate_cost
 from framekit.vision import ResolvedProfile, frame_cap
 
 PATCH_PX = 28
-PROMPT_TOKENS = {"L2": 1500, "L3a": 1500}
+PROMPT_TOKENS = {"L2": 1500, "L3a": 1500, "L3b": 1200}
+TOKENS_PER_TEXT = 40  # an embedded summary or phrasing
 
 
 @dataclass
@@ -106,8 +107,11 @@ def estimate(run: ResolvedRun, probes: dict[str, MediaInfo]) -> CostEstimate:
     plan = run.plan
     target = plan.segmentation.scene_length_s.target
     result = CostEstimate(units=len(probes), seconds=0.0, scenes=0)
-    stage_names = [r for r in ("L2", "L3a") if r in run.roles]
+    stage_names = [r for r in ("L2", "L3a", "L3b") if r in run.roles]
+    if "embed_text" in run.roles:
+        stage_names.append("embed")
     result.stages = {name: StageEstimate() for name in stage_names}
+    lens_runs = len(run.lenses) * plan.lens_passes.self_consistency.runs
     for unit in run.units:
         info = probes.get(unit.unit_id)
         if info is None:
@@ -132,8 +136,21 @@ def estimate(run: ResolvedRun, probes: dict[str, MediaInfo]) -> CostEstimate:
         stage.images += scenes * images
         stage.input_tokens += scenes * (PROMPT_TOKENS["L3a"] + tokens)
         stage.output_tokens += scenes * run.roles["L3a"].max_tokens
+        stage = result.stages["L3b"]
+        stage.calls += scenes * lens_runs
+        stage.input_tokens += (
+            scenes * lens_runs * (PROMPT_TOKENS["L3b"] + run.roles["L3a"].max_tokens)
+        )
+        stage.output_tokens += scenes * lens_runs * run.roles["L3b"].max_tokens
+        if "embed" in result.stages:
+            texts = scenes * (1 + lens_runs * plan.lens_passes.phrasings.count)
+            batch = plan.embedding.text.batch_size if plan.embedding.text else 64
+            stage = result.stages["embed"]
+            stage.calls += math.ceil(texts / batch)
+            stage.input_tokens += texts * TOKENS_PER_TEXT
     for name, stage in result.stages.items():
-        spec = run.roles[name].spec
+        role = "embed_text" if name == "embed" else name
+        spec = run.roles[role].spec
         stage.cost_usd = estimate_cost(spec, stage.input_tokens, stage.output_tokens)
     missing = [u.unit_id for u in run.units if u.unit_id not in probes]
     if missing:

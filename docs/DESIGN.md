@@ -498,8 +498,8 @@ flowchart LR
 **E1: first dataset (5 units of the test corpus)**
 - A, V and dataset schemas; lens spec format and loader. **Built (2026-10-24).**
 - Vision parameters (§2.3): schema, checks, resolution, planning, pixel filters, image preparation and delivery. **Built (2026-10-24).**
-- L0–L3a end to end with the corpus profile and modular perception; dataset writer and reader v1. **Built (2026-10-24)**, tested on generated test patterns with a scripted model; not yet run against a real provider.
-- Next: lens passes (L3b) and vectors, the CLI (`extract`, `bench`, `cache`) and the benchmark harness; then a run on 5 units with real models (the model choice is open, §9), the emotions & dynamics lens (Appendix B) with a ~10-scene gold set, plus a **minimal second lens** (e.g. comedy craft, ~10 labels) on the same scenes, purely to prove framekit has no lens leakage.
+- L0–L4 + embed end to end with the corpus profile and modular perception; dataset writer and reader v1. **Built (2026-10-24)**, tested on generated test patterns with a scripted model; not yet run against a real provider.
+- Next: the CLI (`extract`, `bench`, `cache`) and the benchmark harness; then a run on 5 units with real models (the model choice is open, §9), the emotions & dynamics lens (Appendix B) with a ~10-scene gold set, plus a **minimal second lens** (e.g. comedy craft, ~10 labels) on the same scenes, purely to prove framekit has no lens leakage.
 
 **E2: full test corpus**
 - L0–L4 on every unit (~161 units, ~19 h for the example corpus); the search app loads the result.

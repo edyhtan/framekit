@@ -9,7 +9,7 @@ AI building blocks for video datasets, in Python. One package with modules you c
 | `framekit.contracts` | provider-neutral types: the conversation port, the response-store port | **v0.1.0** |
 | `framekit.models` | model access: a catalog of providers and models (extendable with your own), a router, adapters on the official `openai` and `anthropic` SDKs, a record / replay response cache | **v0.1.0** |
 | `framekit.vision` | how a model sees video: frame selection, image preparation and delivery | on `main`: schema, checks, planning, pixel filters ([settings](docs/settings.md) §5.2) |
-| `framekit.extraction` | turns a video corpus into a dataset of segments, text, vectors and provenance, plus a benchmark harness and a CLI | on `main` through L0–L3a: scenes and observable facts ([below](#extraction)); lens passes, vectors, the CLI and benchmarks next |
+| `framekit.extraction` | turns a video corpus into a dataset of segments, text, vectors and provenance, plus a benchmark harness and a CLI | on `main`: runs end to end ([below](#extraction)); the CLI and benchmarks next |
 
 Used by the video clip search agent ([short_extract](https://github.com/edyhtan/short_extract)), and built for benchmarks and experimental model training.
 
@@ -340,7 +340,7 @@ print(plan.timestamps)                                # seconds on the video's o
 
 ## Extraction
 
-Turns a video corpus into a dataset: scenes and beats on each video's timeline, signals, observable facts, lens annotations and query-like phrasings, vectors, and the provenance of every value. On `main`, after v0.1.0, through L0–L3a (scenes and observable facts); lens passes and vectors, the `framekit` command and the benchmark harness come next. It needs the media extra and an **ffmpeg** binary (on PATH, or `LocalRunner(ffmpeg=path)`):
+Turns a video corpus into a dataset: scenes and beats on each video's timeline, signals, observable facts, lens annotations and query-like phrasings, vectors, and the provenance of every value. On `main`, after v0.1.0; the `framekit` command and the benchmark harness come next. It needs the media extra and an **ffmpeg** binary (on PATH, or `LocalRunner(ffmpeg=path)`):
 
 ```bash
 pip install "framekit[media] @ git+https://github.com/edyhtan/framekit@main"
@@ -398,17 +398,17 @@ dataset = extract(
 )
 dataset = Dataset.open("~/framekit-data/datasets/first")   # needs only pyarrow
 dataset.scenes                       # a pyarrow Table: scene_id, unit_id, start, end, summary, ...
-dataset.rows("perception")           # dicts: the observable facts of each scene
+dataset.rows("annotations")          # dicts: lens, field, label, value, target, run
 dataset.manifest.derivations         # what the derivation rules filled in, and from what
 ```
 
 - **Checked before any spend, every problem at once:** the files' structure and values, a model for every role (vision models where frames are sent, within their image limits), the vision profiles against each video's analysis copy, signal detectors, the provider keys, and governance. `dry_run=True` stops after the checks with an upper-bound cost estimate.
-- **Reruns are free where nothing changed:** every step is a task keyed by its inputs, stored in the work folder (default: `<out>.work`). `rerun={"L3a"}` forces a stage. With a response cache (`cache=FileResponseStore(path)`), model replies are recorded and can be replayed.
-- **Problems are flagged, never dropped:** an unusable reply is retried with what was wrong with it, then flagged; quality checks (times, names, modules, reply schemas) are written to the `qc` table.
+- **Reruns are free where nothing changed:** every step is a task keyed by its inputs, stored in the work folder (default: `<out>.work`). Adding a lens reruns only lens passes and embeddings; `rerun={"L3b"}` forces a stage. With a response cache (`cache=FileResponseStore(path)`), model replies are recorded and can be replayed.
+- **Problems are flagged, never dropped:** an unusable reply is retried with what was wrong with it, then flagged; quality checks (times, names, vocabulary, the lens's validators, agreement between self-consistency runs) are written to the `qc` table.
 - **Datasets:** Parquet tables (`units`, `shots`, `scenes`, `beats`, `windows`, `signals`, `perception`, `frames_sent`, `annotations`, `phrasings`, `vectors`, `runs`, `qc`) plus `manifest.json`, which records the search space verbatim, the resolved plan, the models, every digest and the estimated cost. Frames are never stored: `frames_sent` holds their times and image digests.
 - **Your own models and detectors:** pass `ModelSource`s (`sources=[...]`), and register signal detectors with `register_detector` (e.g. a speech model). Plan files only name models; they never hold keys or endpoints.
 
-**Not built yet:** lens passes and vectors, the command and the benchmark harness (next), native video input (needs a `video_understand` port), image embeddings, a built-in speech model or audio tagger (register a detector), chunked long units (units over `long_units.enabled_over_s` are excluded with the reason), aligning a file to a reference timeline, and a distributed runner.
+**Not built yet:** the command and the benchmark harness (next), native video input (needs a `video_understand` port), image embeddings, a built-in speech model or audio tagger (register a detector), chunked long units (units over `long_units.enabled_over_s` are excluded with the reason), aligning a file to a reference timeline, and a distributed runner.
 
 ## Development
 

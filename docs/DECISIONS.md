@@ -347,6 +347,16 @@ These were decided in short_extract (dates are from its journal) and bind this e
 - **Why:** the lens-free part is shared by every search space over a corpus (DESIGN.md §3), so it lands first, complete and resumable; lens passes and vectors build on its records.
 - **Recorded in:** `src/framekit/extraction/stages/` (new: `context.py`, `normalize.py`, `signals.py`, `segment.py`, `perceive.py`, `qc.py`), `pipeline.py`, `estimate.py` (new), `resolve.py` (detector checks), `__init__.py` (the public API), `src/framekit/__init__.py`; `tests/test_extract.py` (new), `tests/model_helpers.py` (`ScriptedAdapter`), `tests/extraction_helpers.py` (`write_inputs`), `tests/test_resolve.py`; `pyproject.toml` (numpy kept out of the new numpy-free modules); settings.md status, §3, §4, §5.2, §5.3, §5.4, §5.5, §7; DESIGN.md §3 (L2), §7; ARCHITECTURE.md status, §1, §2, §2.1, §3, §4; README.md module table, "Install", "Extraction"; CLAUDE.md "Current milestone"; SECURITY.md "Scope".
 
+### 15:15 — Extraction v1, part 8: lens passes and vectors
+- **Decision** (the eighth PR of the extraction series; v1, revisitable): `extract()` now runs the lens passes (L3b) and the embeddings, and checks them in L4.
+  - **Lens passes:** for every scene with a record, every lens of the search space and every self-consistency run: the lens's prompts framed by framekit's rules, over the record and the synopsis only (never the video, never another lens's output). Each run has its own seed, so runs are distinct requests with distinct cache keys. Replies are checked against the lens spec (fields, vocabularies, beat indexes, phrasing count), retried with their problems, then flagged.
+  - **Rows:** one `annotations` row per label (label fields), or one row with the JSON value (other fields), per target (scene or beat) and run; phrasings per scene, in the space's example style (or the lens's style).
+  - **Self-consistency:** agreement per scene and lens is the mean, over fields, of the label sets' Jaccard similarity (equality for other fields) across every pair of runs; under `agreement_min`, the scene is flagged, or with `down_weight` its annotation rows get the agreement as their weight.
+  - **Vectors:** scene summaries (the record's, else L2's) and phrasings, embedded in batches; each batch is a task keyed by its texts, the model, the template and normalization, so unchanged texts are never embedded twice; vectors are L2-normalized by default and keyed by the embedding model.
+  - **Resolution** now requires the L3b model and, with `embedding.text`, an embedding model whose adapter serves embeddings; image embeddings are refused until an `embed_image` port exists.
+- **Why:** lenses are cheap text passes over shared facts (DESIGN.md §0.3): adding or iterating a lens reruns only the lens passes and embeddings.
+- **Recorded in:** `src/framekit/extraction/stages/lens_pass.py`, `embed.py` (new), `qc.py`, `pipeline.py`, `estimate.py`, `resolve.py`, `__init__.py`, `src/framekit/__init__.py`; `tests/test_lens_passes.py` (new), `tests/model_helpers.py`, `tests/test_resolve.py`, `tests/test_extract.py`; settings.md status, §5.4; DESIGN.md §7; ARCHITECTURE.md status; README.md module table, "Extraction"; CLAUDE.md "Current milestone".
+
 ---
 
 ## Still open

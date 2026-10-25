@@ -2,7 +2,7 @@
 
 Every setting that shapes an extraction run, in one place: what you give, what framekit decides, what comes out. It's the spec for the schemas built in milestone E1 (`SearchSpace`, `Corpus`, `ExtractionPlan`, `GoldSet`). Why it's shaped this way: [DESIGN.md](DESIGN.md) §2.3–§2.4; decisions: [DECISIONS.md](DECISIONS.md).
 
-> **Status:** in progress on `main` (2026-10-24), after v0.1.0. Built: every setting below is parsed and checked (§3–§6), resolved (§5.1) and, through L0–L3a, run: the analysis copy, signals, scenes and observable facts, written as a dataset (§7). Not yet: the lens passes and vectors (§5.4 `lens_passes`, `embedding`: parsed and checked, not run yet), the `framekit` command (§2) and the benchmark harness (§6), the next steps of milestone E1. Defaults are placeholders until a benchmark sweep sets them.
+> **Status:** in progress on `main` (2026-10-24), after v0.1.0. Built: every setting below is parsed and checked (§3–§6), resolved (§5.1) and run, from the analysis copy to the lens passes and vectors, written as a dataset (§7). Not yet: the `framekit` command (§2) and the benchmark harness (§6), the next step of milestone E1. Defaults are placeholders until a benchmark sweep sets them.
 
 **Tags:** **[built]** in code (v0.1.0, or on `main` since) · **[not built]** accepted or refused with a clear reason, but not implemented yet · **[designed]** in DESIGN.md / ARCHITECTURE.md · **[discussed]** agreed with the owner, first written down here · **[open]** value or choice not decided · **[fixed]** a rule, not a setting. **Every number is a placeholder** until a benchmark sweep sets it.
 
@@ -456,7 +456,7 @@ frames.timestamps, frames.pending_filters, frames.notes
 ```
 
 - **The perception record** (schema 1): `summary`, `setting`, `entities`, `props`, `beats` (`t: [start, end]`, `who: [names]`, `action`, `audio` or null), plus the `camera`, `timing` and `sound` modules the run needs; `speech` comes from the L1 speech detector, never from the model. Times are on the unit timeline.
-- **A role's model** is a model id from the catalog (or your registry) or the name of one of your `ModelSource`s; `max_tokens` defaults per role as above, `temperature` and `reasoning` default from `defaults`, `seed` is unset unless given. Frame-sending roles (L2 with `method: model`, L3a) need a model whose catalog entry has `vision: true`, and their profiles must fit its `max_images` and `max_image_side_px`.
+- **A role's model** is a model id from the catalog (or your registry) or the name of one of your `ModelSource`s; `max_tokens` defaults per role as above, `temperature` and `reasoning` default from `defaults`, `seed` is unset unless given. Frame-sending roles (L2 with `method: model`, L3a) need a model whose catalog entry has `vision: true`, and their profiles must fit its `max_images` and `max_image_side_px`. `embed_text` needs a provider whose adapter serves embeddings (the OpenAI-compatible one does; Anthropic's doesn't).
 - **Retries:** a reply that isn't usable (no JSON, a schema or vocabulary problem, cut off at `max_tokens`) is retried as a new request carrying what was wrong, up to `quality_control.invalid_output.max_attempts`, then flagged. A flagged task is kept like a finished one, so a rerun doesn't pay for it again; `--rerun L3a` (or a changed prompt, model or setting) tries it anew.
 
 ### 5.5 Policy, formatting, governance: what rules apply (question 6)
