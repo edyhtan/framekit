@@ -64,6 +64,7 @@ async def test_images_to_a_model_without_vision_fail_before_any_call():
 def test_the_catalog_marks_claude_models_as_taking_images():
     assert {m for m, spec in CATALOG.items() if spec.vision} == {
         "claude-haiku-4-5",
+        "claude-haiku-5-5",
         "claude-sonnet-5",
         "claude-opus-5",
     }
@@ -122,6 +123,37 @@ async def test_anthropic_takes_temperature_and_leaves_out_the_seed():
     await adapter.generate(CATALOG["claude-haiku-4-5"], req(temperature=0.4, seed=7))
     [params] = client.messages.calls
     assert params["temperature"] == 0.4 and "seed" not in params
+
+
+def test_claude_4_7_and_later_take_no_temperature():
+    assert {m for m, spec in CATALOG.items() if not spec.sampling} == {
+        "claude-haiku-5-5",
+        "claude-sonnet-5",
+        "claude-opus-5",
+    }
+
+
+@pytest.mark.parametrize("method", ["generate", "stream"])
+async def test_a_temperature_to_a_model_that_takes_none_fails_before_any_call(method):
+    client = anthropic_client(claude_message(model="claude-haiku-5-5"))
+    adapter = AnthropicAdapter(ANTHROPIC, client, SETTINGS)
+    spec, request = CATALOG["claude-haiku-5-5"], req(temperature=0.2)
+    with pytest.raises(ModelCallError) as info:
+        if method == "generate":
+            await adapter.generate(spec, request)
+        else:
+            async for _ in adapter.stream(spec, request):
+                pass
+    assert not info.value.retryable and "takes no temperature" in str(info.value)
+    assert client.messages.calls == []  # nothing was sent
+
+
+async def test_a_model_that_takes_no_temperature_runs_without_one():
+    client = anthropic_client(claude_message(model="claude-haiku-5-5"))
+    adapter = AnthropicAdapter(ANTHROPIC, client, SETTINGS)
+    await adapter.generate(CATALOG["claude-haiku-5-5"], req(seed=7))
+    [params] = client.messages.calls
+    assert "temperature" not in params and "seed" not in params
 
 
 async def test_unset_sampling_sends_nothing():

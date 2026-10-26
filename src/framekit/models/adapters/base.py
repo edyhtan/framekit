@@ -418,11 +418,18 @@ class ExternalAIAdapterBase(ABC):
 
     def check_request(self, spec: ModelSpec, request: ConversationRequest) -> None:
         """Refuse, before any call, what the model can't take: images for a model whose
-        catalog entry doesn't accept them. A non-retryable `ModelCallError`."""
+        catalog entry doesn't accept them, and a temperature for one that takes only its
+        default sampling. A non-retryable `ModelCallError`."""
         if request.images and not spec.vision:
             raise ModelCallError(
                 f"model {spec.model_id!r} doesn't accept images (its catalog entry has "
                 "vision=False)",
+                retryable=False,
+            )
+        if request.temperature is not None and not spec.sampling:
+            raise ModelCallError(
+                f"model {spec.model_id!r} takes no temperature (its catalog entry has "
+                "sampling=False): leave ConversationRequest.temperature unset",
                 retryable=False,
             )
 

@@ -13,6 +13,7 @@ template is in `framekit.models.adapters`. Guide: docs/adapters.md.
 from framekit.models.catalog import (
     CATALOG,
     PROVIDERS,
+    LongPromptPrices,
     ModelSettings,
     ModelSpec,
     ProviderConfig,
@@ -29,6 +30,7 @@ __all__ = [
     "DEFAULT_REGISTRY",
     "PROVIDERS",
     "ConversationRouter",
+    "LongPromptPrices",
     "ModelRegistry",
     "ModelSettings",
     "ModelSource",

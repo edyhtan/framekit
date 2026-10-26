@@ -318,7 +318,7 @@ flowchart LR
 - **A is the only variable:** the plan is pinned for the whole comparison, and the harness refuses to compare datasets whose resolved plans differ, except by the documented derivation rules.
 - **Strategies live outside framekit.** The harness takes the A's with a label per strategy and records the label in each manifest.
 - **Shared work is reused:** if A's differ only in lenses or phrasing style, L0–L3a run once and only lens passes and embedding rerun. Changing modules, resolution or scope reruns more, and the cost report says how much.
-- **The yardstick doesn't move:** gold queries and gold moments are fixed per corpus and never generated from A. Model randomness is pinned (temperature or seed in the plan) and shared calls replay from the response cache.
+- **The yardstick doesn't move:** gold queries and gold moments are fixed per corpus and never generated from A. Model randomness is pinned where the model allows it (temperature or seed in the plan; a model that accepts only its default sampling takes neither) and shared calls replay from the response cache.
 - The same harness also runs the opposite comparison: a fixed A with different plans, e.g. a sweep of frame profiles.
 
 ---

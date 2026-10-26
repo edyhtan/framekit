@@ -10,7 +10,7 @@ from decimal import Decimal
 from typing import Any, ClassVar
 
 from framekit.contracts import EmbeddingRequest, EmbeddingResult
-from framekit.models import ModelSource, ModelSpec, ProviderConfig
+from framekit.models import LongPromptPrices, ModelSource, ModelSpec, ProviderConfig
 from framekit.models.adapters import ExternalAIAdapterBase, Reply
 
 WORDS = ("alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel")
@@ -170,6 +170,20 @@ VISION = ModelSpec(
     max_images=50,
     max_image_side_px=1600,
 )
+# Takes only its default sampling (no temperature) and charges more for prompts over 1,000
+# tokens, as Claude Haiku 5.5 does over 100,000.
+STRICT = ModelSpec(
+    "scripted",
+    "strict-1",
+    "Scripted vision, no temperature",
+    Decimal("1"),
+    Decimal("5"),
+    vision=True,
+    max_images=50,
+    max_image_side_px=1600,
+    sampling=False,
+    long_prompt=LongPromptPrices(1_000, Decimal("5"), Decimal("25")),
+)
 TEXT = ModelSpec("scripted", "writer-1", "Scripted text", Decimal("0.3"), Decimal("1.2"))
 EMBEDDER = ModelSpec("scripted", "vectors-1", "Scripted embeddings", Decimal("0.02"), Decimal("0"))
 
@@ -178,6 +192,7 @@ def sources(adapter: type = ScriptedAdapter) -> list[ModelSource]:
     """The test models, served by a local (loopback) provider."""
     return [
         ModelSource("seer", model=VISION, provider=LOCAL, credential="test", adapter=adapter),
+        ModelSource("strict", model=STRICT, provider=LOCAL, credential="test", adapter=adapter),
         ModelSource("writer", model=TEXT, provider=LOCAL, credential="test", adapter=adapter),
         ModelSource("vectors", model=EMBEDDER, provider=LOCAL, credential="test", adapter=adapter),
     ]

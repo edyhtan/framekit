@@ -6,12 +6,13 @@ real router, cache and adapter template; nothing leaves the machine.
 """
 
 import shutil
+from decimal import Decimal
 
 import pytest
 import yaml
 from extraction_helpers import base_plan, write_inputs, write_yaml
 from media_helpers import ffmpeg_binary, make_video, needs_ffmpeg
-from model_helpers import ScriptedAdapter, sources
+from model_helpers import STRICT, ScriptedAdapter, sources
 
 from framekit.extraction import (
     ConfigError,
@@ -23,6 +24,7 @@ from framekit.extraction import (
 )
 from framekit.extraction.estimate import CostEstimate
 from framekit.extraction.pipeline import extract
+from framekit.models import estimate_cost
 from framekit.models.cache import CacheSettings, FileResponseStore
 
 pytestmark = needs_ffmpeg
@@ -210,6 +212,26 @@ def test_a_byo_media_corpus_needs_an_explicit_frames_policy(tmp_path, video):
     write_yaml(files["plan"], data)
     with pytest.raises(ConfigError, match="governance.model_inputs: required for a byo_media"):
         run(tmp_path, files)
+
+
+def test_a_model_without_temperature_and_with_long_prompt_prices(tmp_path, video):
+    strict = {"model_id": "strict", "max_tokens": 1024}
+    models = dict(base_plan()["models"], L2=strict, L3a=strict)
+    files = write_inputs(tmp_path, video, plan={"models": models})
+
+    estimate = run(tmp_path, files, dry_run=True)
+    l2 = estimate.stages["L2"]
+    assert l2.calls == 1 and l2.input_tokens > 1_000  # over STRICT's long-prompt threshold
+    assert l2.cost_usd == estimate_cost(STRICT, l2.input_tokens, 1024)
+    assert l2.cost_usd == (l2.input_tokens * 5 + 1024 * 25) / Decimal(1_000_000)
+    assert "L2: some prompts are long enough for strict's long-prompt prices" in estimate.notes
+
+    dataset = run(tmp_path, files)
+    assert dataset.manifest.complete
+    sent = [r for r in ScriptedAdapter.requests if r.cache_class in ("L2", "L3a")]
+    assert sent and all(r.temperature is None for r in sent)
+    assert dataset.manifest.models["L3a"]["temperature"] is None
+    assert dataset.manifest.models["L3b"]["temperature"] == 0.2
 
 
 def test_a_missing_key_stops_the_run_before_any_work(tmp_path, video, monkeypatch):

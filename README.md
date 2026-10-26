@@ -180,7 +180,7 @@ A reply cut off at the token limit (`stop_reason == "length"`) is never complete
 | `stop_reason` | normalized: `end`, `length`, `refusal`, `tool_use`, `content_filter`, `other` (`provider_stop_reason` keeps the raw value; a cut-off reply is reported as `length` even when the provider says otherwise) |
 | `input_tokens`, `output_tokens`, `reasoning_tokens` | usage |
 | `latency_ms`, `first_token_ms` | total time, and time to the first streamed piece |
-| `cost_usd` | an **estimate** from the catalog's price table |
+| `cost_usd` | an **estimate** from the catalog's prices, per request |
 | `model_id`, `provider`, `adapter_version`, `request_id` | provenance: record these with every output |
 | `reasoning_on`, `structured_mode`, `cached` | what actually happened |
 
@@ -202,16 +202,19 @@ except ModelCallError as error:
 
 ## Models
 
-The catalog (`framekit.models.CATALOG`) lists the selectable models as data: provider, prices, reasoning switches, structured-output method, context window.
+The catalog (`framekit.models.CATALOG`) lists the selectable models as data: provider, prices, reasoning switches, structured-output method, context window, image limits, and whether the model takes a temperature.
 
-| `model_id` | Provider | Reasoning | Structured output |
-|---|---|---|---|
-| `deepseek-ai/deepseek-v4.1-flash` (default) | Hive | optional | `function_calling` |
-| `zai-org/glm-5.3-flash` | Hive | optional | `function_calling` |
-| `deepseek-flash` | DeepSeek API | optional | `prompted` |
-| `claude-haiku-4-5` | Anthropic | optional | `prompted` |
-| `claude-sonnet-5` | Anthropic | optional | `prompted` |
-| `claude-opus-5` | Anthropic | optional | `prompted` |
+| `model_id` | Provider | Reasoning | Structured output | Temperature |
+|---|---|---|---|---|
+| `deepseek-ai/deepseek-v4.1-flash` (default) | Hive | optional | `function_calling` | yes |
+| `zai-org/glm-5.3-flash` | Hive | optional | `function_calling` | yes |
+| `deepseek-flash` | DeepSeek API | optional | `prompted` | yes |
+| `claude-haiku-4-5` | Anthropic | optional | `prompted` | yes |
+| `claude-haiku-5-5` | Anthropic | optional | `prompted` | no |
+| `claude-sonnet-5` | Anthropic | optional | `prompted` | no |
+| `claude-opus-5` | Anthropic | optional | `prompted` | no |
+
+A model that takes no temperature (Claude 4.7 and later accept only their default sampling) refuses a request that sets one, before any call; extraction leaves the plan's default temperature out for its roles and says so in the resolved plan's notes. Prices can depend on a request's prompt length (Claude Haiku 5.5 charges more above 100,000 input tokens), so each request is priced on its own.
 
 ```python
 from framekit.models import CATALOG, catalog_listing

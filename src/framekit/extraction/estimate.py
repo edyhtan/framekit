@@ -4,7 +4,8 @@ An upper-bound estimate from the probed units, the plan and the catalog prices: 
 counted at the target length, outputs at their full `max_tokens`, images at the number of
 28 x 28 px patches they cover (the way Claude counts image tokens; other providers differ),
 retries and replays from the response cache not counted. Prices are per the model
-catalog; nothing here calls a model.
+catalog, applied to each request on its own (a model may charge more for a long prompt);
+nothing here calls a model.
 """
 
 import math
@@ -102,6 +103,33 @@ def _images(profile: ResolvedProfile, frames: int, copy: tuple[int, int]) -> tup
     return frames, frames * _image_tokens(width, height)
 
 
+def _add(
+    result: CostEstimate,
+    run: ResolvedRun,
+    name: str,
+    calls: int,
+    input_tokens: int,
+    *,
+    images: int = 0,
+) -> None:
+    """`calls` requests of one stage, each with this many input tokens (outputs at the
+    role's full `max_tokens`; embeddings have none), priced per request."""
+    if calls <= 0:
+        return
+    role = run.roles["embed_text" if name == "embed" else name]
+    output_tokens = 0 if name == "embed" else role.max_tokens
+    stage = result.stages[name]
+    stage.calls += calls
+    stage.images += calls * images
+    stage.input_tokens += calls * input_tokens
+    stage.output_tokens += calls * output_tokens
+    stage.cost_usd += estimate_cost(role.spec, input_tokens, output_tokens, calls=calls)
+    if role.spec.prices(input_tokens) != role.spec.prices(0):
+        note = f"{name}: some prompts are long enough for {role.model_id}'s long-prompt prices"
+        if note not in result.notes:
+            result.notes.append(note)
+
+
 def estimate(run: ResolvedRun, probes: dict[str, MediaInfo]) -> CostEstimate:
     """The estimate for the units that probed (their facts in `probes`)."""
     plan = run.plan
@@ -124,35 +152,19 @@ def estimate(run: ResolvedRun, probes: dict[str, MediaInfo]) -> CostEstimate:
         copy = copy_size(info, plan.observation.normalize.height_px)
         if "L2" in result.stages:
             images, tokens = _images(run.profile("L2"), _frames(run.profile("L2"), seconds), copy)
-            stage = result.stages["L2"]
-            stage.calls += 1
-            stage.images += images
-            stage.input_tokens += PROMPT_TOKENS["L2"] + tokens
-            stage.output_tokens += run.roles["L2"].max_tokens
-        stage = result.stages["L3a"]
+            _add(result, run, "L2", 1, PROMPT_TOKENS["L2"] + tokens, images=images)
         frames = _frames(run.profile("L3a"), min(target, seconds))
         images, tokens = _images(run.profile("L3a"), frames, copy)
-        stage.calls += scenes
-        stage.images += scenes * images
-        stage.input_tokens += scenes * (PROMPT_TOKENS["L3a"] + tokens)
-        stage.output_tokens += scenes * run.roles["L3a"].max_tokens
-        stage = result.stages["L3b"]
-        stage.calls += scenes * lens_runs
-        stage.input_tokens += (
-            scenes * lens_runs * (PROMPT_TOKENS["L3b"] + run.roles["L3a"].max_tokens)
-        )
-        stage.output_tokens += scenes * lens_runs * run.roles["L3b"].max_tokens
+        _add(result, run, "L3a", scenes, PROMPT_TOKENS["L3a"] + tokens, images=images)
+        l3b_input = PROMPT_TOKENS["L3b"] + run.roles["L3a"].max_tokens
+        _add(result, run, "L3b", scenes * lens_runs, l3b_input)
         if "embed" in result.stages:
             texts = scenes * (1 + lens_runs * plan.interpretation.lens_passes.phrasings.count)
             text_settings = plan.interpretation.embedding.text
             batch = text_settings.batch_size if text_settings else 64
-            stage = result.stages["embed"]
-            stage.calls += math.ceil(texts / batch)
-            stage.input_tokens += texts * TOKENS_PER_TEXT
-    for name, stage in result.stages.items():
-        role = "embed_text" if name == "embed" else name
-        spec = run.roles[role].spec
-        stage.cost_usd = estimate_cost(spec, stage.input_tokens, stage.output_tokens)
+            full, rest = divmod(texts, batch)
+            _add(result, run, "embed", full, batch * TOKENS_PER_TEXT)
+            _add(result, run, "embed", 1 if rest else 0, rest * TOKENS_PER_TEXT)
     missing = [u.unit_id for u in run.units if u.unit_id not in probes]
     if missing:
         result.notes.append(f"not estimated (couldn't be read): {', '.join(missing)}")
