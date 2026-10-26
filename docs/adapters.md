@@ -270,9 +270,10 @@ Inside your methods, `self.client` is the client, `self.config` the `ProviderCon
 
 - **The output budget:** the request's `max_tokens`, capped by `ModelSettings.max_tokens_cap`, plus the model's reasoning allowance while reasoning is on.
 - **Reasoning switches:** whether this call reasons (`reasoning_active`) and the fields that switch it (`reasoning_fields`, from the model's `ReasoningControl`).
+- **Request checks:** images to a model whose `ModelSpec` has `vision=False`, and a temperature to one with `sampling=False` (it accepts only its default sampling), are refused before any call (`check_request`, a non-retryable `ModelCallError`).
 - **Timing:** `latency_ms`, and `first_token_ms` when streaming.
 - **Stop reasons:** your raw value normalized to `end`, `length`, `refusal`, `tool_use`, `content_filter` or `other`; a reply that used the whole budget is reported as `length`, whatever the provider says.
-- **Cost:** `cost_usd` estimated from the `ModelSpec`'s prices and the token counts.
+- **Cost:** `cost_usd` estimated from the `ModelSpec`'s prices and the token counts, per request: a `long_prompt` tier (`LongPromptPrices`) applies when the request's input tokens are over its `above_tokens`.
 - **The result:** one `ConversationResult` with its provenance (provider, model, adapter version, request id), from both `generate` and `stream`.
 - **Streaming fallback, the response cache and closing:** `router.stream` works even if you never stream; the response cache works unchanged; the router closes your adapter with the others.
 

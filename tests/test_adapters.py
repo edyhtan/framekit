@@ -36,6 +36,7 @@ from framekit.models.catalog import (
     PROVIDERS,
     ModelSettings,
     ProviderConfig,
+    estimate_cost,
 )
 from framekit.models.router import (
     PROTOCOLS,
@@ -190,6 +191,15 @@ def test_every_provider_maps_to_a_protocol_adapter():
 def test_stop_reasons_are_normalized(raw, hit_limit, expected):
     assert normalize_stop_reason(raw, hit_limit=hit_limit) == expected
     assert expected in STOP_REASONS
+
+
+def test_long_prompts_pay_the_long_prompt_prices_per_request():
+    haiku = CATALOG["claude-haiku-5-5"]
+    assert estimate_cost(haiku, 100_000, 1_000) == Decimal("0.010500")  # up to 100,000
+    assert estimate_cost(haiku, 100_001, 1_000) > estimate_cost(haiku, 100_000, 1_000) * 4
+    assert estimate_cost(haiku, 200_000, 1_000) == Decimal("0.102500")  # $0.50 / $2.50
+    assert estimate_cost(haiku, 200_000, 1_000, calls=3) == Decimal("0.307500")
+    assert estimate_cost(CATALOG["claude-haiku-4-5"], 200_000, 1_000) == Decimal("0.205000")
 
 
 def test_output_budget_adds_reasoning_allowance_only_while_reasoning():

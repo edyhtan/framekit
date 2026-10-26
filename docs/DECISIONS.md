@@ -397,6 +397,20 @@ These were decided in short_extract (dates are from its journal) and bind this e
 - **Supersedes:** the plan layout of 2026-10-24 14:45 (part 2) and the manifest fields of 14:50 (part 3); the settings themselves are unchanged.
 - **Recorded in:** `src/framekit/extraction/schemas/plan/` (new: the plan as a package, one module per component), `src/framekit/frames/` (the `profiles` and `profile` keys), `resolve.py`, `pipeline.py`, `estimate.py`, `bench.py`, the stages, `schemas/manifest.py`, the public exports; tests; settings.md §1, §5, §6, §7, §8; DESIGN.md §2.3, §2.4, §3, §9; ARCHITECTURE.md §3; README.md "Frame parameters", "Extraction"; CLAUDE.md "Project", "Key decisions"; SECURITY.md "Scope".
 
+## 2026-10-26
+
+### 06:13 — Claude Haiku 5.5 in the catalog; models without a temperature; long-prompt prices
+- **Decision** (owner: "create a framekit PR to support Haiku 5.5"): the catalog gains `claude-haiku-5-5`, Claude Haiku 5.5. Its entry records:
+  - prices of $0.10 / $0.50 per 1M tokens for prompts up to 100,000 tokens and $0.50 / $2.50 above (Anthropic's pricing page, 2026-10-26), and a 1M-token context;
+  - images in the high-resolution tier, at 600 per request and 2,000 px, as for Sonnet 5 and Opus 5;
+  - reasoning off with `thinking: disabled`, on as adaptive thinking with summarized text, and effort left at the model's default (`medium`);
+  - structured output `prompted` until probed.
+- **Models that take no temperature.** `ModelSpec.sampling` (default True) is False for a model that accepts only its default sampling. Claude 4.7 and later reject any other temperature with a 400, so Haiku 5.5, Sonnet 5 and Opus 5 are marked False; until now, the plan's default `temperature: 0.2` would have failed every Sonnet 5 or Opus 5 call. The adapter base refuses a request with a temperature for such a model before any call (non-retryable), as it refuses images for a model without vision. In extraction, `models.defaults.temperature` isn't applied to its roles: the resolved plan's notes say so, and the manifest records `temperature: null`. A `temperature` set on such a role is refused before any spend.
+- **Long-prompt prices.** `ModelSpec.long_prompt` (`LongPromptPrices`: `above_tokens` and the higher input and output prices) applies to a request whose input tokens are over the threshold. `estimate_cost` prices one request, or `calls` requests of one size. The dry-run estimate now prices each request on its own instead of a stage's token totals, and notes the stages that pay long-prompt prices. The registry checks the tier's fields.
+- **Why:** Haiku 5.5 costs a tenth of Haiku 4.5 per token, which makes a richer L2 and L3a on every scene affordable. For L2 over the 161-video test corpus, the worst case falls from about $4.38 to $0.45. Its API differs from Haiku 4.5's: no manual thinking budget, no temperature, a newer tokenizer that counts the same text as about 30% more tokens, and prices that depend on prompt length.
+- **Not in this change:** structured outputs (`output_config.format`) on the Anthropic adapter; prompt caching and the Batch API; the standard image tier's token cap. Haiku 4.5 downscales an image over 1,568 image tokens, and the frame checks can't see it, since they know an image's long side but not its aspect.
+- **Recorded in:** `src/framekit/models/catalog.py`, `adapters/base.py`, `registry.py`, `__init__.py`; `src/framekit/extraction/resolve.py`, `estimate.py`; tests; README.md "Results" and "Models"; settings.md §5.4 (`models`) and §5.5 (budget); adapters.md "What the base does for you"; ARCHITECTURE.md §5; DESIGN.md §2.4.
+
 ---
 
 ## Still open

@@ -137,6 +137,22 @@ def test_local_only_frames_refuse_a_remote_provider():
     assert "policy.governance.model_inputs is local_only, but models.L3a" in text
 
 
+def test_a_model_that_takes_no_temperature_leaves_the_default_out():
+    models = dict(base_plan()["models"], L3a={"model_id": "strict"})
+    run = resolve(space(lens(COLOUR_LENS)), None, plan(models=models))
+    assert run.roles["L3a"].temperature is None and run.roles["L3b"].temperature == 0.2
+    assert (
+        "models.L3a: strict-1 takes no temperature, so models.defaults.temperature isn't applied"
+        in run.notes
+    )
+
+
+def test_a_temperature_for_a_model_that_takes_none_is_refused():
+    models = dict(base_plan()["models"], L3a={"model_id": "strict", "temperature": 0.5})
+    text = problems_of(space(lens(COLOUR_LENS)), None, plan(models=models))
+    assert "plan: models.L3a.temperature: strict-1 takes no temperature" in text
+
+
 def test_byo_media_keeps_vectors_and_training_local():
     text = problems_of(
         space(lens(COLOUR_LENS)),

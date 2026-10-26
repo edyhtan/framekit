@@ -472,7 +472,7 @@ frames.timestamps, frames.pending_filters, frames.notes
     version: 1
     defaults:
       reasoning: false                             #   reasoning is billed: off unless asked
-      temperature: 0.2
+      temperature: 0.2                             #   not applied to a model that takes none
       structured_method: catalog                   #   the catalog's method per model
     L2:          {model_id: <vision-model>, max_tokens: 4096}   # needed with structure.segmentation.method: model
     L3a:         {model_id: <vision-model>, max_tokens: 2048}   # always needed
@@ -483,7 +483,7 @@ frames.timestamps, frames.pending_filters, frames.notes
 ```
 
 - **The perception record** (schema 1): `summary`, `setting`, `entities`, `props`, `beats` (`t: [start, end]`, `who: [names]`, `action`, `audio` or null), plus the `camera`, `timing` and `sound` modules the run needs; `speech` comes from the L1 speech detector, never from the model. Times are on the unit timeline.
-- **A role's model** is a model id from the catalog (or your registry) or the name of one of your `ModelSource`s; `max_tokens` defaults per role as above, `temperature` and `reasoning` default from `defaults`, `seed` is unset unless given. Frame-sending roles (L2 with `method: model`, L3a) need a model whose catalog entry has `vision: true`, and their profiles must fit its `max_images` and `max_image_side_px`. `embed_text` needs a provider whose adapter serves embeddings (the OpenAI-compatible one does; Anthropic's doesn't).
+- **A role's model** is a model id from the catalog (or your registry) or the name of one of your `ModelSource`s; `max_tokens` defaults per role as above, `temperature` and `reasoning` default from `defaults`, `seed` is unset unless given. A model whose catalog entry has `sampling=False` takes no temperature (Claude 4.7 and later, such as Haiku 5.5, Sonnet 5 and Opus 5, accept only their default sampling): `defaults.temperature` isn't applied to its roles (a note in the resolved plan says so, and the manifest records `temperature: null`), and a `temperature` set on such a role is refused before any spend. Frame-sending roles (L2 with `method: model`, L3a) need a model whose catalog entry has `vision: true`, and their profiles must fit its `max_images` and `max_image_side_px`. `embed_text` needs a provider whose adapter serves embeddings (the OpenAI-compatible one does; Anthropic's doesn't).
 - **Retries:** a reply that isn't usable (no JSON, a schema or vocabulary problem, cut off at `max_tokens`) is retried as a new request carrying what was wrong, up to `policy.quality_control.invalid_output.max_attempts`, then flagged. A flagged task is kept like a finished one, so a rerun doesn't pay for it again; `--rerun L3a` (or a changed prompt, model or setting) tries it anew.
 
 ### 5.5 Policy, formatting, governance: what rules apply (question 6)
@@ -518,7 +518,7 @@ frames.timestamps, frames.pending_filters, frames.notes
       model_inputs: null                           # provider_transient | local_only
 ```
 
-- **Budget:** spend is the adapters' cost estimate from the catalog prices, checked before every model call, so a run overshoots by at most the calls in flight. When a cap is reached no new unit starts; `stop` also fails the next call of every unit in progress (those units end partial), `finish_unit_then_stop` lets them finish. The manifest marks partial and skipped units.
+- **Budget:** spend is the adapters' cost estimate from the catalog prices, checked before every model call, so a run overshoots by at most the calls in flight. Costs are priced per request, both while running and in the dry-run estimate, so a model's long-prompt prices (Claude Haiku 5.5: above 100,000 input tokens) apply only to the requests over the threshold; the estimate notes the stages where they do. When a cap is reached no new unit starts; `stop` also fails the next call of every unit in progress (those units end partial), `finish_unit_then_stop` lets them finish. The manifest marks partial and skipped units.
 - **`model_inputs`:** may frames go to a model provider for inference (`provider_transient`), or only to models on this machine or a private network (`local_only`, checked against each frame-sending role's base URL: `localhost` or a loopback, private or link-local IP)? For a **byo_media** corpus there's no default: a run that sends frames needs the plan to say. Other corpora default to `provider_transient`. Either way it's recorded in the manifest.
 
 Transport retries (`--provider-retries`), concurrency and rate limits are execution, not plan (§2).

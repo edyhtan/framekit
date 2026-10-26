@@ -8,7 +8,8 @@ These dicts are the built-ins, served by `framekit.models.DEFAULT_REGISTRY`. You
 providers and models go into a registry of your own (`DEFAULT_REGISTRY.extend(...)`,
 docs/adapters.md), not into these dicts: editing them in place still reaches the default
 router, but it's unsupported and changes every router in the process.
-Prices are per 1M tokens, used only to record an estimated cost (never displayed).
+Prices are per 1M tokens, used only to record an estimated cost (never displayed). A model
+may charge more for a long prompt (`LongPromptPrices`); each request is priced on its own.
 """
 
 import os
@@ -96,6 +97,17 @@ class ReasoningControl:
 
 
 @dataclass(frozen=True)
+class LongPromptPrices:
+    """Higher prices for a request whose prompt is longer than `above_tokens` input tokens
+    (all its input tokens count, cached ones too). Each request is priced on its own: a long
+    request doesn't change the price of the others."""
+
+    above_tokens: int
+    input_usd_per_mtok: Decimal
+    output_usd_per_mtok: Decimal
+
+
+@dataclass(frozen=True)
 class ModelSpec:
     provider: str
     model_id: str
@@ -120,6 +132,19 @@ class ModelSpec:
     # downscaled or rejected by the provider halfway through a run.
     max_images: int | None = None
     max_image_side_px: int | None = None  # the long edge the model reads without resizing
+    # Takes a sampling temperature (`ConversationRequest.temperature`). False: the model
+    # accepts only its default sampling, so a request that sets a temperature fails before
+    # any call, and extraction leaves the plan's default temperature out for its roles.
+    sampling: bool = True
+    # Higher prices above a prompt length, when the model has them (None: one price).
+    long_prompt: LongPromptPrices | None = None
+
+    def prices(self, input_tokens: int) -> tuple[Decimal, Decimal]:
+        """(input, output) USD per 1M tokens for one request with this many input tokens."""
+        tier = self.long_prompt
+        if tier is not None and input_tokens > tier.above_tokens:
+            return tier.input_usd_per_mtok, tier.output_usd_per_mtok
+        return self.input_usd_per_mtok, self.output_usd_per_mtok
 
     @property
     def reasoning_mode(self) -> str:
@@ -204,6 +229,37 @@ _SPECS = (
         max_images=100,
         max_image_side_px=1568,
     ),
+    # Claude Haiku 5.5. Prices: platform.claude.com/docs/en/about-claude/pricing
+    # (2026-10-26): $0.10 / $0.50 for prompts up to 100,000 tokens, $0.50 / $2.50 above.
+    # Its tokenizer counts the same text as about 30% more tokens than Haiku 4.5's. Not
+    # probed live yet (structured output stays "prompted").
+    ModelSpec(
+        "anthropic",
+        "claude-haiku-5-5",
+        "Claude Haiku 5.5",
+        Decimal("0.10"),
+        Decimal("0.50"),
+        # Adaptive thinking is on by default, with its text hidden unless `display:
+        # summarized` is asked for. Off needs an explicit `disabled`, which this model
+        # accepts at effort `high` or lower; effort stays at the model's default (`medium`).
+        reasoning=ReasoningControl(
+            on={"thinking": {"type": "adaptive", "display": "summarized"}},
+            off={"thinking": {"type": "disabled"}},
+            allowance=768,
+            max_tokens_cap=1024,
+        ),
+        context_window=1_000_000,
+        vision=True,
+        # platform.claude.com/docs/en/build-with-claude/vision (2026-10-26): the
+        # high-resolution tier (Claude 4.7 and later: 2,576 px long edge, up to 4,784 image
+        # tokens), but a request with over 20 images rejects any side over 2,000 px, so 2,000.
+        max_images=600,
+        max_image_side_px=2000,
+        # Takes only the default sampling: any other temperature is a 400. Its safety
+        # classifiers may stop a reply (`refusal`), with no server-side fallback model.
+        sampling=False,
+        long_prompt=LongPromptPrices(100_000, Decimal("0.50"), Decimal("2.50")),
+    ),
     ModelSpec(
         "anthropic",
         "claude-sonnet-5",
@@ -226,6 +282,8 @@ _SPECS = (
         # but a request with over 20 images rejects any side over 2,000 px, so 2,000.
         max_images=600,
         max_image_side_px=2000,
+        # Claude 4.7 and later take only the default sampling: a temperature is a 400.
+        sampling=False,
     ),
     ModelSpec(
         "anthropic",
@@ -247,6 +305,7 @@ _SPECS = (
         vision=True,
         max_images=600,
         max_image_side_px=2000,
+        sampling=False,  # as Sonnet 5
     ),
 )
 CATALOG: dict[str, ModelSpec] = {spec.model_id: spec for spec in _SPECS}
@@ -262,11 +321,18 @@ class ModelSettings(BaseModel):
     timeout_s: float = 30.0
 
 
-def estimate_cost(spec: ModelSpec, input_tokens: int, output_tokens: int) -> Decimal:
+def estimate_cost(
+    spec: ModelSpec, input_tokens: int, output_tokens: int, *, calls: int = 1
+) -> Decimal:
+    """The estimated cost of one request with these token counts, or of `calls` requests of
+    that size each. Prices are per request (a long prompt may pay the model's `long_prompt`
+    prices), so pass one request's tokens, never a sum over several requests."""
+    input_price, output_price = spec.prices(input_tokens)
     cost = (
-        Decimal(input_tokens) * spec.input_usd_per_mtok
-        + Decimal(output_tokens) * spec.output_usd_per_mtok
-    ) / MILLION
+        (Decimal(input_tokens) * input_price + Decimal(output_tokens) * output_price)
+        * calls
+        / MILLION
+    )
     return cost.quantize(Decimal("0.000001"))
 
 

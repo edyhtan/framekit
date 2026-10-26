@@ -420,6 +420,25 @@ def resolve_run(
             problems.append(f"plan: models.{role}.model_id: {exc}")
             continue
         embedding = role.startswith("embed")
+        temperature = None
+        if not embedding:
+            temperature = (
+                chosen_model.temperature
+                if chosen_model.temperature is not None
+                else defaults.temperature
+            )
+        if temperature is not None and not spec.sampling:  # takes only its default sampling
+            if chosen_model.temperature is not None:
+                problems.append(
+                    f"plan: models.{role}.temperature: {spec.model_id} takes no temperature "
+                    "(its catalog entry has sampling=False); remove it"
+                )
+            else:
+                notes.append(
+                    f"models.{role}: {spec.model_id} takes no temperature, so "
+                    "models.defaults.temperature isn't applied"
+                )
+            temperature = None
         binding = RoleBinding(
             role=role,
             model_id=chosen_model.model_id,
@@ -427,13 +446,7 @@ def resolve_run(
             provider=config,
             adapter=adapter,
             max_tokens=0 if embedding else (chosen_model.max_tokens or DEFAULT_MAX_TOKENS[role]),
-            temperature=None
-            if embedding
-            else (
-                chosen_model.temperature
-                if chosen_model.temperature is not None
-                else defaults.temperature
-            ),
+            temperature=temperature,
             seed=None if embedding else chosen_model.seed,
             reasoning=False
             if embedding

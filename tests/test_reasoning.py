@@ -96,6 +96,16 @@ async def test_claude_5_thinking_is_disabled_unless_asked_and_effort_is_kept(mod
     assert on["max_tokens"] == 868
 
 
+async def test_haiku_5_5_thinking_is_disabled_unless_asked_at_the_default_effort():
+    off = await anthropic_params("claude-haiku-5-5", reasoning=False)
+    assert off["thinking"] == {"type": "disabled"} and "output_config" not in off
+    assert off["max_tokens"] == 100
+
+    on = await anthropic_params("claude-haiku-5-5", reasoning=True)
+    assert on["thinking"] == {"type": "adaptive", "display": "summarized"}
+    assert on["max_tokens"] == 868
+
+
 async def test_haiku_thinking_budget_fits_below_max_tokens():
     off = await anthropic_params("claude-haiku-4-5", reasoning=False)
     assert "thinking" not in off and off["max_tokens"] == 100

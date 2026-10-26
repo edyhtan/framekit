@@ -29,6 +29,7 @@ from framekit.models import (
     DEFAULT_REGISTRY,
     PROVIDERS,
     ConversationRouter,
+    LongPromptPrices,
     ModelRegistry,
     ModelSettings,
     ModelSpec,
@@ -620,6 +621,28 @@ def test_validation_checks_names_and_fields():
         "a protocol name must be a non-empty string, got ''",
     ):
         assert fragment in message
+
+
+def test_validation_checks_long_prompt_prices():
+    with pytest.raises(ValueError) as info:
+        ModelRegistry(
+            providers=[GATEWAY],
+            models=[
+                replace(SPEC, model_id="m-tier", long_prompt=LongPromptPrices(0, 0.5, 2)),
+                replace(SPEC, model_id="m-shape", long_prompt={"above_tokens": 10}),
+            ],
+            adapters={"gateway": GatewayAdapter},
+        )
+    message = str(info.value)
+    assert message.startswith("invalid model registry (3 problems):")
+    for fragment in (
+        "model 'm-tier': long_prompt.above_tokens must be a whole number >= 1, got 0",
+        "model 'm-tier': long_prompt.input_usd_per_mtok must be a Decimal, got 0.5",
+        "model 'm-shape': long_prompt must be a LongPromptPrices or None",
+    ):
+        assert fragment in message
+    tiered = replace(SPEC, long_prompt=LongPromptPrices(1_000, Decimal("4"), Decimal("20")))
+    ModelRegistry(providers=[GATEWAY], models=[tiered], adapters={"gateway": GatewayAdapter})
 
 
 def test_validation_refuses_adapter_classes_that_cannot_work():

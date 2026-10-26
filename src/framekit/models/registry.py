@@ -30,6 +30,7 @@ from framekit.models.adapters.openai_compatible import OpenAICompatibleAdapter
 from framekit.models.catalog import (
     CATALOG,
     PROVIDERS,
+    LongPromptPrices,
     ModelSettings,
     ModelSpec,
     ProviderConfig,
@@ -261,6 +262,24 @@ def _model_problems(spec: ModelSpec) -> list[str]:
                 f"model {spec.model_id!r}: {field} must be a Decimal, e.g. "
                 f'Decimal("0.30"), got {price!r}'
             )
+    return problems + _long_prompt_problems(spec)
+
+
+def _long_prompt_problems(spec: ModelSpec) -> list[str]:
+    tier = spec.long_prompt
+    if tier is None:
+        return []
+    name = f"model {spec.model_id!r}: long_prompt"
+    if not isinstance(tier, LongPromptPrices):
+        return [f"{name} must be a LongPromptPrices or None, got {tier!r}"]
+    problems = []
+    above = tier.above_tokens
+    if isinstance(above, bool) or not isinstance(above, int) or above < 1:
+        problems.append(f"{name}.above_tokens must be a whole number >= 1, got {above!r}")
+    for field in ("input_usd_per_mtok", "output_usd_per_mtok"):
+        price = getattr(tier, field)
+        if not isinstance(price, Decimal | int):
+            problems.append(f"{name}.{field} must be a Decimal, got {price!r}")
     return problems
 
 
