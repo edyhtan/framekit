@@ -137,8 +137,8 @@ async def process_unit(
 ) -> UnitResult:
     run = ctx.run
     plan = run.plan
-    checks = plan.quality_control.checks
-    then = plan.quality_control.invalid_output.then
+    checks = plan.policy.quality_control.checks
+    then = plan.policy.quality_control.invalid_output.then
     result = UnitResult(unit.unit_id, source_fingerprint=fingerprint)
     rows = result.rows
     try:
@@ -204,7 +204,7 @@ async def process_unit(
                     signals,
                     scene,
                     synopsis,
-                    _neighbors(scenes, i, plan.perception.context.neighbors),
+                    _neighbors(scenes, i, plan.interpretation.perception.context.neighbors),
                 )
             )
             for i, scene in enumerate(scenes)
@@ -255,7 +255,7 @@ async def process_unit(
         )
 
     # L3b: every scene with a record × every lens × every self-consistency run
-    runs = plan.lens_passes.self_consistency.runs
+    runs = plan.interpretation.lens_passes.self_consistency.runs
     jobs = [
         (scene, lens, k)
         for scene in scenes
@@ -296,8 +296,8 @@ async def process_unit(
         rows["qc"] += lens_qc(scene, lens, k, out, checks, then)
         if out.get("annotation") is not None:
             by_scene_lens[(scene.scene_id, lens.name)].append((k, out["annotation"], record))
-    threshold = plan.quality_control.thresholds.agreement_min
-    on_disagreement = plan.lens_passes.self_consistency.on_disagreement
+    threshold = plan.policy.quality_control.thresholds.agreement_min
+    on_disagreement = plan.interpretation.lens_passes.self_consistency.on_disagreement
     scene_by_id = {s.scene_id: s for s in scenes}
     lens_by_name = {lens.name: lens for lens in run.lenses}
     for (scene_id, lens_name), done in by_scene_lens.items():
@@ -316,8 +316,8 @@ async def process_unit(
             rows["phrasings"] += phrasing_list
 
     # embed: scene summaries (the record's, else L2's) and phrasings
-    if "embed_text" in run.roles and plan.embedding.text is not None:
-        inputs = plan.embedding.text.inputs
+    if "embed_text" in run.roles and plan.interpretation.embedding.text is not None:
+        inputs = plan.interpretation.embedding.text.inputs
         items: list[tuple[str, str, str]] = []
         if "scene_summary" in inputs:
             for scene in scenes:
@@ -426,17 +426,18 @@ async def preflight(run: ResolvedRun, ffmpeg: FFmpeg, slots: asyncio.Semaphore) 
                     f"unmatched: {info.duration_s:.2f} s, the manifest expects {expected:.2f} s"
                 )
                 continue
-        if info.duration_s > plan.long_units.enabled_over_s:
+        limit = plan.observation.long_units.enabled_over_s
+        if info.duration_s > limit:
             excluded[unit_id] = (
-                f"long unit ({info.duration_s:.0f} s over long_units.enabled_over_s = "
-                f"{plan.long_units.enabled_over_s:g} s): chunked processing isn't built yet; "
-                "raise enabled_over_s to process it in one pass"
+                f"long unit ({info.duration_s:.0f} s over "
+                f"observation.long_units.enabled_over_s = {limit:g} s): chunked processing "
+                "isn't built yet; raise enabled_over_s to process it in one pass"
             )
             continue
-        width, height = copy_size(info, plan.normalize.height_px)
-        limits = SourceLimits(plan.normalize.fps, width, height)
+        width, height = copy_size(info, plan.observation.normalize.height_px)
+        limits = SourceLimits(plan.observation.normalize.fps, width, height)
         for role in ("L2", "L3a"):
-            if role in run.roles and role in run.vision.stages:
+            if role in run.roles and role in run.frames.stages:
                 problems += [
                     f"unit {unit_id}: {p}" for p in check_against_source(run.profile(role), limits)
                 ]
@@ -523,7 +524,7 @@ async def extract_async(
         )()
     else:
         port = router
-    spend = Spend(run.plan.budget)
+    spend = Spend(run.plan.policy.budget)
     ex = Execution(runner, TaskStore(work_dir), port, spend, rerun=frozenset(rerun))
     ctx = StageContext(run, ex, ffmpeg, work_dir)
     unit_slots = asyncio.Semaphore(runner.media_slots())
@@ -561,7 +562,7 @@ async def extract_async(
         records += result.records
         notes += result.notes
     tables["runs"] = [_record_row(r) for r in records]
-    formatting = run.plan.formatting
+    formatting = run.plan.policy.formatting
     written = write_tables(
         out,
         tables,
@@ -591,15 +592,16 @@ async def extract_async(
             "digest": run.plan_digest,
             "content_digest": run.content_digest,
             "fairness_digest": run.fairness_digest,
+            "components": dict(run.component_digests),
         },
         derivations=tuple(run.derivations),
         lenses=tuple(
             {"name": s.name, "version": s.version, "digest": s.digest} for s in run.lenses
         ),
         models={role: binding.manifest() for role, binding in run.roles.items()},
-        vision_digest=run.vision.digest,
+        frames_digest=run.frames.digest,
         governance={
-            **plain(run.plan.governance),
+            **plain(run.plan.policy.governance),
             "rights_mode": corpus.profile.rights_mode,
             "model_inputs": run.model_inputs,
             "stays_local": corpus.profile.rights_mode == "byo_media",

@@ -219,34 +219,35 @@ flowchart LR
     BU -. "frame timestamps" .-> PR[("provenance")]
 ```
 
-**Shape.** A frame profile is a named, versioned block; the plan assigns one per stage that sends pictures to a model, the way the model profile assigns a model per role:
+**Shape.** A frame profile is a named, versioned block; the plan (`observation.frames`) assigns one per stage that sends pictures to a model, the way `models` assigns a model per role:
 
 ```yaml
-vision_profiles:
-  scene_overview:            # used by L2
-    version: 1
-    frame_selection:                      # native video: the provider samples, so only
-      candidates: {strategy: uniform, fps: 1}   # uniform fps and a size apply (the clip
-    image: {max_side_px: 512, aspect: preserve} # range is given when the stage runs)
-    delivery: {mode: native_video}        # or images, storyboard
-  scene_detail:              # used by L3a
-    version: 1
-    frame_selection:
-      candidates: {strategy: uniform, fps: 4}           # dense pool to choose from
-      anchors: [shot_boundaries]                        # from L1
-      filters:
-        - dedupe: {method: phash, max_distance: 6}
-        - sharpness: {keep: best_per_window, window_s: 0.5}
-      budget:
-        max_frames_per_scene: 16
-        allocate_by: [motion, audio_onsets]             # from L1
-        min_gap_s: 0.25
-    image: {max_side_px: 768, aspect: preserve, format: jpeg, quality: 85}
-    delivery: {mode: images}
+frames:                      # in a plan: observation.frames
+  profiles:
+    scene_overview:          # used by L2
+      version: 1
+      frame_selection:                    # native video: the provider samples, so only
+        candidates: {strategy: uniform, fps: 1}  # uniform fps and a size apply (the clip
+      image: {max_side_px: 512, aspect: preserve} # range is given when the stage runs)
+      delivery: {mode: native_video}      # or images, storyboard
+    scene_detail:            # used by L3a
+      version: 1
+      frame_selection:
+        candidates: {strategy: uniform, fps: 4}         # dense pool to choose from
+        anchors: [shot_boundaries]                      # from L1
+        filters:
+          - dedupe: {method: phash, max_distance: 6}
+          - sharpness: {keep: best_per_window, window_s: 0.5}
+        budget:
+          max_frames_per_scene: 16
+          allocate_by: [motion, audio_onsets]           # from L1
+          min_gap_s: 0.25
+      image: {max_side_px: 768, aspect: preserve, format: jpeg, quality: 85}
+      delivery: {mode: images}
 
-stages:
-  L2:  {vision: scene_overview}
-  L3a: {vision: scene_detail}
+  stages:
+    L2:  {profile: scene_overview}
+    L3a: {profile: scene_detail}
 ```
 
 | Part | What it controls | Examples |
@@ -285,18 +286,15 @@ The plan's other settings (segment granularity, L1 detector settings, phrasings 
 | **Scope**: which parts of the corpus count | unit subset, exclusions | units processed, excluded ranges |
 | **Query style**: how searches will be phrased | example queries | phrasing prompts, embedding inputs |
 
-**The plan says how A is realized**: every setting in the groups below (the complete reference, with commands and examples, is [settings.md](settings.md)). It starts from documented defaults, takes explicit overrides, and applies a small set of **derivation rules** from A, e.g. "a lens requiring `sound` turns on the sound module". The rules are deterministic, versioned and recorded, so no hidden logic adapts the plan to an A.
+**The plan says how A is realized**: every setting in the five components below, each with its own version, checks and digest (the complete reference, with commands and examples, is [settings.md](settings.md) §5). It starts from documented defaults, takes explicit overrides, and applies a small set of **derivation rules** from A, e.g. "a lens requiring `sound` turns on the sound module". The rules are deterministic, versioned and recorded, so no hidden logic adapts the plan to an A.
 
-| Plan group | Contains |
+| Plan component | Contains |
 |---|---|
-| **Source preparation** | `normalize` (the analysis copy) |
-| **Observation** | frame profiles (§2.3), `signals`, `long_units` |
-| **Structure** | `segmentation` |
-| **Interpretation** | `perception`, `lens_passes`, `embedding` |
-| **Models** | model and settings per role |
-| **Control policy** | quality control, retries, budget |
-| **Formatting** | dataset schema version, tables, layout, compression |
-| **Governance** | inherited from V's rights mode; it can only be made stricter, never looser |
+| **`observation`** | `normalize` (the analysis copy), `frames` (§2.3), `signals`, `long_units` |
+| **`structure`** | `segmentation`, `beats` |
+| **`interpretation`** | `perception`, `lens_passes`, `embedding` |
+| **`models`** | a model and its settings per role |
+| **`policy`** | `quality_control` (checks, retries), `budget`, `formatting` (dataset schema version, tables, layout), `governance` (inherited from V's rights mode; it can only be made stricter, never looser) |
 
 **Recorded and hashed:**
 - The manifest stores **A verbatim with its hash**, the **resolved plan** (defaults filled in, strategy versions pinned), and the derivation rules applied.
@@ -354,7 +352,7 @@ Detectors are named, versioned code, picked in the plan; the built-ins (version 
 
 ### L2 — Scene segmentation
 - A long-context video model gets the whole unit (frames chosen by L2's frame profile, §2.3; typically uniform ~1 fps, as images or storyboard grids until native video is built) and returns a **synopsis** plus **scene boundaries** (30–60 s), snapped to L1 shot cuts. framekit repairs the proposal into a clean cover of the unit's processable parts (ordered, contiguous, too-short scenes merged, too-long ones split), noting every repair; an unusable reply falls back to shot groups, flagged.
-- `segmentation.method: shot_groups` makes scenes from consecutive shots without a model (and without a synopsis).
+- `structure.segmentation.method: shot_groups` makes scenes from consecutive shots without a model (and without a synopsis).
 - The synopsis is passed to later passes, because a scene's meaning depends on unit context.
 
 ### L3a — Perception (video → observable facts)
@@ -544,7 +542,7 @@ Users' copies of a corpus differ (releases, edits, frame rates). A dedicated mod
 
 - **Video model** for L2/L3a (Gemini assumed; Claude via frames is an option; verify cost and limits). Gemini integration is **paused** (DECISIONS.md 2026-10-24): native video needs a `video_understand` port and a native adapter; text roles would work through the OpenAI-compatible adapter after small fixes.
 - **Text model** for lens passes; **embedding models** (text + SigLIP).
-- **Frames to remote models for bring-your-own corpora:** no default; each plan says (`governance.model_inputs`), and `local_only` is enforced against each role's provider address (2026-10-24).
+- **Frames to remote models for bring-your-own corpora:** no default; each plan says (`policy.governance.model_inputs`), and `local_only` is enforced against each role's provider address (2026-10-24).
 - **A, V and plan schemas, the lens spec file format, the dataset layout:** built as v1 (2026-10-24; DECISIONS), revisitable. Still open from [settings.md](settings.md) §8: a drop policy for rows (today: flagged, never dropped).
 - **Frames:** refilling the frame budget after pixel filters drop frames; planning `split_by_budget` and `per_module` views; keeping `budget.max_frames` across the spans of a unit (planning applies it per span).
 - **Baseline scorer details:** its fixed embedding model and metrics (§6.2); the gold-query set per corpus.

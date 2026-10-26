@@ -4,7 +4,7 @@ and delivered, as data.
 A **frame profile** is a named, versioned block with four parts: `frame_selection`
 (candidates, anchors, filters, budget), `image` (size and encoding), `delivery` (images,
 storyboard or native video) and optional `views` (several looks per segment). The plan
-assigns one profile per stage that sends pictures (`stages: {L3a: {vision: scene_detail}}`).
+assigns one profile per stage that sends pictures (`stages: {L3a: {profile: scene_detail}}`).
 
 Strategies are referenced by name, as in the YAML of docs/settings.md §5.2:
 - a bare name: `shot_boundaries`, or with its version: `shot_boundaries@1`;
@@ -415,13 +415,14 @@ class FrameProfile(_Model):
 
 
 class StageFrames(_Model):
-    vision: Name
+    profile: Name
 
 
 class FrameParams(_Model):
-    """The plan's vision block: named profiles and the profile each stage uses."""
+    """The plan's frames block (`observation.frames`): named profiles and the profile each
+    stage uses."""
 
-    vision_profiles: Annotated[dict[Name, FrameProfile], AfterValidator(FrozenDict)] = (
+    profiles: Annotated[dict[Name, FrameProfile], AfterValidator(FrozenDict)] = (
         FrozenDict()
     )
     stages: Annotated[dict[Name, StageFrames], AfterValidator(FrozenDict)] = FrozenDict()
@@ -440,7 +441,7 @@ class FrameParams(_Model):
 
     @classmethod
     def from_mapping(cls, data: Mapping[str, Any]) -> "FrameParams":
-        """Parses and checks the shape of docs/settings.md §5.2 (keys `vision_profiles` and
+        """Parses and checks the shape of docs/settings.md §5.2 (keys `profiles` and
         `stages`; YAML or JSON parsing is the caller's job). Raises one FrameParamsError
         listing every problem with its path."""
         try:
@@ -451,18 +452,18 @@ class FrameParams(_Model):
     def to_mapping(self) -> dict[str, Any]:
         return _clean(
             {
-                "vision_profiles": {
+                "profiles": {
                     name: profile_mapping(profile)
-                    for name, profile in self.vision_profiles.items()
+                    for name, profile in self.profiles.items()
                 },
-                "stages": {stage: {"vision": e.vision} for stage, e in self.stages.items()},
+                "stages": {stage: {"profile": e.profile} for stage, e in self.stages.items()},
             }
         )
 
     def profile_for(self, stage: str) -> FrameProfile:
         if stage not in self.stages:
             raise KeyError(f"no frame profile assigned to stage {stage!r}")
-        return self.vision_profiles[self.stages[stage].vision]
+        return self.profiles[self.stages[stage].profile]
 
 
 # --- rules that tie settings together ---------------------------------------------------
@@ -629,20 +630,20 @@ def _views_problems(s: _Settings) -> list[Problem]:
 
 def _stage_problems(s: _Settings) -> list[Problem]:
     """Stages that name a missing profile. A profile with problems of its own exists."""
-    profiles, stages = s.raw("vision_profiles"), s.raw("stages")
+    profiles, stages = s.raw("profiles"), s.raw("stages")
     profiles = {} if profiles is None else profiles
-    if not isinstance(profiles, Mapping) or not s.clean("vision_profiles", inside=False):
+    if not isinstance(profiles, Mapping) or not s.clean("profiles", inside=False):
         return []
     if not isinstance(stages, Mapping) or not s.clean("stages", inside=False):
         return []
     names = sorted(name for name in profiles if isinstance(name, str))
     problems: list[Problem] = []
     for stage in stages:
-        name = s.get("stages", stage, "vision")
+        name = s.get("stages", stage, "profile")
         if isinstance(name, str) and name not in names:
             problems.append(
                 (
-                    ("stages", stage, "vision"),
+                    ("stages", stage, "profile"),
                     f"no frame profile named {name!r} (profiles: {', '.join(names) or 'none'})",
                 )
             )

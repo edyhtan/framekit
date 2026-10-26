@@ -1,8 +1,9 @@
 """L1 signal detectors (DESIGN.md §3 L1): deterministic, no AI model in the built-ins.
 
 A detector is named, versioned code, like a frame strategy: the plan picks it by name
-(`signals.shots.detector: ffmpeg_scene`, or `ffmpeg_scene@1`), and its key goes into L1's
-input hash, so a changed algorithm gets a new version and old datasets stay reproducible.
+(`observation.signals.shots.detector: ffmpeg_scene`, or `ffmpeg_scene@1`), and its key
+goes into L1's input hash, so a changed algorithm gets a new version and old datasets
+stay reproducible.
 
 Kinds, and what `run(settings, media)` returns (times in seconds on the unit timeline):
 - `shots`: the cut times, sorted;

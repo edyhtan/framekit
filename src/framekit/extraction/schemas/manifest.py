@@ -10,7 +10,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2  # 2: plan v2 (grouped), frames_digest (was vision_digest)
 FILE_NAME = "manifest.json"
 
 
@@ -44,11 +44,11 @@ class DatasetManifest(_Open):
     complete: bool  # every unit in scope finished
     search_space: dict[str, Any]  # {verbatim, digest}
     corpus: dict[str, Any]  # {name, digest, rights_mode, units: {id: source fingerprint}}
-    plan: dict[str, Any]  # {resolved, digest, content_digest}
+    plan: dict[str, Any]  # {resolved, digest, content_digest, fairness_digest, components}
     derivations: tuple[dict[str, Any], ...] = ()
     lenses: tuple[dict[str, Any], ...] = ()  # {name, version, digest}
     models: dict[str, Any] = Field(default_factory=dict)  # role -> {model_id, provider, ...}
-    vision_digest: str = ""
+    frames_digest: str = ""
     governance: dict[str, Any] = Field(default_factory=dict)
     units: tuple[UnitStatus, ...] = ()
     tables: dict[str, TableInfo] = Field(default_factory=dict)

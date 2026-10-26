@@ -90,7 +90,7 @@ def write_inputs(
             ],
         }
     }
-    plan_data = {"plan": base_plan() | (plan or {})}
+    plan_data = {"plan": merged(base_plan(), plan or {})}
     return {
         "space": write_yaml(root / "search-space.yaml", space_data),
         "corpus": write_yaml(root / "corpus.yaml", corpus_data),
@@ -98,40 +98,58 @@ def write_inputs(
     }
 
 
+def merged(base: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any]:
+    """`base` with `overrides` in it: mappings merge key by key, anything else replaces."""
+    out = dict(base)
+    for key, value in overrides.items():
+        if isinstance(value, dict) and isinstance(out.get(key), dict):
+            out[key] = merged(out[key], value)
+        else:
+            out[key] = value
+    return out
+
+
 def base_plan() -> dict[str, Any]:
     """A small, fast plan on the scripted models."""
     return {
-        "version": 1,
-        "normalize": {"fps": 8, "height_px": 240},
-        "vision_profiles": {
-            "overview": {
-                "version": 1,
-                "frame_selection": {
-                    "candidates": {"strategy": "uniform", "fps": 0.5},
-                    "budget": {"max_frames_per_scene": 9},
+        "version": 2,
+        "observation": {
+            "normalize": {"fps": 8, "height_px": 240},
+            "frames": {
+                "profiles": {
+                    "overview": {
+                        "version": 1,
+                        "frame_selection": {
+                            "candidates": {"strategy": "uniform", "fps": 0.5},
+                            "budget": {"max_frames_per_scene": 9},
+                        },
+                        "image": {"max_side_px": 160},
+                        "delivery": {"mode": "storyboard", "storyboard": {"rows": 3, "cols": 3}},
+                    },
+                    "detail": {
+                        "version": 1,
+                        "frame_selection": {
+                            "candidates": {"strategy": "uniform", "fps": 2},
+                            "anchors": ["shot_boundaries"],
+                            "filters": [
+                                {"dedupe": {"max_distance": 4}},
+                                {"sharpness": {"window_s": 1.0}},
+                            ],
+                            "budget": {"max_frames_per_scene": 4, "allocate_by": ["motion"]},
+                        },
+                        "image": {"max_side_px": 200, "format": "jpeg", "quality": 80},
+                    },
                 },
-                "image": {"max_side_px": 160},
-                "delivery": {"mode": "storyboard", "storyboard": {"rows": 3, "cols": 3}},
-            },
-            "detail": {
-                "version": 1,
-                "frame_selection": {
-                    "candidates": {"strategy": "uniform", "fps": 2},
-                    "anchors": ["shot_boundaries"],
-                    "filters": [{"dedupe": {"max_distance": 4}}, {"sharpness": {"window_s": 1.0}}],
-                    "budget": {"max_frames_per_scene": 4, "allocate_by": ["motion"]},
-                },
-                "image": {"max_side_px": 200, "format": "jpeg", "quality": 80},
+                "stages": {"L2": {"profile": "overview"}, "L3a": {"profile": "detail"}},
             },
         },
-        "stages": {"L2": {"vision": "overview"}, "L3a": {"vision": "detail"}},
-        "segmentation": {"scene_length_s": {"min": 4, "target": 8, "max": 12}},
-        "lens_passes": {"phrasings": {"count": 3}},
+        "structure": {"segmentation": {"scene_length_s": {"min": 4, "target": 8, "max": 12}}},
+        "interpretation": {"lens_passes": {"phrasings": {"count": 3}}},
         "models": {
             "L2": {"model_id": "seer", "max_tokens": 1024},
             "L3a": {"model_id": "seer", "max_tokens": 1024},
             "L3b": {"model_id": "writer", "max_tokens": 512},
             "embed_text": {"model_id": "vectors"},
         },
-        "governance": {"model_inputs": "local_only"},
+        "policy": {"governance": {"model_inputs": "local_only"}},
     }

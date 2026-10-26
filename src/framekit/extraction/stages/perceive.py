@@ -79,10 +79,10 @@ async def perceive(
     """(output, run record). The output holds `record` (or None), `status`, `problems`,
     `checks` (the L4 library checks) and `frames`."""
     run = ctx.run
-    settings = run.plan.perception
+    settings = run.plan.interpretation.perception
     binding = run.roles["L3a"]
     profile = run.profile("L3a")
-    max_attempts = run.plan.quality_control.invalid_output.max_attempts
+    max_attempts = run.plan.policy.quality_control.invalid_output.max_attempts
     context_signals = scene_signals(signals, scene.span, settings.context.signals)
     use_synopsis = synopsis if settings.context.synopsis else None
     inputs = {

@@ -4,7 +4,7 @@ import copy
 
 # docs/settings.md §5.2, the frames part of plan.yaml, verbatim (YAML → Python).
 SETTINGS_EXAMPLE = {
-    "vision_profiles": {
+    "profiles": {
         "scene_overview": {
             "version": 1,
             "frame_selection": {"candidates": {"strategy": "uniform", "fps": 1}},
@@ -50,16 +50,16 @@ SETTINGS_EXAMPLE = {
         },
     },
     "stages": {
-        "L2": {"vision": "scene_overview"},
-        "L3a": {"vision": "scene_detail"},
-        "embed_image": {"vision": "keyframes"},
+        "L2": {"profile": "scene_overview"},
+        "L3a": {"profile": "scene_detail"},
+        "embed_image": {"profile": "keyframes"},
     },
 }
 
 # DESIGN.md §2.3 before 2026-10-23 22:31: dedupe, a frame budget and JPEG settings with
 # native_video, which breaks the section's own rule.
 OLD_NATIVE_VIDEO_EXAMPLE = {
-    "vision_profiles": {
+    "profiles": {
         "scene_overview": {
             "version": 1,
             "frame_selection": {
@@ -72,7 +72,7 @@ OLD_NATIVE_VIDEO_EXAMPLE = {
             "delivery": {"mode": "native_video"},
         }
     },
-    "stages": {"L2": {"vision": "scene_overview"}},
+    "stages": {"L2": {"profile": "scene_overview"}},
 }
 
 
@@ -93,6 +93,6 @@ def profile(**overrides):
 
 def params_with(**profiles):
     return {
-        "vision_profiles": profiles,
-        "stages": {f"stage_{name}": {"vision": name} for name in profiles},
+        "profiles": profiles,
+        "stages": {f"stage_{name}": {"profile": name} for name in profiles},
     }

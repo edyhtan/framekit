@@ -165,19 +165,19 @@ def resolve(params: FrameParams | Mapping[str, Any]) -> ResolvedFrameParams:
         params = FrameParams.from_mapping(params)
     profiles = {
         name: resolve_profile(profile, name)
-        for name, profile in sorted(params.vision_profiles.items())
+        for name, profile in sorted(params.profiles.items())
     }
-    stages = {stage: entry.vision for stage, entry in sorted(params.stages.items())}
+    stages = {stage: entry.profile for stage, entry in sorted(params.stages.items())}
     text = canonical_json(
         _sorted(
             {
-                "vision_profiles": {name: p.mapping for name, p in profiles.items()},
-                "stages": {stage: {"vision": name} for stage, name in stages.items()},
+                "profiles": {name: p.mapping for name, p in profiles.items()},
+                "stages": {stage: {"profile": name} for stage, name in stages.items()},
             }
         )
     )
     resolved_params = FrameParams(
-        vision_profiles={name: p.profile for name, p in profiles.items()},
+        profiles={name: p.profile for name, p in profiles.items()},
         stages=params.stages,
     )
     return ResolvedFrameParams(

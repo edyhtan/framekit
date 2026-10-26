@@ -5,7 +5,7 @@ are refused before any work."""
 import json
 
 import pytest
-from extraction_helpers import write_inputs
+from extraction_helpers import base_plan, merged, write_inputs
 from media_helpers import ffmpeg_binary, make_video, needs_ffmpeg
 from model_helpers import ScriptedAdapter, sources
 
@@ -86,7 +86,28 @@ def test_the_benchmark_compares_search_spaces_with_a_pinned_plan(tmp_path, video
     assert second["reused"] > 0  # L0-L3a ran once for both
     saved = json.loads((tmp_path / "bench" / "report.json").read_text())
     assert saved["kind"] == "search_spaces"
-    assert "| one-lens |" in (tmp_path / "bench" / "report.md").read_text()
+    assert report.varying_components == ()  # one pinned plan
+    markdown = (tmp_path / "bench" / "report.md").read_text()
+    assert "| one-lens |" in markdown and "differ between variants: none." in markdown
+
+
+def test_comparing_plans_names_the_component_that_differs(tmp_path, video):
+    files = write_inputs(tmp_path, video)
+    space, corpus, plan = load(files)
+    more = {"interpretation": {"lens_passes": {"phrasings": {"count": 5}}}}
+    report = benchmark(
+        {"three": plan, "five": ExtractionPlan.from_mapping(merged(base_plan(), more))},
+        corpus,
+        space=space,
+        gold=GoldSet.from_mapping(GOLD),
+        out=tmp_path / "bench",
+        sources=sources(),
+        runner=LocalRunner(ffmpeg=ffmpeg_binary(), concurrency=4),
+    )
+    assert report.kind == "plans" and report.varying_components == ("interpretation",)
+    one, two = (v.components for v in report.variants)
+    assert [name for name in one if one[name] != two[name]] == ["interpretation"]
+    assert report.variants[1].cost["tasks"]["reused"] > 0  # L0-L3a shared
 
 
 def test_the_benchmark_refuses_unfair_comparisons(tmp_path, video):

@@ -46,12 +46,12 @@ async def lens_pass(
     """(output, run record). The output holds `annotation` (the checked reply, or None),
     `status` and `problems`."""
     run = ctx.run
-    settings = run.plan.lens_passes
+    settings = run.plan.interpretation.lens_passes
     binding = run.roles["L3b"]
     targets = lens.targets_in(settings.targets)
     count = settings.phrasings.count
     seed = settings.self_consistency.seeds[run_index]
-    max_attempts = run.plan.quality_control.invalid_output.max_attempts
+    max_attempts = run.plan.policy.quality_control.invalid_output.max_attempts
     beats = len(record.get("beats") or ())
     style = "" if run.style_examples else lens.prompts.phrasing_style
     context = lens_context(scene, record, synopsis)
