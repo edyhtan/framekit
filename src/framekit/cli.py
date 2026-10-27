@@ -130,7 +130,9 @@ def build_parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
 
     extract = commands.add_parser("extract", help="a search space and a corpus → a dataset")
-    extract.add_argument("--space", required=True, help="search-space.yaml (A)")
+    extract.add_argument(
+        "--space", help="search-space.yaml (A); optional when the plan's levels don't need it"
+    )
     extract.add_argument("--corpus", required=True, help="corpus.yaml (V)")
     extract.add_argument("--plan", help="plan.yaml (optional: defaults + derivation rules)")
     extract.add_argument("--out", required=True, help="the dataset folder")
@@ -205,7 +207,7 @@ def run_extract(args: argparse.Namespace) -> int:
 
     store, settings = _cache(args)
     result = extract(
-        SearchSpace.load(args.space),
+        SearchSpace.load(args.space) if args.space else None,
         Corpus.load(args.corpus),
         plan=ExtractionPlan.load(args.plan) if args.plan else None,
         out=args.out,

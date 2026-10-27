@@ -1,5 +1,6 @@
-"""Policy (question 6, docs/settings.md §5.5): what rules apply. Quality control, the
-budget, the dataset's format, and governance (what may leave the machine)."""
+"""Policy (question 6, docs/settings.md §5.5): what rules apply. The levels a run computes,
+quality control, the budget, the dataset's format, and governance (what may leave the
+machine)."""
 
 from typing import Annotated, ClassVar, Literal
 
@@ -7,6 +8,9 @@ from pydantic import Field
 
 from framekit.extraction.schemas.common import Frozen, FrozenDict, Model, Tupled
 from framekit.extraction.schemas.plan.component import Component
+
+# The pipeline's levels, in order (DESIGN.md §3). L4's checks run on whatever runs.
+LEVELS = ("L0", "L1", "L2", "L3a", "L3b", "embed")
 
 TABLES = (
     "units",
@@ -93,19 +97,30 @@ class Governance(Model):
 
 
 class Policy(Component):
-    """What rules apply: `quality_control`, `budget`, `formatting` and `governance`."""
+    """What rules apply: `levels`, `quality_control`, `budget`, `formatting` and
+    `governance`.
+
+    `levels` lists the levels this run computes. A listed level that needs an earlier level
+    the list leaves out reads that level's results from the task store and never runs it
+    (a unit without them fails, with a note); levels after the last one needed don't run."""
 
     KEY: ClassVar[str] = "policy"
 
     version: Literal[1] = 1
+    levels: Annotated[tuple[Literal[LEVELS], ...], Tupled] = LEVELS  # type: ignore[valid-type]
     quality_control: QualityControl = QualityControl()
     budget: BudgetSettings = BudgetSettings()
     formatting: Formatting = Formatting()
     governance: Governance = Governance()
 
     def problems(self) -> list[str]:
+        problems = []
+        if not self.levels:
+            problems.append("levels: list at least one level (" + ", ".join(LEVELS) + ")")
+        if len(set(self.levels)) != len(self.levels):
+            problems.append("levels: a level is listed twice")
         tables = self.formatting.tables
-        problems = [
+        problems += [
             f"formatting.tables: {name} is needed (provenance and reading)"
             for name in REQUIRED_TABLES
             if name not in tables

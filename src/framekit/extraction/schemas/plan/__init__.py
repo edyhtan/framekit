@@ -66,6 +66,7 @@ from framekit.extraction.schemas.plan.observation import (
     frames_from,
 )
 from framekit.extraction.schemas.plan.policy import (
+    LEVELS,
     QC_CHECKS,
     REQUIRED_TABLES,
     TABLES,
@@ -88,7 +89,7 @@ from framekit.extraction.schemas.plan.structure import (
 
 WHAT = "the plan"
 
-STAGES = ("L0", "L1", "L2", "L3a", "L3b", "embed", "L4")
+STAGES = (*LEVELS, "L4")
 COMPONENTS: dict[str, type[Component]] = {
     "observation": Observation,
     "structure": Structure,
@@ -186,6 +187,7 @@ class ExtractionPlan(Model):
 __all__ = [
     "COMPONENTS",
     "DEFAULT_FRAMES",
+    "LEVELS",
     "MODEL_ROLES",
     "MOVED_IN_V2",
     "QC_CHECKS",

@@ -76,6 +76,7 @@ Extraction run: emotional moments, test corpus (5 units)
 ```bash
 framekit extract \
   --space    search-space.yaml \                  # 1. what should be findable      [built]
+                                                 #    optional when policy.levels needs no A (§5.5)
   --corpus   corpus.yaml \                        # 2. which videos                 [built]
   --plan     plan.yaml \                          # 3–6. how (optional)             [built]
   --out      ~/framekit-data/datasets/tj-emotions-v1 \                           # [built]
@@ -92,7 +93,8 @@ framekit extract \
   --label run-1 \                                 # recorded in the manifest
   --dry-run                                       # checks + cost estimate, nothing runs
 # Runs always resume: tasks are keyed by their inputs and finished ones are skipped.
-# --rerun L3b runs a stage again, ignoring its stored tasks (repeatable).
+# --rerun L3b runs a stage again, ignoring its stored tasks (repeatable; not a level the run
+# only reads, §5.5).
 # Exit code: 0 complete, 2 a unit is partial, failed, excluded or skipped, 1 bad input.
 
 framekit bench --corpus corpus.yaml --plan plan.yaml \       # compare search spaces,
@@ -110,6 +112,7 @@ Every flag above is [built]. Execution flags change speed and cost, never the da
 
 - **Folders:** the work folder holds analysis copies, which count as footage for a bring-your-own corpus, so it must never land in a repository. framekit writes a `.gitignore` containing `*` into the work folder, the dataset folder and the benchmark folder.
 - **An existing dataset folder** is rewritten only by a rerun of the same search space, corpus and plan; a folder holding another dataset is refused (datasets are never overwritten).
+- **Without a search space:** leave out `--space` (in Python, pass `None`) when no level in `policy.levels` needs A (§5.5). Stored tasks are shared through the work folder, so a later run with A that names the same `--work-dir` reuses them.
 - **Keys:** a role whose provider key isn't set stops the run before any media work (a dry run lists them as notes). Plan files only name models; endpoints and keys come from `--sources` (your code) or the built-in catalog and its environment variables.
 
 **Python** [built]:
@@ -151,7 +154,7 @@ report = benchmark(
 
 ## 3. Search space: `search-space.yaml`
 
-What should become findable. It's **given input**: written by hand or produced by an augmentation strategy, and framekit never edits it (DESIGN.md §2.4). The manifest records it verbatim with a digest that also covers every lens spec it names.
+What should become findable. It's **given input**: written by hand or produced by an augmentation strategy, and framekit never edits it (DESIGN.md §2.4). The manifest records it verbatim with a digest that also covers every lens spec it names. A run whose `policy.levels` don't need A goes without one (§5.5).
 
 ```yaml
 search_space:
@@ -290,6 +293,8 @@ Rules v1 [built]. Each is deterministic, and the manifest records every one appl
 | `lenses` | `lenses` (with versions and digests) | `interpretation.lens_passes.lenses` | none |
 
 The frame profiles aren't derived from the resolution: they're explicit, so nothing adapts them behind your back.
+
+**Without a search space** [built] nothing is derived: the scope is the whole corpus (or its `subset`) with the corpus's excluded ranges, and the perception modules are `core` plus the plan's. The plan must set `structure.beats.max_s` when L3a is in the run, and `structure.segmentation.fixed_windows.window_s` when windows are made; a missing one is a problem before any spend.
 
 ### 5.2 Observation: how the video is looked at (question 3)
 
@@ -491,6 +496,7 @@ frames.timestamps, frames.pending_filters, frames.notes
 ```yaml
   policy:                                          # [built] component, version 1
     version: 1
+    levels: [L0, L1, L2, L3a, L3b, embed]          # [built] the levels this run computes (all)
     quality_control:                               # [built] L4
       checks: [timestamps_in_scene, timestamps_ordered, entities_in_profile,
                modules_complete, vocabulary, schema, validators, agreement]
@@ -517,6 +523,19 @@ frames.timestamps, frames.pending_filters, frames.notes
       annotation_pack: false                       # recorded; exporting one is [not built]
       model_inputs: null                           # provider_transient | local_only
 ```
+
+**Levels:** the levels this run computes, in any order. A level a listed one reads, but the list leaves out, is **only read from the task store**: never run, never estimated, and its provider key isn't needed. A unit without its stored result fails, with a note naming the level. Levels nothing listed reads don't run. The setting is in the plan's digests but in no task's input hash, so a level computes the same thing in any run.
+
+| Level | Reads |
+|---|---|
+| `L0` | (the source) |
+| `L1` | L0 |
+| `L2` | L0, L1 |
+| `L3a` | L0, L1, L2 |
+| `L3b` | L0, L1, L2, L3a |
+| `embed` | L0, L1, L2 (and L3a's summaries and L3b's phrasings when they're in the run) |
+
+For example, `[L0, L1, L2]` stops after scenes and needs no A; `[L0, L1, L2, embed]` adds vectors of L2's scene summaries; `[L3b]` runs lens passes on stored records and never spends on L2 or L3a. A is needed only when L3b is in the run, or when a value the plan leaves unset is derived from A (§5.1). `--rerun` can't name a level that's only read.
 
 - **Budget:** spend is the adapters' cost estimate from the catalog prices, checked before every model call, so a run overshoots by at most the calls in flight. Costs are priced per request, both while running and in the dry-run estimate, so a model's long-prompt prices (Claude Haiku 5.5: above 100,000 input tokens) apply only to the requests over the threshold; the estimate notes the stages where they do. When a cap is reached no new unit starts; `stop` also fails the next call of every unit in progress (those units end partial), `finish_unit_then_stop` lets them finish. The manifest marks partial and skipped units.
 - **`model_inputs`:** may frames go to a model provider for inference (`provider_transient`), or only to models on this machine or a private network (`local_only`, checked against each frame-sending role's base URL: `localhost` or a loopback, private or link-local IP)? For a **byo_media** corpus there's no default: a run that sends frames needs the plan to say. Other corpora default to `provider_transient`. Either way it's recorded in the manifest.
@@ -562,7 +581,7 @@ The baseline scorer (`baseline_retriever`) embeds each gold query with the datas
 |---|---|---|
 | `units` | one per unit in scope | `unit_id`, `status` (complete, partial, failed, excluded, skipped), `reason`, `file_name`, `source_fingerprint`, source `duration_s` / `width` / `height` / `fps` / `has_audio`, `copy_width` / `copy_height` / `copy_fps`, `metadata` (JSON), `excluded_ranges`, `synopsis` |
 | `shots` | per shot | `shot_id`, `unit_id`, `index`, `start`, `end` |
-| `scenes` | per scene | `scene_id`, `unit_id`, `index`, `start`, `end`, `summary` (L2's), `method`, `status` |
+| `scenes` | per scene | `scene_id`, `unit_id`, `index`, `start`, `end`, `summary` (L2's), `method`, `status` (L3a's: ok, flagged, missing; `not_perceived` when L3a isn't in the run) |
 | `beats` | per beat of a record | `beat_id`, `scene_id`, `unit_id`, `index`, `start`, `end`, `who`, `action`, `audio` |
 | `windows` | per fixed window | `window_id`, `unit_id`, `index`, `start`, `end` |
 | `signals` | per event or sample | `unit_id`, `signal` (shot_cut, audio_onset, loudness_dbfs, motion, speech, audio_tag), `t`, `end`, `value`, `label`, `text`, `detector` |
@@ -574,7 +593,7 @@ The baseline scorer (`baseline_retriever`) embeds each gold query with the datas
 | `runs` | per task | `run_id`, `stage`, `unit_id`, `target_id`, `input_hash`, `status`, `attempts`, `model_id`, `provider`, `adapter_version`, `started_at`, `finished_at`, `latency_ms`, tokens, `cost_usd` (estimated), `cached`, `reused`, `lens`, `run_index` |
 | `qc` | per check and target | `check`, `target_type`, `target_id`, `unit_id`, `scene_id`, `lens`, `run_index`, `status` (pass, flag, down_weight), `detail` |
 
-**The manifest** [built] records: the dataset id (from the search space, corpus and plan digests, so a rerun keeps it); the search space verbatim with its digest; the corpus name, digest, rights mode and each unit's content fingerprint; the resolved plan (defaults filled in, strategy versions pinned, derived values in place) with its digest, `content_digest` (without budget, governance and layout), `fairness_digest` and each component's digest (`components`); the derivation rules applied; lens versions and digests; the model of each role; the frames digest (`frames_digest`); governance; each unit's status and reason; every table file with its row count and sha256; the estimated cost (this run, total, per stage) and tasks computed or reused; the ffmpeg version and execution options; notes (repairs, dropped frames, unused settings); and the benchmark label when made by the harness. `Dataset.open(path, verify=True)` checks every file against it. The schema version is 2 (plan v2's grouped resolved plan, `frames_digest`); a reader refuses a version it doesn't know.
+**The manifest** [built] records: the dataset id (from the search space, corpus and plan digests, so a rerun keeps it); the search space verbatim with its digest (`null` for a run without A); the levels the dataset holds (`levels`; a manifest without it holds every level); the corpus name, digest, rights mode and each unit's content fingerprint; the resolved plan (defaults filled in, strategy versions pinned, derived values in place) with its digest, `content_digest` (without budget, governance and layout), `fairness_digest` and each component's digest (`components`); the derivation rules applied; lens versions and digests; the model of each role; the frames digest (`frames_digest`); governance; each unit's status and reason; every table file with its row count and sha256; the estimated cost (this run, total, per stage) and tasks computed or reused; the ffmpeg version and execution options; notes (repairs, dropped frames, unused settings); and the benchmark label when made by the harness. `Dataset.open(path, verify=True)` checks every file against it. The schema version is 2 (plan v2's grouped resolved plan, `frames_digest`); a reader refuses a version it doesn't know.
 
 ---
 
@@ -586,4 +605,4 @@ The baseline scorer (`baseline_retriever`) embeds each gold query with the datas
 4. **Default numbers** for every placeholder above, from benchmark sweeps (frame profiles first).
 5. **Model choices** per role (video, vision, text, embeddings) and any L1 tools beyond the built-in detectors (speech, audio tags).
 6. ~~Schema details~~: decided 2026-10-24 (v1): the lens spec file format (§3.1) and the dataset layout (§7).
-7. **Not built yet:** native video (`video_understand`), image embeddings, chunked long units, file matching and alignment, annotation gold-set scoring, a distributed runner, refilling the frame budget after pixel filters, and an observation run without A with scene sampling and richer L2 scene summaries (DESIGN.md §2.5).
+7. **Not built yet:** native video (`video_understand`), image embeddings, chunked long units, file matching and alignment, annotation gold-set scoring, a distributed runner, refilling the frame budget after pixel filters, and, for runs without A, scene sampling and richer L2 scene summaries (DESIGN.md §2.5).

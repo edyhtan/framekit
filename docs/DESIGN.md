@@ -133,7 +133,7 @@ Vectors alone can't be trained on or evaluated, because you'd lose what they enc
 | **vectors** | per embedding model, keyed by segment or phrasing; the model ID is part of the key |
 | **provenance** | model IDs, adapter versions, lens versions, input hashes, run records (status, attempts, times, tokens, cost), QC results |
 
-- **Format:** Parquet / Arrow tables plus a **manifest** (dataset ID, A and V digests, lens versions, model IDs, schema version, row counts, checksums). Layout v1: one file per table and unit (or per table), the manifest written last; every table and column in [settings.md](settings.md) §7.
+- **Format:** Parquet / Arrow tables plus a **manifest** (dataset ID, A and V digests, the levels it holds, lens versions, model IDs, schema version, row counts, checksums; a run without A records none, §2.5). Layout v1: one file per table and unit (or per table), the manifest written last; every table and column in [settings.md](settings.md) §7.
 - **Versioned, never overwritten:** re-running a lens adds a new `lens_version`; changing a model adds new rows keyed by the new `model_id`. Old versions stay until retired.
 
 ```mermaid
@@ -321,29 +321,30 @@ flowchart LR
 - **The yardstick doesn't move:** gold queries and gold moments are fixed per corpus and never generated from A. Model randomness is pinned where the model allows it (temperature or seed in the plan; a model that accepts only its default sampling takes neither) and shared calls replay from the response cache.
 - The same harness also runs the opposite comparison: a fixed A with different plans, e.g. a sweep of frame profiles.
 
-### 2.5 Observing without A (planned)
+### 2.5 Observing without A
 
-A consumer that proposes A's from the corpus itself needs to read what the corpus holds before any A exists. short_extract's **search space suggestions** do this: they generate candidate A's from the corpus, rank them, and let the user pick one of the top few or write their own (its `docs/DESIGN.md` §2). The stages up to L3a don't read A (§3), so framekit can run them alone:
+A consumer that proposes A's from the corpus itself needs to read what the corpus holds before any A exists. short_extract's **search space suggestions** do this: they generate candidate A's from the corpus, rank them, and let the user pick one of the top few or write their own (its `docs/DESIGN.md` §2). The stages up to L3a don't read A (§3), so framekit runs them alone: `extract` with no A, and a plan whose `policy.levels` (§5.1) stop before the lens passes.
 
 ```python
-observations = observe(V, plan=plan, runner=LocalRunner(), out=path)   # planned
+# plan.yaml:  policy: {levels: [L0, L1, L2]}      or [L0, L1, L2, L3a], [L0, L1, L2, embed]
+observed = extract(None, V, plan=plan, out=path, runner=LocalRunner(work_dir=work))
 ```
 
 ```mermaid
 flowchart LR
-    V["V: the corpus"] --> OB["observe(V, plan)<br/>L0–L2 on every unit,<br/>L3a on all or a sample of scenes"]
+    V["V: the corpus"] --> OB["extract(None, V, plan)<br/>policy.levels: L0–L2 on every unit,<br/>L3a on all scenes (a sample: planned)"]
     OB --> OD[("observations<br/>no annotations, no phrasings")]
     OD --> ST["a strategy outside framekit<br/>proposes and ranks A's"]
     ST --> A["the chosen A"]
     A --> EX["extract(A, V, plan)"]
-    OD -. "observed tasks reused" .-> EX
+    OD -. "stored tasks reused<br/>(same work folder)" .-> EX
 ```
 
-- **What runs:** L0–L2 on every unit, and L3a on every scene or on a **sample** of scenes. No lens passes. Vectors of the scene summaries are optional; a consumer can search them directly, as the "no A" baseline every proposed A is ranked against.
-- **What it writes:** a dataset in the usual layout (§2.1), without `annotations` or `phrasings`. Its manifest says it's an observation run and holds no A.
-- **Perception settings are pinned in the plan.** L3a's input hash covers the perception modules and the beat lengths, which a run with A derives from it. An observation run takes them from the plan instead (for example, every module and short beats). A later `extract(A, V)` with the same settings then reuses every observed task, so L0–L3a aren't paid for twice.
-- **Scene sampling** (a new plan setting): a stratified sample, spread across units, across clusters of L2 scene summaries, and across scenes with high and low motion and onsets. The sampled scenes are recorded, so a later full run completes the rest.
-- **Richer L2 scene summaries** (a new plan setting and prompt version). Today each scene gets one sentence, which is too thin to propose dimensions such as timing or sound. Three changes:
+- **What runs** [built]: the levels the plan lists. L0–L2 on every unit gives scenes with L2's summaries; adding L3a gives perception records; adding `embed` gives vectors of the scene summaries, which a consumer can search directly as the "no A" baseline every proposed A is ranked against. L3b needs A's lenses, so a run without A that lists it is refused before any spend.
+- **What it writes** [built]: a dataset in the usual layout (§2.1), with empty `annotations` and `phrasings` (and empty `perception` and `beats` without L3a, its scenes marked `not_perceived`). Its manifest records no A (`search_space: null`) and the levels it holds.
+- **Perception settings are pinned in the plan** [built]. L3a's input hash covers the perception modules and the beat lengths, which a run with A derives from it. Without A the plan sets them (for example, every module and short beats): the modules are `core` plus the plan's, and an L3a run needs `structure.beats.max_s`. A later `extract(A, V)` with the same settings and the same work folder then reuses every stored task, so L0–L3a aren't paid for twice. The default work folder sits next to the output folder, so both runs must name the same one.
+- **Scene sampling** (planned; a new plan setting): a stratified sample, spread across units, across clusters of L2 scene summaries, and across scenes with high and low motion and onsets. The sampled scenes are recorded, so a later full run completes the rest.
+- **Richer L2 scene summaries** (planned; a new plan setting and prompt version). Today each scene gets one sentence, which is too thin to propose dimensions such as timing or sound. Three changes:
   - a summary length in sentences (1–5);
   - audio onset times in the L2 prompt, as L3a already gets them;
   - a summary for a scene piece that repair split off (today it gets none).
@@ -367,7 +368,7 @@ flowchart TB
     L4 --> DS[("dataset")]
 ```
 
-Stages L0–L3a depend only on V, the perception modules and the model profile, so their output is **shared** by every A over the same corpus. L3b and later depend on the lens specs.
+Stages L0–L3a depend only on V, the perception modules and the model profile, so their output is **shared** by every A over the same corpus. L3b and later depend on the lens specs. A plan can run some of the levels only (`policy.levels`, §5.1).
 
 ### L0 — Normalize
 - Keep originals untouched.
@@ -469,6 +470,7 @@ A lens is **data**: a spec file plus prompt files, versioned. framekit validates
 - **Resumable:** every outcome is written as a run record before the next stage starts; an interrupted run continues from the records.
 - **Response cache:** model calls can be recorded and replayed (off / record / replay per call class). A replay is free and deterministic, which makes benchmarks and tests reproducible. The cache store is a port (file store built in; consumers may supply another, e.g. Valkey).
 - **Budgets and rate limits:** the budget in the plan caps cost; per-provider rate limits are shared across stages.
+- **Levels** (`policy.levels`): a run computes the levels its plan lists. An earlier level a listed one needs, but the list leaves out, is only read from the task store, never run: a unit without its stored result fails, with a note. Levels nothing listed needs don't run. So `[L0, L1, L2]` stops after scenes, and `[L3b]` reruns lens passes on stored records without spending on L2 or L3a. A is needed only when a level in the run needs it (§2.5).
 
 ### 5.2 Runners
 The runner is behind a port, so the same stages run in different places:
@@ -580,7 +582,7 @@ Users' copies of a corpus differ (releases, edits, frame rates). A dedicated mod
 - **Default frame profiles** per stage, from a benchmark sweep (§2.3, §6.2).
 - **A distribution name for PyPI,** if the library is ever published (`framekit` is taken there; [ARCHITECTURE.md](ARCHITECTURE.md) §8).
 - **Distributed runner** technology, when it's needed.
-- **Observing without A** (§2.5): when to build it, the sample's size and strata, and the perception settings an observation run pins.
+- **Observing without A** (§2.5): the run is built (no A, `policy.levels`); still open are when to build scene sampling and richer L2 summaries, the sample's size and strata, and the perception settings an observation run pins.
 - Per lens: see the lens appendix (e.g. base emotion taxonomy in Appendix B).
 
 ---

@@ -5,6 +5,8 @@ with rate limits, retries and the budget.
 and its model; its outcome is written to the task store (the work directory) as a run
 record plus its output before anything depends on it. A finished task is never run again;
 a changed input runs only what depends on it. An interrupted run continues from the store.
+A level the run only reads (`policy.levels` doesn't list it) is taken from the store and
+never run: without a stored result, its task raises `NotStored`.
 
 `LocalRunner` holds the execution options: they change speed and cost, never the dataset.
 A distributed runner would implement the same `Runner` protocol later.
@@ -84,6 +86,17 @@ class TaskStore:
     def put(self, stage: str, input_hash: str, record: Mapping[str, Any], output: Any) -> None:
         entry = {"record": dict(record), "output": output}
         atomic_write(self.path(stage, input_hash), json.dumps(entry, ensure_ascii=False))
+
+
+class NotStored(RuntimeError):
+    """A level the run only reads has no stored result for these inputs."""
+
+    def __init__(self, stage: str) -> None:
+        super().__init__(
+            f"{stage} has no stored result for these inputs, and policy.levels doesn't list "
+            f"it, so it's only read, never run (list {stage} to run it)"
+        )
+        self.stage = stage
 
 
 class BudgetExceeded(RuntimeError):
@@ -283,6 +296,7 @@ class Execution:
     port: Any  # the conversation port (router, or the caching wrapper around it)
     spend: Spend
     rerun: frozenset[str] = frozenset()
+    read_only: frozenset[str] = frozenset()  # stages taken from the store, never run
     model_slots: asyncio.Semaphore = field(init=False)
     media_slots: asyncio.Semaphore = field(init=False)
     limiter: RateLimiter = field(init=False)
@@ -304,9 +318,10 @@ class Execution:
     ) -> tuple[Any, dict[str, Any]]:
         """The output and run record of a task: from the store when it already ran with
         these inputs (and `valid(output)` holds, e.g. its file still exists), else
-        computed now and stored. `compute(input_hash)` returns (output, record fields)."""
+        computed now and stored. `compute(input_hash)` returns (output, record fields).
+        A read-only stage is never computed: `NotStored` instead."""
         input_hash = digest({"stage": stage, **inputs})
-        if stage not in self.rerun:
+        if stage not in self.rerun or stage in self.read_only:
             entry = self.store.get(stage, input_hash)
             if (
                 entry is not None
@@ -315,6 +330,8 @@ class Execution:
             ):
                 self.reused += 1
                 return entry["output"], {**entry["record"], "reused": True}
+        if stage in self.read_only:
+            raise NotStored(stage)
         started = now()
         output, fields = await compute(input_hash)
         record = {
@@ -381,6 +398,7 @@ __all__ = [
     "CallRecord",
     "Execution",
     "LocalRunner",
+    "NotStored",
     "RateLimiter",
     "Runner",
     "Spend",

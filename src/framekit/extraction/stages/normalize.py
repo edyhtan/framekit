@@ -43,8 +43,13 @@ async def normalize(
         }
         return output, {"unit_id": unit.unit_id, "target_id": unit.unit_id}
 
+    # A reused copy must still be on disk when a level the run computes reads it.
+    needs_file = ctx.run.needs_copy
     output, record = await ctx.ex.task(
-        "L0", inputs, compute, valid=lambda o: (media_dir / o["copy"]).is_file()
+        "L0",
+        inputs,
+        compute,
+        valid=lambda o: not needs_file or (media_dir / o["copy"]).is_file(),
     )
     media = UnitMedia(
         unit=unit,

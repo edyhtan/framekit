@@ -10,6 +10,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from framekit.extraction.schemas.plan.policy import LEVELS
+
 SCHEMA_VERSION = 2  # 2: plan v2 (grouped), frames_digest (was vision_digest)
 FILE_NAME = "manifest.json"
 
@@ -42,7 +44,8 @@ class DatasetManifest(_Open):
     framekit_version: str
     label: str | None = None  # the benchmark variant label, when made by the harness
     complete: bool  # every unit in scope finished
-    search_space: dict[str, Any]  # {verbatim, digest}
+    search_space: dict[str, Any] | None = None  # {verbatim, digest}; None: a run without A
+    levels: tuple[str, ...] = LEVELS  # the levels whose output the dataset holds
     corpus: dict[str, Any]  # {name, digest, rights_mode, units: {id: source fingerprint}}
     plan: dict[str, Any]  # {resolved, digest, content_digest, fairness_digest, components}
     derivations: tuple[dict[str, Any], ...] = ()
