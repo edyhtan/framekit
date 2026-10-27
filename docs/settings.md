@@ -586,4 +586,4 @@ The baseline scorer (`baseline_retriever`) embeds each gold query with the datas
 4. **Default numbers** for every placeholder above, from benchmark sweeps (frame profiles first).
 5. **Model choices** per role (video, vision, text, embeddings) and any L1 tools beyond the built-in detectors (speech, audio tags).
 6. ~~Schema details~~: decided 2026-10-24 (v1): the lens spec file format (§3.1) and the dataset layout (§7).
-7. **Not built yet:** native video (`video_understand`), image embeddings, chunked long units, file matching and alignment, annotation gold-set scoring, a distributed runner, refilling the frame budget after pixel filters.
+7. **Not built yet:** native video (`video_understand`), image embeddings, chunked long units, file matching and alignment, annotation gold-set scoring, a distributed runner, refilling the frame budget after pixel filters, and an observation run without A with scene sampling and richer L2 scene summaries (DESIGN.md §2.5).

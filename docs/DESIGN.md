@@ -276,7 +276,7 @@ The plan's other settings (segment granularity, L1 detector settings, phrasings 
 
 ### 2.4 A, the plan, and benchmarking A
 
-**A describes the search space; framekit takes it as given.** A is the user's input, or an input already augmented by some strategy, that says what should become findable in the corpus. **framekit doesn't create or augment A.** Producing A (from a raw intent, by hand, or with AI help) is outside this library, so different **augmentation strategies** can be compared by running their A's through the same machine. That comparison is the main reason `extract(A, V)` is an abstraction of its own.
+**A describes the search space; framekit takes it as given.** A is the user's input, or an input already augmented by some strategy, that says what should become findable in the corpus. **framekit doesn't create or augment A.** Producing A (from a raw intent, by hand, or with AI help) is outside this library, so different **augmentation strategies** can be compared by running their A's through the same machine. That comparison is the main reason `extract(A, V)` is an abstraction of its own. framekit can, however, **observe** a corpus before any A exists (§2.5), so a strategy outside can see what the corpus holds when it proposes A's.
 
 | A describes | As | Realized by the plan as |
 |---|---|---|
@@ -321,6 +321,36 @@ flowchart LR
 - **The yardstick doesn't move:** gold queries and gold moments are fixed per corpus and never generated from A. Model randomness is pinned where the model allows it (temperature or seed in the plan; a model that accepts only its default sampling takes neither) and shared calls replay from the response cache.
 - The same harness also runs the opposite comparison: a fixed A with different plans, e.g. a sweep of frame profiles.
 
+### 2.5 Observing without A (planned)
+
+A consumer that proposes A's from the corpus itself needs to read what the corpus holds before any A exists. short_extract's **search space suggestions** do this: they generate candidate A's from the corpus, rank them, and let the user pick one of the top few or write their own (its `docs/DESIGN.md` §2). The stages up to L3a don't read A (§3), so framekit can run them alone:
+
+```python
+observations = observe(V, plan=plan, runner=LocalRunner(), out=path)   # planned
+```
+
+```mermaid
+flowchart LR
+    V["V: the corpus"] --> OB["observe(V, plan)<br/>L0–L2 on every unit,<br/>L3a on all or a sample of scenes"]
+    OB --> OD[("observations<br/>no annotations, no phrasings")]
+    OD --> ST["a strategy outside framekit<br/>proposes and ranks A's"]
+    ST --> A["the chosen A"]
+    A --> EX["extract(A, V, plan)"]
+    OD -. "observed tasks reused" .-> EX
+```
+
+- **What runs:** L0–L2 on every unit, and L3a on every scene or on a **sample** of scenes. No lens passes. Vectors of the scene summaries are optional; a consumer can search them directly, as the "no A" baseline every proposed A is ranked against.
+- **What it writes:** a dataset in the usual layout (§2.1), without `annotations` or `phrasings`. Its manifest says it's an observation run and holds no A.
+- **Perception settings are pinned in the plan.** L3a's input hash covers the perception modules and the beat lengths, which a run with A derives from it. An observation run takes them from the plan instead (for example, every module and short beats). A later `extract(A, V)` with the same settings then reuses every observed task, so L0–L3a aren't paid for twice.
+- **Scene sampling** (a new plan setting): a stratified sample, spread across units, across clusters of L2 scene summaries, and across scenes with high and low motion and onsets. The sampled scenes are recorded, so a later full run completes the rest.
+- **Richer L2 scene summaries** (a new plan setting and prompt version). Today each scene gets one sentence, which is too thin to propose dimensions such as timing or sound. Three changes:
+  - a summary length in sentences (1–5);
+  - audio onset times in the L2 prompt, as L3a already gets them;
+  - a summary for a scene piece that repair split off (today it gets none).
+
+  Longer summaries only help together with more frames per scene (L2's frame profile, §2.3). They stay observable facts (§0.3): feelings and dynamics belong to lens passes.
+- **A stays given input.** An observation run writes facts, never A. Proposing, ranking and choosing A's stay outside framekit. Each way of proposing them is an augmentation strategy the harness can compare (§2.4, §6.2).
+
 ---
 
 ## 3. Extraction pipeline
@@ -354,6 +384,7 @@ Detectors are named, versioned code, picked in the plan; the built-ins (version 
 - A long-context video model gets the whole unit (frames chosen by L2's frame profile, §2.3; typically uniform ~1 fps, as images or storyboard grids until native video is built) and returns a **synopsis** plus **scene boundaries** (30–60 s), snapped to L1 shot cuts. framekit repairs the proposal into a clean cover of the unit's processable parts (ordered, contiguous, too-short scenes merged, too-long ones split), noting every repair; an unusable reply falls back to shot groups, flagged.
 - `structure.segmentation.method: shot_groups` makes scenes from consecutive shots without a model (and without a synopsis).
 - The synopsis is passed to later passes, because a scene's meaning depends on unit context.
+- Each scene also gets a one-sentence summary. A length setting, audio onsets in the prompt and a summary for split-off pieces are planned (§2.5).
 
 ### L3a — Perception (video → observable facts)
 - Input per scene: frames chosen by L3a's frame profile (§2.3; e.g. adaptive, a budget per scene, anchored on shot cuts), L1 signals, the synopsis, the entity reference list from the corpus profile.
@@ -549,6 +580,7 @@ Users' copies of a corpus differ (releases, edits, frame rates). A dedicated mod
 - **Default frame profiles** per stage, from a benchmark sweep (§2.3, §6.2).
 - **A distribution name for PyPI,** if the library is ever published (`framekit` is taken there; [ARCHITECTURE.md](ARCHITECTURE.md) §8).
 - **Distributed runner** technology, when it's needed.
+- **Observing without A** (§2.5): when to build it, the sample's size and strata, and the perception settings an observation run pins.
 - Per lens: see the lens appendix (e.g. base emotion taxonomy in Appendix B).
 
 ---

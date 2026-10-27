@@ -411,6 +411,16 @@ These were decided in short_extract (dates are from its journal) and bind this e
 - **Not in this change:** structured outputs (`output_config.format`) on the Anthropic adapter; prompt caching and the Batch API; the standard image tier's token cap. Haiku 4.5 downscales an image over 1,568 image tokens, and the frame checks can't see it, since they know an image's long side but not its aspect.
 - **Recorded in:** `src/framekit/models/catalog.py`, `adapters/base.py`, `registry.py`, `__init__.py`; `src/framekit/extraction/resolve.py`, `estimate.py`; tests; README.md "Results" and "Models"; settings.md §5.4 (`models`) and §5.5 (budget); adapters.md "What the base does for you"; ARCHITECTURE.md §5; DESIGN.md §2.4.
 
+### 20:32 — Observing a corpus without A (planned), for search space suggestions
+- **Decision** (owner, on the proposal to suggest A's drawn from the corpus: "lets add this proposal into the design. This layer should be optional: user are shown with top ranked sample search space descriptions; user can also write their own search space if none of them works well"). The suggestion layer lives in short_extract (its `docs/DESIGN.md` §2, 2026-10-26). framekit's part is planned, not built:
+  - **`observe(V, plan)`** runs L0–L2 on every unit and L3a on every scene or on a sample, with no A and no lens passes. It writes a dataset without `annotations` or `phrasings`, with optional summary vectors for the "no A" baseline.
+  - **Perception settings are pinned in the plan**, so a later `extract(A, V)` with the same settings reuses every observed task.
+  - **Scene sampling** for L3a: stratified across units, clusters of L2 scene summaries, and motion and onset levels.
+  - **Richer L2 scene summaries:** a length in sentences (1–5), audio onsets in the L2 prompt, and a summary for split-off scene pieces.
+- **Why:** proposing A's needs text about the corpus before an A exists. L2's one-sentence summaries rest on about 3–4 small tiles per scene and no sound, which is too thin to propose dimensions such as timing or sound. L3a records on a sample (or on every scene, if the corpus will be extracted anyway) are rich enough, and the later extraction reuses them. Context gathered on the test corpus (161 units, upper bounds, Claude Haiku 4.5 for frames): observing costs about $4.40 for L2 on every unit plus about $6.80 for L3a on 2 scenes per unit, against about $50 for a full extraction with two lenses.
+- **Not changed:** A is given input (2026-10-23). An observation run writes facts, never A; proposing, ranking and choosing A's stay outside framekit, and each way of proposing them is an augmentation strategy the harness can compare.
+- **Recorded in:** DESIGN.md §2.4, §2.5 (new), §3 L2, §9; CLAUDE.md "Key decisions" (A is given); settings.md §8.
+
 ---
 
 ## Still open
