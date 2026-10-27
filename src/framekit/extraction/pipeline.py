@@ -8,7 +8,9 @@ the dataset.
    analysis copy the unit will get. A dry run stops here with the cost estimate.
 3. **Run** each unit: L0 → L1 → L2 → L3a per scene → L3b per scene, lens and run → embed;
    L4's checks on every result. Units run in parallel; every step is a task keyed by its
-   input hash, so a rerun reuses everything unchanged.
+   input hash, so a rerun reuses everything unchanged. `policy.levels` says which levels
+   run: the earlier levels they need but the list leaves out are only read from the task
+   store, and the later ones don't run. Without A, the levels mustn't need it.
 4. **Write** the tables, then the manifest.
 """
 
@@ -33,6 +35,7 @@ from framekit.extraction.runner import (
     BudgetExceeded,
     Execution,
     LocalRunner,
+    NotStored,
     Spend,
     TaskStore,
     ensure_private_dir,
@@ -92,7 +95,7 @@ async def _safe[T](awaitable: Awaitable[T]) -> tuple[T | None, BaseException | N
     stopping the unit's other steps."""
     try:
         return await awaitable, None
-    except (ModelCallError, MediaError, BudgetExceeded) as exc:
+    except (ModelCallError, MediaError, BudgetExceeded, NotStored) as exc:
         return None, exc
 
 
@@ -144,9 +147,12 @@ async def process_unit(
     try:
         media, record = await normalize(ctx, unit, source, fingerprint)
         result.records.append(record)
+        if "L1" not in run.levels:
+            rows["units"].append(_unit_row(unit, source, media.copy, fingerprint, result, None))
+            return result
         signals, record = await detect(ctx, media)
         result.records.append(record)
-    except (MediaError, BudgetExceeded) as exc:
+    except (MediaError, BudgetExceeded, NotStored) as exc:
         result.problem("failed", f"{type(exc).__name__}: {exc}")
         rows["units"].append(_unit_row(unit, source, None, fingerprint, result, None))
         return result
@@ -163,6 +169,9 @@ async def process_unit(
         }
         for i, (a, b) in enumerate(shots_from_cuts(signals["shots"], duration))
     ]
+    if "L2" not in run.levels:
+        rows["units"].append(_unit_row(unit, source, media.copy, fingerprint, result, None))
+        return result
     if run.windows is not None:
         window_s, stride_s = run.windows
         spans = processable_spans(duration, unit.excluded_ranges)
@@ -195,6 +204,10 @@ async def process_unit(
     ]
 
     # L3a, every scene at once (the runner bounds the calls in flight)
+    records_by_scene: dict[str, dict[str, Any]] = {}
+    perceived = scenes if "L3a" in run.levels else []
+    if not perceived:
+        rows["scenes"] += [_scene_row(scene, output, "not_perceived") for scene in scenes]
     perceptions = await asyncio.gather(
         *(
             _safe(
@@ -207,11 +220,10 @@ async def process_unit(
                     _neighbors(scenes, i, plan.interpretation.perception.context.neighbors),
                 )
             )
-            for i, scene in enumerate(scenes)
+            for i, scene in enumerate(perceived)
         )
     )
-    records_by_scene: dict[str, dict[str, Any]] = {}
-    for scene, (found, error) in zip(scenes, perceptions, strict=True):
+    for scene, (found, error) in zip(perceived, perceptions, strict=True):
         status = "ok"
         if error is not None or found is None:
             result.problem("partial", f"L3a {scene.scene_id}: {type(error).__name__}: {error}")
@@ -241,18 +253,7 @@ async def process_unit(
             if out.get("record") is not None:
                 records_by_scene[scene.scene_id] = out["record"]
                 rows["beats"] += beat_rows(scene, out["record"])
-        rows["scenes"].append(
-            {
-                "scene_id": scene.scene_id,
-                "unit_id": unit.unit_id,
-                "index": scene.index,
-                "start": scene.start,
-                "end": scene.end,
-                "summary": scene.summary,
-                "method": output.get("method"),
-                "status": status,
-            }
-        )
+        rows["scenes"].append(_scene_row(scene, output, status))
 
     # L3b: every scene with a record × every lens × every self-consistency run
     runs = plan.interpretation.lens_passes.self_consistency.runs
@@ -260,7 +261,7 @@ async def process_unit(
         (scene, lens, k)
         for scene in scenes
         if scene.scene_id in records_by_scene
-        for lens in run.lenses
+        for lens in (run.lenses if "L3b" in run.levels else ())
         for k in range(runs)
     ]
     passes = await asyncio.gather(
@@ -316,7 +317,11 @@ async def process_unit(
             rows["phrasings"] += phrasing_list
 
     # embed: scene summaries (the record's, else L2's) and phrasings
-    if "embed_text" in run.roles and plan.interpretation.embedding.text is not None:
+    if (
+        "embed" in run.levels
+        and "embed_text" in run.roles
+        and plan.interpretation.embedding.text is not None
+    ):
         inputs = plan.interpretation.embedding.text.inputs
         items: list[tuple[str, str, str]] = []
         if "scene_summary" in inputs:
@@ -338,6 +343,21 @@ async def process_unit(
 
     rows["units"].append(_unit_row(unit, source, media.copy, fingerprint, result, synopsis))
     return result
+
+
+def _scene_row(scene: SceneRow, segmented: Mapping[str, Any], status: str) -> dict[str, Any]:
+    """A `scenes` row: L2's scene, with L3a's status for it (`not_perceived` when L3a isn't
+    in the run)."""
+    return {
+        "scene_id": scene.scene_id,
+        "unit_id": scene.unit_id,
+        "index": scene.index,
+        "start": scene.start,
+        "end": scene.end,
+        "summary": scene.summary,
+        "method": segmented.get("method"),
+        "status": status,
+    }
 
 
 def _perception_row(
@@ -437,7 +457,7 @@ async def preflight(run: ResolvedRun, ffmpeg: FFmpeg, slots: asyncio.Semaphore) 
         width, height = copy_size(info, plan.observation.normalize.height_px)
         limits = SourceLimits(plan.observation.normalize.fps, width, height)
         for role in ("L2", "L3a"):
-            if role in run.roles and role in run.frames.stages:
+            if role in run.roles and run.computes(role) and role in run.frames.stages:
                 problems += [
                     f"unit {unit_id}: {p}" for p in check_against_source(run.profile(role), limits)
                 ]
@@ -454,6 +474,8 @@ def missing_keys(run: ResolvedRun, router: ConversationRouter) -> list[str]:
     model call. A source with its own credential, or a keyless provider, needs none."""
     missing = []
     for role, binding in run.roles.items():
+        if not run.computes_role(role):
+            continue  # only read from the task store: never called
         source = router.sources.get(binding.model_id) if binding.source else None
         if source is not None and source.credential is not None:
             continue
@@ -480,7 +502,7 @@ def build_router(
 
 
 async def extract_async(
-    space: SearchSpace,
+    space: SearchSpace | None,
     corpus: Corpus,
     *,
     out: str | Path,
@@ -503,6 +525,12 @@ async def extract_async(
         raise ValueError(f"rerun: unknown stages {unknown} (stages: {', '.join(STAGES)})")
     lookup = build_router(None, runner, registry, sources)
     run = resolve_run(space, corpus, plan, router=lookup)
+    only_read = sorted(set(rerun) & run.read_only)
+    if only_read:
+        raise ValueError(
+            f"rerun: {', '.join(only_read)} only read from the task store in this run "
+            "(policy.levels doesn't list them), so they can't run again"
+        )
     keys = missing_keys(run, lookup)
     ffmpeg = FFmpeg(runner.ffmpeg)
     checked = await preflight(run, ffmpeg, asyncio.Semaphore(runner.media_slots()))
@@ -514,7 +542,11 @@ async def extract_async(
     if keys:
         raise ConfigError(keys, "the model keys")
 
-    identity = {"search_space": space.digest, "corpus": corpus.digest, "plan": run.plan_digest}
+    identity = {
+        "search_space": run.space_digest,
+        "corpus": corpus.digest,
+        "plan": run.plan_digest,
+    }
     prepare_output(out, identity)
     work_dir = ensure_private_dir(Path(runner.work_dir or out.with_name(out.name + ".work")))
     router = build_router(run, runner, registry, sources)
@@ -525,7 +557,14 @@ async def extract_async(
     else:
         port = router
     spend = Spend(run.plan.policy.budget)
-    ex = Execution(runner, TaskStore(work_dir), port, spend, rerun=frozenset(rerun))
+    ex = Execution(
+        runner,
+        TaskStore(work_dir),
+        port,
+        spend,
+        rerun=frozenset(rerun),
+        read_only=run.read_only,
+    )
     ctx = StageContext(run, ex, ffmpeg, work_dir)
     unit_slots = asyncio.Semaphore(runner.media_slots())
 
@@ -580,7 +619,10 @@ async def extract_async(
         framekit_version=__version__,
         label=label,
         complete=all(r.status == "complete" for r in results),
-        search_space={"verbatim": space.verbatim, "digest": space.digest},
+        search_space=(
+            {"verbatim": space.verbatim, "digest": space.digest} if space is not None else None
+        ),
+        levels=run.levels,
         corpus={
             "name": corpus.profile.name,
             "digest": corpus.digest,
@@ -625,7 +667,7 @@ async def extract_async(
 
 
 def extract(
-    space: SearchSpace,
+    space: SearchSpace | None,
     corpus: Corpus,
     *,
     out: str | Path,
@@ -642,8 +684,10 @@ def extract(
     """A + V (+ plan) → a dataset in `out` (DESIGN.md §2). Returns the opened `Dataset`, or
     the `CostEstimate` with `dry_run=True` (nothing is run or written then).
 
+    - `space`: A, or None for a run whose levels don't need it (`policy.levels` without
+      L3b, and the plan setting what would be derived from A; DESIGN.md §2.5).
     - `plan`: None for the defaults plus derivation rules; models are never defaulted, so a
-      real run needs at least `models` in a plan.
+      real run needs at least `models` in a plan. `policy.levels` says which levels run.
     - `runner`: execution options (`LocalRunner`); never change the dataset.
     - `cache` + `cache_settings`: the model response cache (a store alone records).
     - `sources` / `registry`: models beyond the built-in catalog (`ModelSource`).

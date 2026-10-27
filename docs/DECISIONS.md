@@ -421,6 +421,16 @@ These were decided in short_extract (dates are from its journal) and bind this e
 - **Not changed:** A is given input (2026-10-23). An observation run writes facts, never A; proposing, ranking and choosing A's stay outside framekit, and each way of proposing them is an augmentation strategy the harness can compare.
 - **Recorded in:** DESIGN.md §2.4, §2.5 (new), §3 L2, §9; CLAUDE.md "Key decisions" (A is given); settings.md §8.
 
+### 23:28 — Run levels (`policy.levels`), and runs without A
+- **Decision** (owner, after asking what an L2-only run with no search space needs: "begin working on a configurable format that allows a single level to be run"; of the two formats offered, listing the levels or running up to one, the owner chose the list):
+  - **`policy.levels`** lists the levels a run computes (`L0`, `L1`, `L2`, `L3a`, `L3b`, `embed`; default: all). An earlier level a listed one reads, but the list leaves out, is only read from the task store: never run, never estimated, and its key isn't needed. A unit without its stored result fails with a note (`NotStored`). Levels nothing listed reads don't run. `--rerun` can't name a level that's only read. The setting is in the plan's digests and in no task's input hash.
+  - **A is optional** (`extract(None, V, plan)`; `--space` may be left out) when no level in the run needs it. L3b needs A's lenses. Without A nothing is derived: the scope is the whole corpus (or its subset) with the corpus's excluded ranges, the modules are `core` plus the plan's, and the plan must set `structure.beats.max_s` when L3a is in the run and `fixed_windows.window_s` when windows are made.
+  - **Dataset layout** (a change to layout v1; the schema version stays 2): the manifest's `search_space` may be `null`, and a new `levels` lists the levels the dataset holds (a manifest without it holds every level). A scene outside L3a's reach has the status `not_perceived`.
+  - This builds the run of "Observing a corpus without A" (20:32 today) as `extract` with no A, in place of the planned `observe(V, plan)`. Scene sampling and richer L2 scene summaries stay planned.
+- **Why:** an L2-only run over the corpus, with no search space, needed `extract` to stop after a level and to run without A. Listing levels, rather than running up to one, also lets a run promise not to spend on earlier levels: lens passes alone, on stored records.
+- **Not changed:** A is given input. No task's input hash changes, so stored tasks are reused across runs with different levels. Every plan's digests change (the new setting is in the resolved plan), so an existing dataset folder from an earlier framekit is refused as another dataset; no real dataset exists yet.
+- **Recorded in:** `schemas/plan/policy.py`, `resolve.py`, `runner.py` (`NotStored`), `pipeline.py`, `estimate.py`, `stages/normalize.py`, `schemas/manifest.py`, `cli.py`; tests; DESIGN.md §2.1, §2.5, §3, §5.1, §9; settings.md §2, §3, §5.1, §5.5, §7, §8; README.md "Extraction"; CLAUDE.md "Key decisions" (A is given).
+
 ---
 
 ## Still open

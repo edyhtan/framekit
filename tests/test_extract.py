@@ -273,3 +273,75 @@ def test_frame_profiles_are_checked_against_the_analysis_copy(tmp_path, video):
     with pytest.raises(ConfigError, match="analysis copy's long side"):
         run(tmp_path, files)  # 400 px frames from a 214 x 120 copy would be upscaled
     assert ScriptedAdapter.requests == []  # refused before any spend
+
+
+# --- levels (policy.levels) --------------------------------------------------------------
+
+
+def observe(tmp_path, files, out, **options):
+    """A run with no search space: the plan's levels mustn't need one."""
+    runner = LocalRunner(ffmpeg=ffmpeg_binary(), work_dir=tmp_path / "work", concurrency=4)
+    return extract(
+        None,
+        Corpus.load(files["corpus"]),
+        plan=ExtractionPlan.load(files["plan"]),
+        out=tmp_path / out,
+        runner=runner,
+        sources=sources(),
+        **options,
+    )
+
+
+def test_a_run_without_a_search_space_stops_after_l2(tmp_path, video):
+    files = write_inputs(tmp_path, video, plan={"policy": {"levels": ["L0", "L1", "L2"]}})
+    dataset = observe(tmp_path, files, "observed")
+
+    manifest = dataset.manifest
+    assert manifest.complete and manifest.search_space is None
+    assert manifest.levels == ("L0", "L1", "L2") and manifest.lenses == ()
+    assert set(manifest.models) == {"L2"}
+    scenes = dataset.rows("scenes")
+    assert len(scenes) == 3 and all(s["summary"] for s in scenes)
+    assert {s["status"] for s in scenes} == {"not_perceived"}
+    for table in ("perception", "beats", "annotations", "phrasings", "vectors"):
+        assert dataset.rows(table) == []
+    assert {r["stage"] for r in dataset.rows("runs")} == {"L0", "L1", "L2"}
+    assert stages(ScriptedAdapter.requests) == ["L2"]
+    assert dataset.verify() == []
+
+    # A later run with A, in another folder but the same work folder, reuses L0-L2.
+    later = run(tmp_path, write_inputs(tmp_path, video), out="full")
+    assert later.manifest.complete and stages(ScriptedAdapter.requests).count("L2") == 1
+    assert {r["stage"] for r in later.rows("runs") if r["reused"]} == {"L0", "L1", "L2"}
+    assert [s["summary"] for s in later.rows("scenes")] == [s["summary"] for s in scenes]
+
+
+def test_levels_a_run_needs_but_doesnt_list_are_only_read(tmp_path, video):
+    lens_passes_only = {"policy": {"levels": ["L3b"]}}
+    files = write_inputs(tmp_path, video, plan=lens_passes_only)
+    nothing_stored = run(tmp_path, files, out="early")
+    unit = nothing_stored.manifest.units[0]
+    assert unit.status == "failed" and "NotStored: L0 has no stored result" in unit.reason
+    assert ScriptedAdapter.requests == []  # nothing ran, no model was called
+
+    run(tmp_path, write_inputs(tmp_path, video), out="full")
+    ScriptedAdapter.requests.clear()
+    files = write_inputs(tmp_path, video, plan=lens_passes_only)
+    again = run(tmp_path, files, out="lens-passes", rerun={"L3b"})
+    assert again.manifest.complete
+    assert set(stages(ScriptedAdapter.requests)) == {"L3b"}  # L2 and L3a are only read
+    assert again.rows("annotations") and again.rows("vectors") == []  # embed isn't reached
+    assert {s["status"] for s in again.rows("scenes")} == {"ok"}
+    with pytest.raises(ValueError, match="only read from the task store"):
+        run(tmp_path, files, out="refused", rerun={"L3a"})
+
+
+def test_a_dry_run_estimates_only_the_levels_that_run(tmp_path, video):
+    files = write_inputs(tmp_path, video, plan={"policy": {"levels": ["L0", "L1", "L2"]}})
+    estimate = observe(tmp_path, files, "observed", dry_run=True)
+    assert set(estimate.stages) == {"L2"} and estimate.total_usd > 0
+
+    files = write_inputs(tmp_path, video, plan={"policy": {"levels": ["L3b"]}})
+    estimate = run(tmp_path, files, dry_run=True)
+    assert set(estimate.stages) == {"L3b"}
+    assert "only read from the task store, not estimated: L0, L1, L2, L3a" in estimate.notes

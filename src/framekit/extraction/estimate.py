@@ -3,7 +3,8 @@
 An upper-bound estimate from the probed units, the plan and the catalog prices: scenes are
 counted at the target length, outputs at their full `max_tokens`, images at the number of
 28 x 28 px patches they cover (the way Claude counts image tokens; other providers differ),
-retries and replays from the response cache not counted. Prices are per the model
+retries and replays from the response cache not counted, and levels the run only reads
+from the task store (`policy.levels`) cost nothing. Prices are per the model
 catalog, applied to each request on its own (a model may charge more for a long prompt);
 nothing here calls a model.
 """
@@ -135,11 +136,14 @@ def estimate(run: ResolvedRun, probes: dict[str, MediaInfo]) -> CostEstimate:
     plan = run.plan
     target = plan.structure.segmentation.scene_length_s.target
     result = CostEstimate(units=len(probes), seconds=0.0, scenes=0)
-    stage_names = [r for r in ("L2", "L3a", "L3b") if r in run.roles]
-    if "embed_text" in run.roles:
+    stage_names = [r for r in ("L2", "L3a", "L3b") if r in run.roles and run.computes(r)]
+    if "embed_text" in run.roles and run.computes("embed"):
         stage_names.append("embed")
+    phrasing_runs = lens_runs = 0
+    if "L3b" in run.levels:
+        lens_runs = len(run.lenses) * plan.interpretation.lens_passes.self_consistency.runs
+        phrasing_runs = lens_runs * plan.interpretation.lens_passes.phrasings.count
     result.stages = {name: StageEstimate() for name in stage_names}
-    lens_runs = len(run.lenses) * plan.interpretation.lens_passes.self_consistency.runs
     for unit in run.units:
         info = probes.get(unit.unit_id)
         if info is None:
@@ -153,18 +157,25 @@ def estimate(run: ResolvedRun, probes: dict[str, MediaInfo]) -> CostEstimate:
         if "L2" in result.stages:
             images, tokens = _images(run.profile("L2"), _frames(run.profile("L2"), seconds), copy)
             _add(result, run, "L2", 1, PROMPT_TOKENS["L2"] + tokens, images=images)
-        frames = _frames(run.profile("L3a"), min(target, seconds))
-        images, tokens = _images(run.profile("L3a"), frames, copy)
-        _add(result, run, "L3a", scenes, PROMPT_TOKENS["L3a"] + tokens, images=images)
-        l3b_input = PROMPT_TOKENS["L3b"] + run.roles["L3a"].max_tokens
-        _add(result, run, "L3b", scenes * lens_runs, l3b_input)
+        if "L3a" in result.stages:
+            frames = _frames(run.profile("L3a"), min(target, seconds))
+            images, tokens = _images(run.profile("L3a"), frames, copy)
+            _add(result, run, "L3a", scenes, PROMPT_TOKENS["L3a"] + tokens, images=images)
+        if "L3b" in result.stages:
+            l3b_input = PROMPT_TOKENS["L3b"] + run.roles["L3a"].max_tokens
+            _add(result, run, "L3b", scenes * lens_runs, l3b_input)
         if "embed" in result.stages:
-            texts = scenes * (1 + lens_runs * plan.interpretation.lens_passes.phrasings.count)
+            texts = scenes * (1 + phrasing_runs)
             text_settings = plan.interpretation.embedding.text
             batch = text_settings.batch_size if text_settings else 64
             full, rest = divmod(texts, batch)
             _add(result, run, "embed", full, batch * TOKENS_PER_TEXT)
             _add(result, run, "embed", 1 if rest else 0, rest * TOKENS_PER_TEXT)
+    if run.read_only:
+        result.notes.append(
+            "only read from the task store, not estimated: "
+            + ", ".join(level for level in run.levels if level in run.read_only)
+        )
     missing = [u.unit_id for u in run.units if u.unit_id not in probes]
     if missing:
         result.notes.append(f"not estimated (couldn't be read): {', '.join(missing)}")

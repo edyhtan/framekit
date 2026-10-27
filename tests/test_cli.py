@@ -38,6 +38,25 @@ def test_the_cli_runs_a_dry_run_and_reads_the_cache(tmp_path, capsys, monkeypatc
     assert "the cache is empty" in capsys.readouterr().out
 
 
+@needs_ffmpeg
+def test_the_cli_runs_without_a_search_space_when_the_levels_need_none(
+    tmp_path, capsys, monkeypatch
+):
+    video = make_video(tmp_path / "u1.mp4")
+    files = write_inputs(tmp_path, video, plan={"policy": {"levels": ["L0", "L1", "L2"]}})
+    monkeypatch.syspath_prepend(str(Path(__file__).parent))
+    options = ["--corpus", str(files["corpus"]), "--plan", str(files["plan"]), "--dry-run"]
+    options += ["--ffmpeg", ffmpeg_binary(), "--sources", "model_helpers:sources"]
+    assert main(["extract", *options, "--out", str(tmp_path / "observed")]) == 0
+    output = capsys.readouterr().out
+    assert "L2" in output and "L3a" not in output
+
+    files = write_inputs(tmp_path, video)  # every level: L3b needs a search space
+    options[3] = str(files["plan"])
+    assert main(["extract", *options, "--out", str(tmp_path / "full")]) == 1
+    assert "L3b (lens passes) needs a search space" in capsys.readouterr().err
+
+
 def test_cli_config_errors_are_reported_not_raised(tmp_path, capsys):
     bad = write_yaml(tmp_path / "space.yaml", {"search_space": {"lenses": []}})
     code = main(

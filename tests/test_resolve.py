@@ -200,3 +200,63 @@ def test_image_embeddings_are_refused_until_built():
     image = {"embedding": {"image": {}}}
     text = problems_of(space(lens(COLOUR_LENS)), None, plan(interpretation=image))
     assert "image embeddings need an embed_image port" in text
+
+
+# --- levels (policy.levels) --------------------------------------------------------------
+
+
+def test_a_run_without_a_search_space_stops_where_the_plan_says():
+    run = resolve(None, None, plan(policy={"levels": ["L0", "L1", "L2"]}))
+    assert run.levels == ("L0", "L1", "L2") and run.read_only == frozenset()
+    assert set(run.roles) == {"L2"}  # no model for levels the run doesn't reach
+    assert run.space is None and run.space_digest is None
+    assert run.lenses == () and run.beats is None and run.modules == ("core",)
+    assert [u.unit_id for u in run.units] == ["u1", "u2"]  # the corpus, unnarrowed
+    assert run.units[0].excluded_ranges == ((0, 2),)  # still from the corpus
+    assert run.computes("L2") and not run.computes("L3a")
+
+
+def test_listed_levels_only_read_the_earlier_levels_they_need():
+    run = resolve(space(lens(PACE_LENS)), None, plan(policy={"levels": ["L3b"]}))
+    assert run.levels == ("L0", "L1", "L2", "L3a", "L3b")  # embed isn't reached
+    assert run.read_only == {"L0", "L1", "L2", "L3a"}
+    assert set(run.roles) == {"L2", "L3a", "L3b"}  # read-only roles: their hashes name them
+    assert run.computes_role("L3b") and not run.computes_role("L3a")
+    assert any("L0, L1, L2, L3a only read from the task store" in n for n in run.notes)
+
+
+def test_only_levels_that_run_send_frames():
+    no_policy = {"governance": {"model_inputs": None}}
+    reading = resolve(space(lens(PACE_LENS)), None, plan(policy={**no_policy, "levels": ["L3b"]}))
+    assert reading.model_inputs == "provider_transient"  # nothing is sent: nothing to decide
+    found = problems_of(space(lens(PACE_LENS)), None, plan(policy=no_policy))
+    assert "model_inputs: required" in found
+
+
+def test_without_a_search_space_what_needs_it_must_come_from_the_plan():
+    found = problems_of(None, None, plan())
+    assert "L3b (lens passes) needs a search space" in found
+    assert "structure.beats.max_s: L3a writes beats" in found
+    windows = {"segmentation": {"mode": "both"}}
+    found = problems_of(None, None, plan(structure=windows, policy={"levels": ["L2"]}))
+    assert "fixed_windows.window_s: with no search space" in found
+
+    pinned = plan(
+        structure={"beats": {"max_s": 4}},
+        interpretation={"perception": {"modules": ["timing", "sound"]}},
+        policy={"levels": ["L0", "L1", "L2", "L3a"]},
+    )
+    run = resolve(None, None, pinned)
+    assert run.beats == (0.5, 4) and run.modules == ("core", "timing", "sound")
+    assert set(run.roles) == {"L2", "L3a"}
+
+
+def test_levels_are_checked_when_the_plan_loads():
+    for levels, problem in (
+        ([], "policy.levels: list at least one level"),
+        (["L2", "L2"], "policy.levels: a level is listed twice"),
+        (["L5"], "policy.levels"),
+    ):
+        with pytest.raises(ConfigError) as info:
+            plan(policy={"levels": levels})
+        assert any(problem in p for p in info.value.problems)
