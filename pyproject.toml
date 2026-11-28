@@ -9,30 +9,30 @@ license-files = ["LICENSE"]
 # Library convention (docs/ARCHITECTURE.md §2): loose ranges, so framekit fits into
 # consumers' environments. Exact versions for development are in uv.lock.
 dependencies = [
-    "pydantic>=2.6,<3",
-    "openai>=3.20,<4",
-    "anthropic>=2.3.0,<3",
+    "pydantic>=2.14.4,<3",
+    "openai>=3.57.0,<4",
+    "anthropic>=2.12.0,<3",
     # 23.0.1: the first release without PYSEC-2026-113 (CVE-2026-25087). No upper bound:
     # pyarrow's major versions come every few months without breaking the table and Parquet
     # calls framekit makes, and the newest-dependencies CI job would catch one that did.
-    "pyarrow>=23.0.1",
-    "pyyaml>=6,<7",
+    "pyarrow>=26.0.1",
+    "pyyaml>=6.0.4,<7",
 ]
 
 [dependency-groups]
 dev = [
-    "pytest>=8",
-    "pytest-asyncio>=0.23",
-    "import-linter>=2",
-    "ruff>=0.6",
-    "numpy>=1.26",
+    "pytest>=9.2.0",
+    "pytest-asyncio>=1.5.0",
+    "import-linter>=2.17",
+    "ruff>=0.17.6",
+    "numpy>=2.5.5",
 ]
 
 [project.optional-dependencies]
 # Running extraction (signal detectors, pixel filters, storyboards) and the benchmark
 # harness. ffmpeg itself is a system binary, never a Python dependency.
 media = [
-    "numpy>=1.26,<3",
+    "numpy>=2.5.5,<3",
 ]
 
 [project.scripts]
